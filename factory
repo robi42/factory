@@ -1,0 +1,1009 @@
+#!/usr/bin/env bash
+# factory: a small software factory on Herdr.
+# Claude Code plans (Fable) and builds (Opus), Codex reviews (GPT), Beads remembers.
+set -euo pipefail
+
+FACTORY_HOME=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+FACTORY_VERSION=0.1.0
+
+# Knobs. Every value is printed at the start of a run.
+: "${FACTORY_PLAN_MODEL:=claude-fable-5-1}"
+: "${FACTORY_BUILD_MODEL:=claude-opus-5}"
+: "${FACTORY_REVIEW_MODEL:=gpt-6-astra}"
+: "${FACTORY_ROUNDS:=3}"
+: "${FACTORY_TURN_TIMEOUT_MS:=3600000}"
+: "${FACTORY_CLAUDE_PERMISSIONS:=auto}"
+: "${FACTORY_GUARDRAILS:=$FACTORY_HOME/guardrails.txt}"
+: "${FACTORY_REQUIRE_TESTS:=1}"
+: "${FACTORY_PLAN_APPROVAL:=ask}"
+: "${FACTORY_POLL_SECONDS:=5}"
+: "${FACTORY_PR:=0}"
+
+RUN_DIR=.factory/run
+
+# ---------------------------------------------------------------- output ----
+log() { printf '\033[34m[factory]\033[0m %s\n' "$*" >&2; }
+warn() { printf '\033[33m[factory]\033[0m %s\n' "$*" >&2; }
+die() {
+  printf '\033[31m[factory] error:\033[0m %s\n' "$*" >&2
+  exit 1
+}
+need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
+
+row() { printf '  %-48s %s\n' "$1" "$2"; }
+
+usage() {
+  printf 'factory %s: a small software factory on Herdr\n\nusage:\n' "$FACTORY_VERSION"
+  row 'factory run     <repo> <bead-id | "task title">' 'plan, build, gate, review one task'
+  row 'factory next    <repo>' 'claim the next ready bead and run it'
+  row 'factory queue   <repo> [max]' 'run ready beads one after another'
+  row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
+  row 'factory init    <repo> [bd init args...]' 'lean bd init, detect the gate, AGENTS.md stub'
+  row 'factory approve <repo> <bead-id>' 'approve a waiting plan from any terminal'
+  row 'factory reject  <repo> <bead-id> "note"' 'send the planner a note; the plan comes back revised'
+  row 'factory answer  <repo> <bead-id> ["answers" | -]' 'answer the planner'"'"'s questions from any terminal'
+  row 'factory check   <worktree> <base>' 'run gate + guardrails on a branch, no agents'
+  row 'factory status' 'live factory agents in Herdr'
+  row 'factory doctor' 'check prerequisites'
+  printf '\nknobs (env, current values):\n'
+  row "FACTORY_PLAN_MODEL=$FACTORY_PLAN_MODEL" 'planner (Claude Code)'
+  row "FACTORY_BUILD_MODEL=$FACTORY_BUILD_MODEL" 'builder (Claude Code)'
+  row "FACTORY_REVIEW_MODEL=$FACTORY_REVIEW_MODEL" 'reviewer (Codex)'
+  row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up'
+  row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
+  row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'max wait for one agent turn'
+  row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
+  row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" 'code changes must touch a test file'
+  row "FACTORY_PLAN_APPROVAL=$FACTORY_PLAN_APPROVAL" 'ask: you approve each plan; auto: skip'
+  row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request'
+}
+
+# ----------------------------------------------------------------- herdr ----
+# h: run a herdr command, print its JSON, die on error JSON.
+h() {
+  local out
+  if ! out=$(herdr "$@" 2>&1); then
+    die "herdr $1 $2: $(jq -r '.error.message // .' <<<"$out" 2>/dev/null || printf '%s' "$out")"
+  fi
+  printf '%s' "$out"
+}
+
+herr_code() { jq -r '.error.code // empty' <<<"$1" 2>/dev/null; }
+
+toast() { # title body sound
+  herdr notification show "$1" --body "$2" --sound "$3" >/dev/null 2>&1 || warn "toast failed: $1"
+}
+
+attention() { # agent message
+  warn "$1 $2"
+  toast "factory: $TASK_ID" "$1 $2" request
+}
+
+agent_status() { h agent get "$1" | jq -r '.result.agent.agent_status'; }
+
+# wait_for name timeout_ms state... : block until the agent reaches one of the states.
+wait_for() {
+  local name=$1 timeout=$2 out
+  shift 2
+  local args=()
+  local s
+  for s in "$@"; do args+=(--until "$s"); done
+  if ! out=$(herdr agent wait "$name" "${args[@]}" --timeout "$timeout" 2>&1); then
+    die "$name: waited ${timeout}ms for ${*}, got: $(jq -r '.error.message // .' <<<"$out")"
+  fi
+  jq -r '.result.agent.agent_status' <<<"$out"
+}
+
+# settle_dialogs name: clear the startup dialogs agents show in a fresh worktree
+# (trust prompts, mode notices, Codex hook review). Herdr does not flag all of them
+# as blocked, so this looks at the screen rather than the reported state.
+settle_dialogs() {
+  local name=$1 i txt status
+  for i in 1 2 3 4 5 6; do
+    txt=$(herdr agent read "$name" --source visible 2>/dev/null) || txt=""
+    if grep -qE 'Yes, I (trust|accept)' <<<"$txt"; then
+      log "$name: accepting startup dialog (attempt $i)"
+      herdr agent send-keys "$name" down >/dev/null
+      sleep 0.5
+      herdr agent send-keys "$name" enter >/dev/null
+    elif grep -q 'Do you trust the contents of this directory' <<<"$txt"; then
+      log "$name: accepting Codex trust dialog (attempt $i)"
+      herdr agent send-keys "$name" enter >/dev/null
+    elif grep -qE 'hooks need review|Press enter to view hooks' <<<"$txt"; then
+      log "$name: closing Codex hooks dialog without enabling hooks (attempt $i)"
+      herdr agent send-keys "$name" esc >/dev/null
+    else
+      status=$(agent_status "$name")
+      case $status in
+        idle | done) return 0 ;;
+        blocked) attention "$name" "is blocked on a dialog I do not recognize; answer it in its pane" ;;
+      esac
+    fi
+    sleep 3
+  done
+  status=$(agent_status "$name")
+  case $status in idle | done) return 0 ;; esac
+  die "$name: still $status after startup; look at its pane"
+}
+
+# start_agent name kind pane [agent args...]
+start_agent() {
+  local name=$1 kind=$2 pane=$3 out code i
+  shift 3
+  for i in 1 2 3 4 5; do
+    if out=$(herdr agent start "$name" --kind "$kind" --pane "$pane" --timeout 90000 -- "$@" 2>&1); then
+      sleep 2
+      settle_dialogs "$name"
+      return 0
+    fi
+    code=$(herr_code "$out")
+    case $code in
+      agent_not_ready)
+        settle_dialogs "$name"
+        return 0
+        ;;
+      pane_not_available | pane_busy | shell_not_ready)
+        sleep 1
+        ;;
+      *) die "start $name: $(jq -r '.error.message // .' <<<"$out")" ;;
+    esac
+  done
+  die "start $name: pane $pane never became an available shell"
+}
+
+# ask name text: send a prompt and wait for the turn to settle, handing blocks to the human.
+ask() {
+  local name=$1 text=$2 out status stalls=0
+  while :; do
+    if out=$(herdr agent prompt "$name" "$text" --wait --timeout "$FACTORY_TURN_TIMEOUT_MS" 2>&1); then
+      break
+    fi
+    case $(herr_code "$out") in
+      agent_prompt_stalled)
+        stalls=$((stalls + 1))
+        ((stalls < 3)) || die "$name: prompt stalled 3 times; look at its pane"
+        settle_dialogs "$name"
+        ;;
+      agent_blocked)
+        attention "$name" "is waiting for your input"
+        wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" >/dev/null
+        ;;
+      *) die "$name: $(jq -r '.error.message // .' <<<"$out")" ;;
+    esac
+  done
+  status=$(jq -r '.result.agent.agent_status' <<<"$out")
+  while [[ $status == blocked ]]; do
+    attention "$name" "is waiting for your input"
+    status=$(wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done")
+  done
+}
+
+# ask_for_file name text file: like ask, but the turn only counts once the file exists.
+ask_for_file() {
+  local name=$1 text=$2 file=$3
+  ask "$name" "$text"
+  [[ -s $file ]] && return 0
+  warn "$name replied but $file is missing; asking again"
+  ask "$name" "You replied, but $file does not exist. Write it now and reply DONE."
+  [[ -s $file ]] || die "$name never wrote $file"
+}
+
+# ----------------------------------------------------------------- beads ----
+bd_field() { # repo id jq-expr
+  bd -C "$1" show "$2" --json 2>/dev/null | jq -r "if type == \"array\" then .[0] else . end | $3"
+}
+
+is_bead_id() { [[ $1 =~ ^[a-z][a-z0-9]*-[a-z0-9]+$ ]]; }
+
+# resolve_task repo arg -> TASK_ID TASK_TITLE TASK_DESC
+resolve_task() {
+  local repo=$1 arg=$2
+  [[ -d $repo/.beads ]] || die "no beads in $repo; run: factory init $repo"
+  if is_bead_id "$arg" && bd -C "$repo" show "$arg" --json >/dev/null 2>&1; then
+    TASK_ID=$arg
+    TASK_TITLE=$(bd_field "$repo" "$arg" '.title')
+    TASK_DESC=$(bd_field "$repo" "$arg" '.description // ""')
+  else
+    TASK_ID=$(bd -C "$repo" create "$arg" --silent)
+    TASK_TITLE=$arg
+    TASK_DESC=""
+    log "filed $TASK_ID: $arg"
+  fi
+}
+
+memory_block() { # repo -> text to append to prompts, empty if no memories
+  local mem
+  mem=$(bd -C "$1" memories 2>/dev/null) || mem=""
+  if [[ -z $mem ]] || grep -q 'No memories stored' <<<"$mem"; then return 0; fi
+  printf '\nNotes from earlier work on this repo (bd memories; bd recall <key> for details):\n%s\n' "$mem"
+}
+
+# ------------------------------------------------------- gate and guards ----
+resolve_gate() { # repo
+  if [[ -n ${FACTORY_GATE:-} ]]; then
+    printf '%s' "$FACTORY_GATE"
+  elif [[ -f $1/.factory/gate ]]; then
+    printf 'bash .factory/gate'
+  elif detect_gate "$1"; then
+    return 0
+  else
+    die "no gate for $1: set FACTORY_GATE, or add .factory/gate (factory init writes one when it can)"
+  fi
+}
+
+# detect_gate repo -> the command a repo's own convention suggests, empty if none.
+detect_gate() {
+  local r=$1 t
+  if [[ -x $r/bin/test ]]; then
+    printf './bin/test'
+    return 0
+  fi
+  if [[ -f $r/justfile ]] && grep -qE '^ci:' "$r/justfile"; then
+    printf 'just ci'
+    return 0
+  fi
+  if [[ -f $r/Makefile ]]; then
+    for t in ci check test; do
+      if grep -qE "^$t:" "$r/Makefile"; then
+        printf 'make %s' "$t"
+        return 0
+      fi
+    done
+  fi
+  if [[ -f $r/Cargo.toml ]]; then
+    printf 'cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test'
+    return 0
+  fi
+  if [[ -f $r/package.json ]] && jq -e '.scripts.test' "$r/package.json" >/dev/null 2>&1; then
+    printf 'npm test'
+    return 0
+  fi
+  if [[ -f $r/pyproject.toml ]]; then
+    printf 'python3 -m pytest -q'
+    return 0
+  fi
+  if [[ -f $r/go.mod ]]; then
+    printf 'go vet ./... && go test ./...'
+    return 0
+  fi
+  if [[ -f $r/mix.exs ]]; then
+    printf 'mix test'
+    return 0
+  fi
+  if [[ -x $r/gradlew ]]; then
+    printf './gradlew check'
+    return 0
+  fi
+  if [[ -f $r/pom.xml ]]; then
+    printf 'mvn -q verify'
+    return 0
+  fi
+  return 1
+}
+
+# write_gate repo command: a committed script the factory runs as the definition of done.
+write_gate() {
+  mkdir -p "$1/.factory"
+  cat >"$1/.factory/gate" <<G
+#!/usr/bin/env bash
+# The factory's definition of done. Detected by factory init; make it as strict as you like.
+set -euo pipefail
+$2
+G
+  chmod +x "$1/.factory/gate"
+}
+
+protected_globs() { # repo -> one glob per line
+  printf '%s\n' .factory/gate .factory/protected
+  [[ -f $1/.factory/protected ]] && grep -vE '^\s*(#|$)' "$1/.factory/protected"
+  return 0
+}
+
+run_gate() { # worktree gate logfile
+  log "gate: $2"
+  if (cd "$1" && bash -c "$2") >"$3" 2>&1; then
+    log "gate passed"
+    return 0
+  fi
+  warn "gate failed, log: $3"
+  return 1
+}
+
+# guard_check worktree base: mechanical guardrails on the branch. Prints violations.
+guard_check() {
+  local wt=$1 base=$2 bad=0 f globs
+  if [[ -n $(git -C "$wt" status --porcelain --untracked-files=all -- . ':(exclude).factory') ]]; then
+    printf 'uncommitted changes in the worktree; commit your work (ignore build artifacts, do not commit them)\n'
+    bad=1
+  fi
+  if [[ $(git -C "$wt" rev-list --count "$base..HEAD") -eq 0 ]]; then
+    printf 'no commits on the branch since %s\n' "$base"
+    bad=1
+  fi
+  while IFS= read -r f; do
+    printf 'build artifact committed: %s\n' "$f"
+    bad=1
+  done < <(git -C "$wt" diff --name-only --diff-filter=A "$base...HEAD" | grep -E '(^|/)(__pycache__/|node_modules/|\.DS_Store$|.*\.pyc$|.*\.class$|.*\.o$)')
+  if ((FACTORY_REQUIRE_TESTS)) && ! tests_changed_with_source "$wt" "$base"; then
+    printf 'source files changed but no test files did; add or adjust a test\n'
+    bad=1
+  fi
+  mapfile -t globs < <(protected_globs "$wt")
+  while IFS= read -r f; do
+    printf 'protected path changed: %s\n' "$f"
+    bad=1
+  done < <(git -C "$wt" diff --name-only "$base...HEAD" -- "${globs[@]}")
+  local hits=0
+  while IFS= read -r f; do
+    if git -C "$wt" diff -U0 "$base...HEAD" -- "$f" | grep -E '^\+[^+]' \
+      | grep -E -f <(grep -vE '^\s*(#|$)' "$FACTORY_GUARDRAILS") | sed "s|^+|$f: |"; then
+      hits=1
+    fi
+  done < <(git -C "$wt" diff --name-only "$base...HEAD" -- . ':(exclude).factory')
+  if ((hits)); then
+    printf 'the lines above match a forbidden pattern (see %s)\n' "$FACTORY_GUARDRAILS"
+    bad=1
+  fi
+  return $bad
+}
+
+# tests_changed_with_source worktree base: true unless code changed and no test file did.
+tests_changed_with_source() {
+  local files src tests
+  files=$(git -C "$1" diff --name-only "$2...HEAD" -- . ':(exclude).factory')
+  src=$(grep -E '\.(py|js|jsx|ts|tsx|go|rs|java|kt|kts|scala|sh|bash|rb|ex|exs|c|cc|cpp|h|hpp|cs|swift|php|lua|clj|el)$' <<<"$files" | grep -vE "$TEST_PATH_RE") || src=""
+  tests=$(grep -E "$TEST_PATH_RE" <<<"$files") || tests=""
+  [[ -z $src || -n $tests ]]
+}
+TEST_PATH_RE='(^|/)(tests?|spec|specs|__tests__|bats)/|(^|/)test_[^/]*\.py$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|scala|cs|swift)$|_spec\.rb$|\.bats$'
+
+verdict_of() { # review file -> APPROVE | REVISE | (empty)
+  grep -oE '^VERDICT:\s*(APPROVE|REVISE)' "$1" 2>/dev/null | tail -n1 | grep -oE 'APPROVE|REVISE'
+}
+
+verdicts() { # files... -> one word per file, NONE when missing
+  local f v out=""
+  for f in "$@"; do
+    v=$(verdict_of "$f") || v=NONE
+    out+="${out:+ }$v"
+  done
+  printf '%s' "$out"
+}
+
+# ------------------------------------------------------------------- pr ----
+pr_body() { # round
+  cat <<B
+Bead $TASK_ID: $TASK_TITLE
+
+$TASK_DESC
+
+## Plan
+
+$(cat "$WT/$RUN_DIR/plan.md")
+
+## Checks
+
+- Gate \`$GATE\` passed (round $1)
+- Factory guardrails passed
+- Review: Codex approved, planner approved (round $1)
+
+Built by factory on branch \`$BRANCH\`.
+B
+}
+
+raise_pr() { # round -> prints the PR url
+  need gh
+  git -C "$WT" remote get-url origin >/dev/null 2>&1 || die "FACTORY_PR=1 but $WT has no origin remote"
+  git -C "$WT" push -q -u origin "$BRANCH"
+  (cd "$WT" && gh pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body "$1")")
+}
+
+# --------------------------------------------------------------- prompts ----
+plan_prompt() {
+  cat <<P
+Task $TASK_ID: $TASK_TITLE
+
+$TASK_DESC
+
+You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
+Do not write the code itself.
+If the task is ambiguous in a way that would change the design, do not plan yet: write your numbered questions to $RUN_DIR/questions.md and reply with just QUESTIONS. Prefer a plan with stated assumptions over questions when the ambiguity is minor.
+$MEMORY
+Reply with just PLAN READY once the file is written.
+P
+}
+
+build_prompt() {
+  cat <<P
+Task $TASK_ID: $TASK_TITLE
+
+Implement $RUN_DIR/plan.md (now final) on this branch ($BRANCH) in this worktree. Run the gate until it passes: $GATE
+Commit when done; do not push. The factory tracks and closes bead $TASK_ID itself. Files under .factory/ are ignored by git. Do not change: $(protected_globs "$WT" | tr '\n' ' ')
+No skipped tests, suppressed warnings, or swallowed errors; fix things properly.
+$MEMORY
+Reply with just DONE when finished.
+P
+}
+
+gate_fix_prompt() { # logfile
+  cat <<P
+The gate failed ($GATE). Last lines of $1:
+
+$(tail -n 40 "$1")
+
+Fix it, run the gate until green, commit, then reply DONE.
+P
+}
+
+guard_fix_prompt() { # violations text
+  cat <<P
+The factory guardrails rejected the branch:
+
+$1
+
+Fix the cause (no suppressions, no skipped tests, no swallowed errors, leave protected files alone), make sure everything is committed, then reply DONE.
+P
+}
+
+review_prompt() { # round
+  cat <<P
+Review task $TASK_ID: $TASK_TITLE
+The plan is in $RUN_DIR/plan.md. The changes: git diff $BASE...HEAD
+Look for bugs, missed requirements, shortcuts (skipped tests, suppressed warnings, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.
+Write the review to $RUN_DIR/review-$1.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
+Reply with just DONE once the file is written.
+P
+}
+
+plan_review_prompt() {
+  cat <<P
+Task $TASK_ID: $TASK_TITLE
+
+$TASK_DESC
+
+A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Point out real gaps only.
+Write your notes to $RUN_DIR/plan-review.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
+Reply with just DONE once the file is written.
+P
+}
+
+plan_build_check_prompt() {
+  cat <<P
+Task $TASK_ID: $TASK_TITLE
+
+$TASK_DESC
+
+You will implement $RUN_DIR/plan.md next. Read it against this repo first: is it concrete enough to build, is its design the simplest that fits this codebase, does it miss anything the task needs, or add anything it does not? Note real gaps only.
+Write your notes to $RUN_DIR/plan-review-build.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
+Reply with just DONE once the file is written.
+P
+}
+
+answers_prompt() { # answers
+  cat <<P
+Answers to your questions in $RUN_DIR/questions.md:
+
+$1
+
+Now write $RUN_DIR/plan.md as described before and reply with just PLAN READY. If something is still unclear, replace $RUN_DIR/questions.md with the remaining questions and reply QUESTIONS.
+P
+}
+
+human_note_prompt() { # note
+  cat <<P
+The human reviewed $RUN_DIR/plan.md and says: $1
+Update the plan accordingly and reply with just PLAN READY.
+P
+}
+
+# approve_plan planner-agent plan-file: wait for the human. Answer in this terminal,
+# or from anywhere with `factory approve` / `factory reject`, which write files next to
+# the plan. Returns 0 on approval, 3 on abort.
+approve_plan() {
+  local plan_agent=$1 file=$2 dir answer note stdin_open=1 rc
+  dir=$(dirname "$file")
+  [[ $FACTORY_PLAN_APPROVAL == ask ]] || return 0
+  rm -f "$dir/plan.approved" "$dir/plan-reject.md"
+  while :; do
+    toast "factory: $TASK_ID plan ready" "$TASK_TITLE. Approve it in the factory terminal or with: factory approve" request
+    printf '\n\033[34m[factory]\033[0m plan for %s (%s):\n\n' "$TASK_ID" "$file" >&2
+    sed 's/^/    /' "$file" >&2
+    printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), [r]evise with a note, a[b]ort? (a/r/b) ' >&2
+    answer=""
+    while :; do
+      if [[ -s $dir/plan-reject.md ]]; then
+        note=$(<"$dir/plan-reject.md")
+        rm -f "$dir/plan-reject.md"
+        printf '\n' >&2
+        log "reject note received, sending it to the planner"
+        ask "$plan_agent" "$(human_note_prompt "$note")"
+        continue 2
+      fi
+      if [[ -e $dir/plan.approved ]]; then
+        rm -f "$dir/plan.approved"
+        printf '\n' >&2
+        log "approved via file"
+        return 0
+      fi
+      if ((stdin_open)); then
+        rc=0
+        read -r -t "$FACTORY_POLL_SECONDS" answer || rc=$?
+        ((rc == 0)) && break
+        if ((rc <= 128)); then
+          stdin_open=0
+          printf '\n' >&2
+          log "no terminal to answer from; waiting for: factory approve <repo> $TASK_ID  (or reject)"
+        fi
+      else
+        sleep "$FACTORY_POLL_SECONDS"
+      fi
+    done
+    case $answer in
+      a | A | y | Y) return 0 ;;
+      r | R)
+        printf '\033[34m[factory]\033[0m note for the planner: ' >&2
+        read -r note || return 3
+        [[ -n $note ]] || continue
+        ask "$plan_agent" "$(human_note_prompt "$note")"
+        ;;
+      b | B | n | N) return 3 ;;
+    esac
+  done
+}
+
+# collect_answers questions-file: show the planner's questions and wait for the human.
+# Answers come from this terminal (lines until one containing only ".") or from
+# `factory answer`, which writes answers.md next to the questions. Prints the answers.
+collect_answers() {
+  local q=$1 dir line stdin_open=1 rc answers=""
+  dir=$(dirname "$q")
+  rm -f "$dir/answers.md"
+  toast "factory: $TASK_ID has questions" "$TASK_TITLE. Answer in the factory terminal or with: factory answer" request
+  printf '\n\033[34m[factory]\033[0m the planner asks (%s):\n\n' "$q" >&2
+  sed 's/^/    /' "$q" >&2
+  printf '\n\033[34m[factory]\033[0m answer below, finish with a line containing only "."  (or: factory answer <repo> %s "...")\n' "$TASK_ID" >&2
+  while :; do
+    if [[ -s $dir/answers.md ]]; then
+      answers=$(<"$dir/answers.md")
+      rm -f "$dir/answers.md"
+      log "answers received via file"
+      printf '%s' "$answers"
+      return 0
+    fi
+    if ((stdin_open)); then
+      rc=0
+      read -r -t "$FACTORY_POLL_SECONDS" line || rc=$?
+      if ((rc == 0)); then
+        [[ $line == . ]] && break
+        answers+="${answers:+$'\n'}$line"
+      elif ((rc <= 128)); then
+        stdin_open=0
+        [[ -n $answers ]] && break
+        log "no terminal to answer from; waiting for: factory answer <repo> $TASK_ID \"...\""
+      fi
+    else
+      sleep "$FACTORY_POLL_SECONDS"
+    fi
+  done
+  [[ -n $answers ]] || return 3
+  printf '%s' "$answers"
+}
+
+# plan_or_interview planner-agent: ask for a plan; relay questions and answers until one exists.
+plan_or_interview() {
+  local plan_agent=$1 q="$WT/$RUN_DIR/questions.md" file="$WT/$RUN_DIR/plan.md" rounds=0 answers
+  rm -f "$q"
+  ask "$plan_agent" "$(plan_prompt)"
+  while [[ ! -s $file ]]; do
+    if [[ -s $q ]]; then
+      rounds=$((rounds + 1))
+      ((rounds <= 3)) || die "planner still has questions after 3 rounds; talk to it in its pane"
+      log "planner has questions (round $rounds)"
+      answers=$(collect_answers "$q") || return 3
+      rm -f "$q"
+      ask "$plan_agent" "$(answers_prompt "$answers")"
+    else
+      warn "$plan_agent replied but wrote neither plan.md nor questions.md; asking again"
+      ask "$plan_agent" "You replied, but neither $RUN_DIR/plan.md nor $RUN_DIR/questions.md exists. Write one of them and reply again."
+      [[ -s $file || -s $q ]] || die "$plan_agent never wrote $RUN_DIR/plan.md"
+    fi
+  done
+}
+
+worktree_of() { # repo bead-id -> checkout path of factory/<id>, empty if none
+  git -C "$1" worktree list --porcelain | awk -v b="refs/heads/factory/$2" '$1 == "worktree" {p = $2} $1 == "branch" && $2 == b {print p}'
+}
+
+plan_fix_prompt() {
+  cat <<P
+Reviewers left notes on your plan in $RUN_DIR/plan-review.md and $RUN_DIR/plan-review-build.md. Update $RUN_DIR/plan.md where they are right; ignore what is not.
+Reply with just PLAN READY when done.
+P
+}
+
+plan_check_prompt() { # round
+  cat <<P
+The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $BASE...HEAD
+Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.
+Write your notes to $RUN_DIR/review-$1-plan.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
+Reply with just DONE once the file is written.
+P
+}
+
+revise_prompt() { # round
+  cat <<P
+Reviewers asked for changes in $RUN_DIR/review-$1.md and $RUN_DIR/review-$1-plan.md. Fix real issues; if a point is wrong, say why in $RUN_DIR/response-$1.md instead.
+The gate must pass: $GATE
+Commit, then reply DONE.
+P
+}
+
+memory_prompt() {
+  cat <<P
+Last thing: anything a future agent on this repo should know (gotchas, conventions, how to run things)? Store each as: bd remember "..."
+Skip what is obvious from the code. Reply with just DONE.
+P
+}
+
+# ------------------------------------------------------------- pipeline ----
+open_workspace() { # repo branch label -> WS WT BUILD_PANE
+  local out
+  # Herdr checks out an existing branch too; open is the fallback for a checkout that already exists.
+  if ! out=$(herdr worktree create --cwd "$1" --branch "$2" --label "$3" --no-focus 2>&1); then
+    log "worktree create failed ($(jq -r '.error.message // .' <<<"$out")); trying to open it"
+    out=$(h worktree open --cwd "$1" --branch "$2" --label "$3" --no-focus)
+  fi
+  WS=$(jq -r '.result.workspace.workspace_id' <<<"$out")
+  WT=$(jq -r '.result.worktree.path' <<<"$out")
+  BUILD_PANE=$(jq -r '.result.root_pane.pane_id' <<<"$out")
+  [[ -n $WS && -n $WT && -n $BUILD_PANE ]] || die "unexpected worktree response: $out"
+}
+
+run_task() { # repo arg
+  local repo arg round=1 status verdict violations gate_log
+  repo=$(cd "$1" && pwd) && arg=$2
+  git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$repo is not a git repo"
+
+  resolve_task "$repo" "$arg"
+  GATE=$(resolve_gate "$repo")
+  BASE=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  BRANCH="factory/$TASK_ID"
+  MEMORY=$(memory_block "$repo")
+
+  log "task $TASK_ID: $TASK_TITLE"
+  log "models: plan=$FACTORY_PLAN_MODEL build=$FACTORY_BUILD_MODEL review=$FACTORY_REVIEW_MODEL"
+  log "gate: $GATE$([[ -n ${FACTORY_GATE:-} || -f $repo/.factory/gate ]] || printf ' (detected from the repo; add .factory/gate to make it explicit)') | base: $BASE | rounds: $FACTORY_ROUNDS | claude: $FACTORY_CLAUDE_PERMISSIONS"
+
+  bd -C "$repo" update "$TASK_ID" --claim >/dev/null
+  open_workspace "$repo" "$BRANCH" "$TASK_ID $TASK_TITLE"
+  mkdir -p "$WT/$RUN_DIR"
+  local exclude
+  exclude="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+  grep -qsxF '.factory/run/' "$exclude" || printf '.factory/run/\n' >>"$exclude"
+  log "workspace $WS at $WT"
+
+  local plan_pane review_pane
+  plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.6 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
+  review_pane=$(h pane split --pane "$plan_pane" --direction down --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
+  h pane rename "$BUILD_PANE" build >/dev/null
+  h pane rename "$plan_pane" plan >/dev/null
+  h pane rename "$review_pane" review >/dev/null
+  sleep 1
+  local pane
+  for pane in "$BUILD_PANE" "$plan_pane" "$review_pane"; do
+    h pane run "$pane" "export PATH='$PATH'; clear" >/dev/null
+  done
+  sleep 1
+
+  local plan="$TASK_ID-plan" build="$TASK_ID-build" review="$TASK_ID-review"
+  local repo_root
+  repo_root=$(git -C "$repo" rev-parse --show-toplevel)
+  start_agent "$plan" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
+  start_agent "$build" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
+  start_agent "$review" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
+    -c "projects.\"$repo_root\".trust_level=\"trusted\"" \
+    -c "sandbox_workspace_write.writable_roots=[\"$repo_root/.beads\"]"
+  log "agents up: $plan $build $review"
+
+  log "planning"
+  if ! plan_or_interview "$plan"; then
+    bd -C "$repo" comment "$TASK_ID" "factory: stopped at planner questions. workspace $WS, worktree $WT" >/dev/null
+    die "stopped at planner questions for $TASK_ID; the workspace stays open"
+  fi
+  log "plan review: $review and $build"
+  ask_for_file "$review" "$(plan_review_prompt)" "$WT/$RUN_DIR/plan-review.md"
+  ask_for_file "$build" "$(plan_build_check_prompt)" "$WT/$RUN_DIR/plan-review-build.md"
+  verdict=$(verdicts "$WT/$RUN_DIR/plan-review.md" "$WT/$RUN_DIR/plan-review-build.md")
+  log "plan verdicts: $verdict"
+  if [[ $verdict != "APPROVE APPROVE" ]]; then
+    log "plan revision"
+    ask "$plan" "$(plan_fix_prompt)"
+  fi
+  if ! approve_plan "$plan" "$WT/$RUN_DIR/plan.md"; then
+    bd -C "$repo" comment "$TASK_ID" "factory: stopped at plan approval. workspace $WS, worktree $WT" >/dev/null
+    die "stopped at plan approval for $TASK_ID; the workspace stays open"
+  fi
+
+  log "building"
+  ask "$build" "$(build_prompt)"
+
+  verdict=""
+  while ((round <= FACTORY_ROUNDS)); do
+    gate_log="$WT/$RUN_DIR/gate-$round.log"
+    if ! run_gate "$WT" "$GATE" "$gate_log"; then
+      ask "$build" "$(gate_fix_prompt "$gate_log")"
+      round=$((round + 1))
+      continue
+    fi
+    if ! violations=$(guard_check "$WT" "$BASE"); then
+      warn "guardrails: $violations"
+      ask "$build" "$(guard_fix_prompt "$violations")"
+      round=$((round + 1))
+      continue
+    fi
+    log "review round $round: $review and $plan"
+    ask_for_file "$review" "$(review_prompt "$round")" "$WT/$RUN_DIR/review-$round.md"
+    ask_for_file "$plan" "$(plan_check_prompt "$round")" "$WT/$RUN_DIR/review-$round-plan.md"
+    verdict=$(verdicts "$WT/$RUN_DIR/review-$round.md" "$WT/$RUN_DIR/review-$round-plan.md")
+    log "verdicts: $verdict"
+    case $verdict in
+      "APPROVE APPROVE")
+        verdict=APPROVE
+        break
+        ;;
+      *)
+        verdict=REVISE
+        ask "$build" "$(revise_prompt "$round")"
+        round=$((round + 1))
+        ;;
+    esac
+  done
+
+  ask "$build" "$(memory_prompt)"
+
+  local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $round, verdict: ${verdict:-none}"
+  if [[ $verdict == APPROVE ]] && [[ -f $gate_log ]] && guard_check "$WT" "$BASE" >/dev/null; then
+    local pr="" next="merge $BRANCH"
+    if ((FACTORY_PR)); then
+      pr=$(raise_pr "$round")
+      next="review $pr"
+      log "opened $pr"
+    fi
+    bd -C "$repo" comment "$TASK_ID" "factory: approved. $summary${pr:+, pr $pr}" >/dev/null
+    bd -C "$repo" close "$TASK_ID" -r "factory: gate green, review approved; $next" >/dev/null
+    toast "factory: $TASK_ID done" "$TASK_TITLE. ${next^}." "done"
+    log "done: $summary${pr:+, pr $pr}"
+  else
+    bd -C "$repo" comment "$TASK_ID" "factory: needs a human. $summary" >/dev/null
+    toast "factory: $TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
+    warn "not approved after $FACTORY_ROUNDS rounds: $summary"
+    return 2
+  fi
+}
+
+# --------------------------------------------------------------- commands ----
+cmd_doctor() {
+  local ok=0 t
+  for t in herdr claude codex bd jq git; do
+    if command -v "$t" >/dev/null 2>&1; then printf '  ok       %s\n' "$t"; else
+      printf '  MISSING  %s\n' "$t"
+      ok=1
+    fi
+  done
+  if herdr agent list >/dev/null 2>&1; then printf '  ok       herdr server\n'; else
+    printf '  MISSING  herdr server (start herdr first)\n'
+    ok=1
+  fi
+  # Claude Code runs its shell commands from a fresh login shell, not the pane's environment,
+  # so bd must resolve there (e.g. mise use -g, or a symlink in ~/.local/bin).
+  if bash -lc 'bd version' >/dev/null 2>&1; then printf '  ok       bd from a fresh login shell\n'; else
+    printf '  MISSING  bd from a fresh login shell (agents will not be able to use beads)\n'
+    ok=1
+  fi
+  [[ -f $FACTORY_GUARDRAILS ]] && printf '  ok       guardrails %s\n' "$FACTORY_GUARDRAILS"
+  return $ok
+}
+
+cmd_status() {
+  h agent list | jq -r '.result.agents[] | select(.name // "" | test("-(plan|build|review)$")) |
+    "\(.name)\t\(.agent_status)\t\(.workspace_id)\t\(.cwd)"'
+}
+
+cmd_init() {
+  local repo=$1
+  shift
+  [[ -d $repo/.git ]] || die "$repo is not a git repo"
+  if [[ -d $repo/.beads ]]; then log "beads already set up in $repo"; else
+    # No generated AGENTS.md/CLAUDE.md, hooks, or editor files: the prompts carry what agents need.
+    (cd "$repo" && BD_NON_INTERACTIVE=1 bd init --non-interactive --skip-agents --skip-hooks "$@")
+  fi
+  local gate
+  if [[ -f $repo/.factory/gate ]]; then
+    log "gate: .factory/gate already exists"
+  elif gate=$(detect_gate "$repo"); then
+    write_gate "$repo" "$gate"
+    log "wrote .factory/gate running: $gate  (review it, then commit it; runs need it committed)"
+  else
+    warn "no gate detected: write $repo/.factory/gate (a script that runs your checks) and commit it"
+  fi
+  if [[ ! -e $repo/AGENTS.md && ! -e $repo/CLAUDE.md ]]; then
+    write_agents_stub "$repo"
+    log "wrote a short AGENTS.md stub (CLAUDE.md links to it); fill in what the code cannot tell a new engineer"
+  fi
+}
+
+write_agents_stub() { # repo
+  local gate
+  gate=$(resolve_gate "$1" 2>/dev/null) || gate="<your gate command>"
+  cat >"$1/AGENTS.md" <<STUB
+# $(basename "$1")
+
+One or two lines on what this project is.
+
+## Run and verify
+
+- Gate: \`$gate\` must pass. It is the definition of done.
+
+## Layout
+
+- Short notes on where things live, only where the tree is not self-explanatory.
+
+## Rules that the code cannot tell you
+
+- What not to touch, and why.
+- External systems, credentials, environments.
+- Deliberate odd choices and their reasons.
+STUB
+  ln -s AGENTS.md "$1/CLAUDE.md"
+}
+
+# compose_task: title on the first line, blank line, description. Uses $VISUAL/$EDITOR
+# when there is a terminal, otherwise reads the same format from stdin (until Ctrl-D).
+# Sets TASK_TITLE and TASK_DESC; fails on an empty title.
+compose_task() {
+  local editor=${VISUAL:-${EDITOR:-}} f body
+  f=$(mktemp)
+  if [[ -n $editor && -t 0 ]]; then
+    printf '\n\n# First line: title. Then a blank line and the description (markdown is fine).\n# Lines starting with # are dropped. An empty title aborts.\n' >"$f"
+    ${editor} "$f"
+  else
+    log "title on the first line, blank line, then the description; finish with Ctrl-D"
+    cat >"$f"
+  fi
+  body=$(grep -vE '^#' "$f")
+  rm -f "$f"
+  TASK_TITLE=$(sed -n '/[^[:space:]]/{p;q}' <<<"$body" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  [[ -n $TASK_TITLE ]] || die "empty title, nothing filed"
+  TASK_DESC=$(sed '1,/[^[:space:]]/d' <<<"$body" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' | sed '/./,$!d')
+}
+
+cmd_add() {
+  local repo=$1
+  shift
+  [[ -d $repo/.beads ]] || die "no beads in $repo; run: factory init $repo"
+  if (($# == 0)); then
+    compose_task
+  else
+    TASK_TITLE=$1
+    TASK_DESC=${2:-}
+  fi
+  bd -C "$repo" create "$TASK_TITLE" -d "$TASK_DESC"
+}
+
+cmd_next() {
+  local repo=$1 id
+  id=$(bd -C "$repo" ready --json 2>/dev/null | jq -r 'if type == "array" then .[0].id // empty else .id // empty end') || id=""
+  [[ -n $id ]] || {
+    log "nothing ready in $repo"
+    return 3
+  }
+  run_task "$repo" "$id"
+}
+
+cmd_queue() {
+  local repo=$1 max=${2:-0} n=0 rc
+  while ((max == 0 || n < max)); do
+    rc=0
+    cmd_next "$repo" || rc=$?
+    ((rc == 3)) && break
+    ((rc == 0)) || warn "task stopped with status $rc; continuing with the next one"
+    n=$((n + 1))
+  done
+  log "queue finished after $n task(s)"
+}
+
+cmd_approve() { # repo bead-id
+  local wt
+  wt=$(worktree_of "$1" "$2")
+  [[ -n $wt ]] || die "no worktree for factory/$2 in $1"
+  : >"$wt/$RUN_DIR/plan.approved"
+  log "approved plan for $2"
+}
+
+cmd_reject() { # repo bead-id note
+  local wt
+  wt=$(worktree_of "$1" "$2")
+  [[ -n $wt ]] || die "no worktree for factory/$2 in $1"
+  printf '%s\n' "$3" >"$wt/$RUN_DIR/plan-reject.md"
+  log "sent your note to the planner of $2"
+}
+
+cmd_answer() { # repo bead-id [text | -]
+  local wt text=${3:-}
+  wt=$(worktree_of "$1" "$2")
+  [[ -n $wt ]] || die "no worktree for factory/$2 in $1"
+  if [[ -z $text || $text == - ]]; then text=$(cat); fi
+  [[ -n $text ]] || die "empty answer"
+  printf '%s\n' "$text" >"$wt/$RUN_DIR/answers.md"
+  log "sent your answers to the planner of $2"
+}
+
+cmd_check() { # worktree base
+  local gate log_file
+  gate=$(resolve_gate "$1")
+  log_file=$(mktemp)
+  trap 'rm -f "$log_file"' EXIT
+  run_gate "$1" "$gate" "$log_file" || {
+    tail -n 40 "$log_file"
+    return 1
+  }
+  guard_check "$1" "$2" && log "guardrails passed"
+}
+
+main() {
+  local cmd=${1:-help} t
+  if (($# > 0)); then shift; fi
+  case $cmd in
+    run)
+      (($# == 2)) || die "usage: factory run <repo> <bead-id | task>"
+      for t in herdr claude codex bd jq git; do need "$t"; done
+      run_task "$1" "$2"
+      ;;
+    next)
+      (($# == 1)) || die "usage: factory next <repo>"
+      for t in herdr claude codex bd jq git; do need "$t"; done
+      cmd_next "$1"
+      ;;
+    queue)
+      (($# >= 1)) || die "usage: factory queue <repo> [max]"
+      for t in herdr claude codex bd jq git; do need "$t"; done
+      cmd_queue "$@"
+      ;;
+    add)
+      (($# >= 1)) || die "usage: factory add <repo> [\"title\" [description]]"
+      need bd
+      cmd_add "$@"
+      ;;
+    init)
+      (($# >= 1)) || die "usage: factory init <repo> [bd init args...]"
+      need bd
+      cmd_init "$@"
+      ;;
+    approve)
+      (($# == 2)) || die "usage: factory approve <repo> <bead-id>"
+      cmd_approve "$1" "$2"
+      ;;
+    reject)
+      (($# == 3)) || die "usage: factory reject <repo> <bead-id> \"note for the planner\""
+      cmd_reject "$1" "$2" "$3"
+      ;;
+    answer)
+      (($# >= 2)) || die "usage: factory answer <repo> <bead-id> [\"answers\" | -]  (stdin when omitted or -)"
+      cmd_answer "$@"
+      ;;
+    check)
+      (($# == 2)) || die "usage: factory check <worktree> <base>"
+      need git
+      cmd_check "$1" "$2"
+      ;;
+    status) need herdr && cmd_status ;;
+    doctor) cmd_doctor ;;
+    -h | --help | help) usage ;;
+    -V | --version) printf 'factory %s\n' "$FACTORY_VERSION" ;;
+    *) die "unknown command: $cmd (try: factory help)" ;;
+  esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

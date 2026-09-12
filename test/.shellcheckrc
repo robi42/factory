@@ -1,0 +1,3 @@
+# Test doubles (toast, ask) are defined here and invoked by the code under test,
+# which ShellCheck cannot see; the "function never invoked" info would fire on every stub.
+disable=SC2329

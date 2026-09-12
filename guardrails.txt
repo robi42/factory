@@ -1,0 +1,29 @@
+# One extended regex per line. Matched against lines ADDED on a factory branch.
+# Adapted from florianbuetow/ai-guardrails: no swallowed errors, no suppressed
+# checks, no skipped tests. Edit to taste; blank lines and # comments are ignored.
+
+# swallowed shell failures
+\|\|[[:space:]]*(true|:|exit 0|/bin/true)\b
+
+# silenced checkers
+#[[:space:]]*noqa
+#[[:space:]]*type:[[:space:]]*ignore
+#[[:space:]]*nosec
+#[[:space:]]*shellcheck[[:space:]]+disable
+#[[:space:]]*pragma:[[:space:]]*no[[:space:]]*cover
+eslint-disable
+@ts-(ignore|expect-error|nocheck)
+@SuppressWarnings
+#\[allow\(
+//[[:space:]]*nolint
+ignore_missing_imports[[:space:]]*=[[:space:]]*true
+
+# skipped or disabled tests
+pytest\.(mark\.)?(skip|skipif|xfail)
+unittest\.skip
+@Disabled
+@Ignore\b
+\b(it|test|describe)\.(skip|todo)\(
+\bx(it|test|describe)\(
+t\.Skip\(
+#\[ignore\]
