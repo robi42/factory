@@ -23,6 +23,8 @@ The CLI is `factory`; `fy` is the alias used below.
 - **You stay in the loop** where it counts: the planner may ask you questions, you
   approve every plan, and you merge.
 
+![A Herdr workspace mid-run: the builder (Opus 5) implementing on the left, the planner (Fable 5.1) revising after a human note top right, the Codex reviewer (GPT 6 Astra) bottom right](assets/screenshot.png)
+
 Every task gets its own git worktree and Herdr workspace, so you can watch or step in.
 The agents are your normal `claude` and `codex` sessions, so your skills, MCP servers,
 hooks, `CLAUDE.md` and `AGENTS.md` apply unchanged; Factory adds no instruction files.
