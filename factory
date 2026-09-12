@@ -18,6 +18,10 @@ FACTORY_VERSION=0.1.0
 : "${FACTORY_PLAN_APPROVAL:=ask}"
 : "${FACTORY_POLL_SECONDS:=5}"
 : "${FACTORY_PR:=0}"
+: "${FACTORY_COPILOT:=1}"
+: "${FACTORY_COPILOT_ROUNDS:=3}"
+: "${FACTORY_COPILOT_WAIT_S:=900}"
+COPILOT_BOT='copilot-pull-request-reviewer[bot]'
 
 RUN_DIR=.factory/run
 
@@ -37,7 +41,7 @@ usage() {
   row 'factory run     <repo> <bead-id | "task title">' 'plan, build, gate, review one task'
   row 'factory next    <repo>' 'claim the next ready bead and run it'
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
-  row '  flags: --pr, --auto' 'open a pull request when approved; skip the plan approval'
+  row '  flags: --pr, --auto, --no-copilot' 'open a PR when approved; skip plan approval; no Copilot review'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory tasks   <repo> [--all]' 'list open tasks (beads); --all includes closed'
   row 'factory init    <repo> [bd init args...]' 'lean bd init, detect the gate, AGENTS.md stub'
@@ -59,6 +63,8 @@ usage() {
   row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" 'code changes must touch a test file'
   row "FACTORY_PLAN_APPROVAL=$FACTORY_PLAN_APPROVAL" 'ask: you approve each plan; auto: skip'
   row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request'
+  row "FACTORY_COPILOT=$FACTORY_COPILOT" '1: request a Copilot review on the PR and act on its comments'
+  row "FACTORY_COPILOT_ROUNDS=$FACTORY_COPILOT_ROUNDS" 'Copilot review rounds before giving up'
 }
 
 # ----------------------------------------------------------------- herdr ----
@@ -422,6 +428,100 @@ raise_pr() { # -> prints the PR url
   git -C "$WT" remote get-url origin >/dev/null 2>&1 || die "$WT has no origin remote"
   git -C "$WT" push -q -u origin "$BRANCH"
   (cd "$WT" && gh pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)")
+}
+
+# ------------------------------------------------------------- copilot ----
+# GitHub Copilot code review never approves formally; its review body starts with a verdict
+# line such as "### 🟢 Approval recommended", and its inline comments are posted by the user
+# "Copilot". Done means: the review of the head commit recommends approval, or has no comments.
+copilot_request() { # pr-number
+  (cd "$WT" && gh api -X POST "repos/{owner}/{repo}/pulls/$1/requested_reviewers" -f "reviewers[]=$COPILOT_BOT" >/dev/null)
+}
+
+copilot_reviewed() { # pr-number sha -> 0 once Copilot reviewed that commit
+  local n
+  n=$(cd "$WT" && gh api "repos/{owner}/{repo}/pulls/$1/reviews" \
+    --jq "[.[] | select((.user.login | ascii_downcase | startswith(\"copilot\")) and .commit_id == \"$2\")] | length")
+  [[ ${n:-0} -gt 0 ]]
+}
+
+copilot_wait() { # pr-number sha
+  local waited=0
+  until copilot_reviewed "$1" "$2"; do
+    ((waited < FACTORY_COPILOT_WAIT_S)) || return 1
+    sleep 30
+    waited=$((waited + 30))
+  done
+}
+
+# copilot_format: turn the REST comments JSON on stdin into "path:line: body" lines for one commit.
+copilot_format() { # sha
+  jq -r --arg sha "$1" \
+    '.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .commit_id == $sha) | "\(.path):\(.line // .original_line // "?"): \(.body | gsub("\r"; "") | gsub("\n"; "\n    "))"'
+}
+
+# copilot_verdict_of: first line of Copilot's review body for one commit, from reviews JSON on stdin.
+copilot_verdict_of() { # sha
+  jq -r --arg sha "$1" \
+    '[.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .commit_id == $sha)] | last | (.body // "") | split("\n") | (.[0] // "") | ltrimstr("### ")'
+}
+
+copilot_verdict() { # pr-number sha
+  (cd "$WT" && gh api "repos/{owner}/{repo}/pulls/$1/reviews") | copilot_verdict_of "$2"
+}
+
+copilot_comments() { # pr-number sha
+  (cd "$WT" && gh api --paginate "repos/{owner}/{repo}/pulls/$1/comments") | copilot_format "$2"
+}
+
+copilot_fix_prompt() { # round
+  cat <<P
+GitHub Copilot reviewed the pull request and left the comments in $RUN_DIR/copilot-$1.md (file:line: comment).
+Fix what is right. For anything you disagree with, say why in $RUN_DIR/copilot-$1-response.md instead.
+The gate must pass: $GATE
+Commit; do not push. Reply with just DONE.
+P
+}
+
+# copilot_loop builder-agent pr-url: request reviews and act on comments until a review is clean.
+copilot_loop() {
+  local agent=$1 url=$2 n sha round=1 comments gate_log verdict
+  n=${url##*/}
+  while ((round <= FACTORY_COPILOT_ROUNDS)); do
+    sha=$(git -C "$WT" rev-parse HEAD)
+    copilot_request "$n" || {
+      warn "could not request a Copilot review on $url"
+      return 1
+    }
+    log "Copilot review requested for ${sha:0:7} (round $round)"
+    copilot_wait "$n" "$sha" || {
+      warn "no Copilot review within ${FACTORY_COPILOT_WAIT_S}s"
+      return 1
+    }
+    verdict=$(copilot_verdict "$n" "$sha")
+    comments=$(copilot_comments "$n" "$sha")
+    if [[ $verdict == *"Approval recommended"* || -z $comments ]]; then
+      log "Copilot: ${verdict:-no verdict line}, $(grep -c '' <<<"${comments:-}" | sed 's/^1$/&/')${comments:+ comment(s), all nits}${comments:-no comments}"
+      return 0
+    fi
+    log "Copilot: $verdict"
+    printf '%s\n' "$comments" >"$WT/$RUN_DIR/copilot-$round.md"
+    log "Copilot left $(grep -c '' "$WT/$RUN_DIR/copilot-$round.md") comment(s); asking the builder"
+    ask "$agent" "$(copilot_fix_prompt "$round")"
+    gate_log="$WT/$RUN_DIR/gate-copilot-$round.log"
+    if ! run_gate "$WT" "$GATE" "$gate_log"; then
+      ask "$agent" "$(gate_fix_prompt "$gate_log")"
+      run_gate "$WT" "$GATE" "$gate_log" || return 1
+    fi
+    guard_check "$WT" "$BASE" >/dev/null || {
+      warn "guardrails failed after the Copilot round"
+      return 1
+    }
+    git -C "$WT" push -q
+    round=$((round + 1))
+  done
+  warn "Copilot still has comments after $FACTORY_COPILOT_ROUNDS rounds; see $url"
+  return 1
 }
 
 # --------------------------------------------------------------- prompts ----
@@ -797,13 +897,16 @@ run_task() { # repo arg
 
   local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $round, verdict: ${verdict:-none}"
   if [[ $verdict == APPROVE ]] && [[ -f $gate_log ]] && guard_check "$WT" "$BASE" >/dev/null; then
-    local pr="" next="merge $BRANCH"
+    local pr="" next="merge $BRANCH" copilot=""
     if ((FACTORY_PR)); then
       pr=$(raise_pr)
       next="review $pr"
       log "opened $pr"
+      if ((FACTORY_COPILOT)); then
+        if copilot_loop "$build" "$pr"; then copilot=", Copilot review clean"; else copilot=", Copilot comments remain on the PR"; fi
+      fi
     fi
-    bd -C "$repo" comment "$TASK_ID" "factory: approved. $summary${pr:+, pr $pr}" >/dev/null
+    bd -C "$repo" comment "$TASK_ID" "factory: approved. $summary${pr:+, pr $pr}$copilot" >/dev/null
     bd -C "$repo" close "$TASK_ID" -r "factory: gate green, review approved; $next" >/dev/null
     toast "factory: $TASK_ID done" "$TASK_TITLE. ${next^}." "done"
     log "done: $summary${pr:+, pr $pr}"
@@ -1022,8 +1125,16 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
   GATE=$(resolve_gate "$repo")
   [[ -z $(git -C "$WT" status --porcelain -- . ':(exclude).factory') ]] || die "$WT has uncommitted changes"
   url=$(raise_pr)
-  bd -C "$repo" comment "$2" "factory: pull request opened by hand: $url" >/dev/null
   log "opened $url"
+  local note=""
+  if ((FACTORY_COPILOT)); then
+    if herdr agent get "$2-build" >/dev/null 2>&1; then
+      if copilot_loop "$2-build" "$url"; then note=", Copilot review clean"; else note=", Copilot comments remain"; fi
+    else
+      copilot_request "${url##*/}" && note=", Copilot review requested (no builder agent to act on it)"
+    fi
+  fi
+  bd -C "$repo" comment "$2" "factory: pull request opened by hand: $url$note" >/dev/null
   printf '%s\n' "$url"
 }
 
@@ -1046,6 +1157,7 @@ take_flags() {
   for a in "$@"; do
     case $a in
       --pr) FACTORY_PR=1 ;;
+      --no-copilot) FACTORY_COPILOT=0 ;;
       --auto) FACTORY_PLAN_APPROVAL=auto ;;
       --*) die "unknown flag: $a" ;;
       *) ARGS+=("$a") ;;
@@ -1103,9 +1215,10 @@ main() {
       cmd_answer "$@"
       ;;
     pr)
-      (($# == 2)) || die "usage: factory pr <repo> <bead-id>"
+      take_flags "$@"
+      ((${#ARGS[@]} == 2)) || die "usage: factory pr [--no-copilot] <repo> <bead-id>"
       for t in gh bd jq git; do need "$t"; done
-      cmd_pr "$1" "$2"
+      cmd_pr "${ARGS[0]}" "${ARGS[1]}"
       ;;
     check)
       (($# == 2)) || die "usage: factory check <worktree> <base>"

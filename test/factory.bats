@@ -414,6 +414,42 @@ IN
   [[ $output == *"unknown flag: --nope"* ]]
 }
 
+@test "copilot_format picks the bot's comments for one commit as file:line: body" {
+  run copilot_format abc123 <<'JSON'
+[
+  {"user":{"login":"Copilot"},"commit_id":"abc123","path":"hello.py","line":7,"body":"Use f-strings\r\nhere."},
+  {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"old111","path":"hello.py","line":1,"body":"stale"},
+  {"user":{"login":"robi42"},"commit_id":"abc123","path":"hello.py","line":2,"body":"human"},
+  {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","path":"test_hello.py","line":null,"original_line":9,"body":"Missing case"}
+]
+JSON
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "hello.py:7: Use f-strings" ]
+  [ "${lines[1]}" = "    here." ]
+  [ "${lines[2]}" = "test_hello.py:9: Missing case" ]
+  [ "${#lines[@]}" -eq 3 ]
+}
+
+@test "copilot_verdict_of takes the verdict line of the latest review for a commit" {
+  run copilot_verdict_of abc123 <<'JSON'
+[
+  {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"old111","state":"COMMENTED","body":"### 🔴 Changes needed\nold"},
+  {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","state":"COMMENTED","body":"### 🟢 Approval recommended\nThe only comment is a nit."},
+  {"user":{"login":"robi42"},"commit_id":"abc123","state":"APPROVED","body":"lgtm"}
+]
+JSON
+  [ "$output" = "🟢 Approval recommended" ]
+  run copilot_verdict_of nothere <<<'[]'
+  [ "$output" = "" ]
+}
+
+@test "take_flags: --no-copilot" {
+  FACTORY_COPILOT=1
+  take_flags --no-copilot repo id
+  [ "$FACTORY_COPILOT" = 0 ]
+  [ "${#ARGS[@]}" -eq 2 ]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

@@ -63,6 +63,7 @@ factory next   ~/src/app                          # claim the next ready bead, r
 factory run    ~/src/app "Fix flaky login test"   # a one-off, also filed as a bead
 factory queue  ~/src/app                          # work through everything that is ready
 factory next   --pr --auto ~/src/app              # flags: open a PR when approved; skip plan approval
+factory pr     --no-copilot ~/src/app toy-abe     # a PR without the Copilot review loop
 factory approve ~/src/app toy-abe                 # approve a waiting plan from anywhere
 factory approve ~/src/app toy-abe --allow-protected   # ...when the plan must touch protected files
 factory pr      ~/src/app toy-abe                 # open a PR for a task branch a run left behind
@@ -76,7 +77,11 @@ A run goes plan (the planner may first ask you questions if the task is ambiguou
 dual plan review (one revision if needed), your approval, build, gate,
 guardrails, dual code review, then revise / gate / review again, up to `FACTORY_ROUNDS`
 times. With `--pr` (or `FACTORY_PR=1`) an approved branch is pushed and a pull request
-opened with `gh`, its body carrying the plan and the check results; the bead records the URL.
+opened with `gh`; the bead records the URL. By default the factory then requests a GitHub
+Copilot code review, hands its comments to the builder, gates, pushes, and asks again, up
+to `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit has no comments.
+`--no-copilot` (or `FACTORY_COPILOT=0`) turns that off. Copilot never approves, it only
+comments, so "clean" is the finish line; your own review and merge stay yours.
 At the approval step the factory prints the plan in its terminal, sends a toast,
 and waits. Answer there (approve, revise with a note, abort) or from any terminal with
 `factory approve <repo> <id>` and `factory reject <repo> <id> "note"`. A note goes to
@@ -141,6 +146,9 @@ runs gate plus guardrails on any branch without agents.
 | `FACTORY_REQUIRE_TESTS` | `1`: a change to code files must also touch a test file |
 | `FACTORY_PLAN_APPROVAL` | `ask`: you approve each plan in the factory terminal; `auto` skips |
 | `FACTORY_PR` | `0`; `1` pushes the approved branch and opens a pull request with `gh` |
+| `FACTORY_COPILOT` | `1`: request a Copilot review on the PR and act on its comments |
+| `FACTORY_COPILOT_ROUNDS` | `3` |
+| `FACTORY_COPILOT_WAIT_S` | `900`: how long to wait for each Copilot review |
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
 
 ## Develop
