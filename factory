@@ -417,7 +417,7 @@ build_prompt() {
   cat <<P
 Task $TASK_ID: $TASK_TITLE
 
-Implement $RUN_DIR/plan.md (now final) on this branch ($BRANCH) in this worktree. Run the gate until it passes: $GATE
+Re-read $RUN_DIR/plan.md now; it is final and may have changed since you checked it. Implement it on this branch ($BRANCH) in this worktree. Run the gate until it passes: $GATE
 Commit when done; do not push. The factory tracks and closes bead $TASK_ID itself. Files under .factory/ are ignored by git. Do not change: $(protected_globs "$WT" | tr '\n' ' ')
 No skipped tests, suppressed warnings, or swallowed errors; fix things properly.
 $MEMORY
