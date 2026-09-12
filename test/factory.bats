@@ -450,6 +450,28 @@ JSON
   [ "${#ARGS[@]}" -eq 2 ]
 }
 
+@test "bd_push: skips without a sync remote, pushes with one, warns on failure, off by knob" {
+  FACTORY_BD_PUSH=1
+  bd() { # stub: config get -> $BD_REMOTE; dolt push -> $BD_PUSH_RC
+    case "$*" in
+      *"config get sync.remote") printf '%s\n' "$BD_REMOTE" ;;
+      *"dolt push")
+        printf 'pushing\n'
+        return "$BD_PUSH_RC"
+        ;;
+    esac
+  }
+  BD_REMOTE="sync.remote (not set in config.yaml)" BD_PUSH_RC=0 run bd_push repo
+  [[ $output == *"no sync remote"* ]]
+  BD_REMOTE="git+https://x/y.git" BD_PUSH_RC=0 run bd_push repo
+  [[ $output == *"beads pushed to git+https://x/y.git"* ]]
+  BD_REMOTE="git+https://x/y.git" BD_PUSH_RC=1 run bd_push repo
+  [ "$status" -eq 0 ]
+  [[ $output == *"beads push failed"* ]]
+  FACTORY_BD_PUSH=0 BD_REMOTE="git+https://x/y.git" BD_PUSH_RC=1 run bd_push repo
+  [ -z "$output" ]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

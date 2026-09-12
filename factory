@@ -21,6 +21,7 @@ FACTORY_VERSION=0.1.0
 : "${FACTORY_COPILOT:=1}"
 : "${FACTORY_COPILOT_ROUNDS:=3}"
 : "${FACTORY_COPILOT_WAIT_S:=900}"
+: "${FACTORY_BD_PUSH:=1}"
 COPILOT_BOT='copilot-pull-request-reviewer[bot]'
 
 RUN_DIR=.factory/run
@@ -44,6 +45,7 @@ usage() {
   row '  flags: --pr, --auto, --no-copilot' 'open a PR when approved; skip plan approval; no Copilot review'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory tasks   <repo> [--all]' 'list open tasks (beads); --all includes closed'
+  row 'factory sync    <repo>' 'pull, then push the beads database to its git remote'
   row 'factory init    <repo> [bd init args...]' 'lean bd init, detect the gate, AGENTS.md stub'
   row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve a waiting plan from any terminal'
   row 'factory reject  <repo> <bead-id> "note"' 'send the planner a note; the plan comes back revised'
@@ -65,6 +67,7 @@ usage() {
   row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request'
   row "FACTORY_COPILOT=$FACTORY_COPILOT" '1: request a Copilot review on the PR and act on its comments'
   row "FACTORY_COPILOT_ROUNDS=$FACTORY_COPILOT_ROUNDS" 'Copilot review rounds before giving up'
+  row "FACTORY_BD_PUSH=$FACTORY_BD_PUSH" '1: push beads to their sync remote after tasks and adds'
 }
 
 # ----------------------------------------------------------------- herdr ----
@@ -217,6 +220,24 @@ resolve_task() {
     TASK_TITLE=$arg
     TASK_DESC=""
     log "filed $TASK_ID: $arg"
+  fi
+}
+
+# bd_push repo: push the beads database to its Dolt sync remote (refs/dolt/data on the
+# git remote), so tasks, comments and memories survive this machine. Skips when no
+# remote is configured; warns, never fails, when the push does not work.
+bd_push() {
+  ((FACTORY_BD_PUSH)) || return 0
+  local remote out
+  remote=$(bd -C "$1" config get sync.remote 2>/dev/null) || remote=""
+  if [[ -z $remote || $remote == *"not set"* ]]; then
+    log "beads: no sync remote configured, nothing pushed (bd dolt remote add origin git+<url>)"
+    return 0
+  fi
+  if out=$(bd -C "$1" dolt push 2>&1); then
+    log "beads pushed to $remote"
+  else
+    warn "beads push failed: $(tail -n1 <<<"$out")"
   fi
 }
 
@@ -910,10 +931,12 @@ run_task() { # repo arg
     bd -C "$repo" close "$TASK_ID" -r "factory: gate green, review approved; $next" >/dev/null
     toast "factory: $TASK_ID done" "$TASK_TITLE. ${next^}." "done"
     log "done: $summary${pr:+, pr $pr}"
+    bd_push "$repo"
   else
     bd -C "$repo" comment "$TASK_ID" "factory: needs a human. $summary" >/dev/null
     toast "factory: $TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
     warn "not approved after $FACTORY_ROUNDS rounds: $summary"
+    bd_push "$repo"
     return 2
   fi
 }
@@ -1051,6 +1074,14 @@ cmd_add() {
     TASK_DESC=${2:-}
   fi
   bd -C "$repo" create "$TASK_TITLE" -d "$TASK_DESC"
+  bd_push "$repo"
+}
+
+cmd_sync() { # repo: pull then push the beads database
+  local repo=$1
+  [[ -d $repo/.beads ]] || die "no beads in $repo; run: factory init $repo"
+  bd -C "$repo" dolt pull 2>&1 | tail -n1 >&2
+  FACTORY_BD_PUSH=1 bd_push "$repo"
 }
 
 cmd_tasks() { # repo [bd list args...]
@@ -1135,6 +1166,7 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
     fi
   fi
   bd -C "$repo" comment "$2" "factory: pull request opened by hand: $url$note" >/dev/null
+  bd_push "$repo"
   printf '%s\n' "$url"
 }
 
@@ -1186,6 +1218,11 @@ main() {
       ((${#ARGS[@]} >= 1)) || die "usage: factory queue [--pr] [--auto] <repo> [max]"
       for t in herdr claude codex bd jq git; do need "$t"; done
       cmd_queue "${ARGS[@]}"
+      ;;
+    sync)
+      (($# == 1)) || die "usage: factory sync <repo>"
+      need bd
+      cmd_sync "$1"
       ;;
     tasks)
       (($# >= 1)) || die "usage: factory tasks <repo> [--all | bd list args...]"

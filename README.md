@@ -9,7 +9,9 @@ A simple software factory on [Herdr](https://herdr.dev): one task in, one review
   it; the build by Codex and by the planner who wrote the plan. Reviewers look for bugs,
   missed requirements, shortcuts, security problems, and design problems. Both must approve.
 - **Beads** (`bd`) is the task queue and the memory: tasks are beads, and agents leave
-  `bd remember` notes that the next run gets to see.
+  `bd remember` notes that the next run gets to see. After a task, or a new task is
+  filed, the factory pushes the Beads database to the repo's git remote (`bd dolt push`,
+  under `refs/dolt/data`), so that state survives the machine; `fy sync` pulls and pushes by hand.
 - **Guardrails** are mechanical, not prose. The factory itself runs your gate
   (`just ci`, or `.factory/gate`) and rejects branches that add suppressions, skipped
   tests, or swallowed errors, change code without touching a test, commit build
@@ -59,6 +61,7 @@ factory init   ~/src/app                          # lean bd init, detect + write
 factory add    ~/src/app "Add CSV export" "..."   # file work as beads
 factory add    ~/src/app                          # ...or compose title + description in $EDITOR
 factory tasks  ~/src/app                          # list open tasks (--all includes closed)
+factory sync   ~/src/app                          # pull, then push the beads database
 factory next   ~/src/app                          # claim the next ready bead, run it
 factory run    ~/src/app "Fix flaky login test"   # a one-off, also filed as a bead
 factory queue  ~/src/app                          # work through everything that is ready
@@ -149,6 +152,7 @@ runs gate plus guardrails on any branch without agents.
 | `FACTORY_COPILOT` | `1`: request a Copilot review on the PR and act on its comments |
 | `FACTORY_COPILOT_ROUNDS` | `3` |
 | `FACTORY_COPILOT_WAIT_S` | `900`: how long to wait for each Copilot review |
+| `FACTORY_BD_PUSH` | `1`: push beads to their sync remote after tasks and adds |
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
 
 ## Develop
