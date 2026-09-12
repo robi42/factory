@@ -3,9 +3,10 @@
 A simple software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
 The CLI is `factory`; `fy` is the alias used below.
 
-- **Claude Code** plans and builds, each in its own Herdr pane. The plan states the
-  design in a few lines: what changes, responsibilities, interfaces.
-- **Codex** reviews in a third pane, with web search.
+- **Claude Code** plans (Fable 5.1) and builds (Opus 5), each in its own Herdr pane. The
+  plan states the design in a few lines: what changes, responsibilities, interfaces.
+- **Codex** reviews (GPT 6 Astra, with web search) in a third pane. Models are defaults;
+  three knobs change them.
 - **Reviews are dual.** The plan is checked by Codex and by the builder who has to
   execute it; the build by Codex and by the planner who wrote the plan. Reviewers look
   for bugs, missed requirements, shortcuts, security and design problems. Both must approve.
