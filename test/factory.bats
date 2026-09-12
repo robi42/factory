@@ -322,8 +322,12 @@ IN
   mkdir -p "$REPO/.factory/run"
   printf 'the plan\n' >"$REPO/.factory/run/plan.md"
   run pr_body
-  [[ $output == "Bead toy-1: t"* ]]
-  [[ $output == *"details"*"the plan"*"Gate: not run"*"factory/toy-1"* ]]
+  [[ $output == "details"* ]]
+  [[ $output == *"Bead toy-1."*"Gate: not run"*"<summary>Plan</summary>"*"the plan"* ]]
+  TASK_DESC=""
+  run pr_body
+  [[ $output == "t"* ]]
+  TASK_DESC="details"
   : >"$REPO/.factory/run/gate-2.log"
   printf 'VERDICT: APPROVE\n' >"$REPO/.factory/run/review-2.md"
   printf 'VERDICT: REVISE\n' >"$REPO/.factory/run/review-2-plan.md"

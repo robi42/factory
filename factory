@@ -402,19 +402,18 @@ pr_checks() { # -> markdown bullets describing what the run directory proves
 
 pr_body() {
   cat <<B
-Bead $TASK_ID: $TASK_TITLE
+${TASK_DESC:-$TASK_TITLE}
 
-$TASK_DESC
-
-## Plan
-
-$(cat "$WT/$RUN_DIR/plan.md" 2>/dev/null || printf 'no plan file')
-
-## Checks
+Bead $TASK_ID.
 
 $(pr_checks)
 
-Built by factory on branch \`$BRANCH\`.
+<details>
+<summary>Plan</summary>
+
+$(cat "$WT/$RUN_DIR/plan.md" 2>/dev/null || printf 'no plan file')
+
+</details>
 B
 }
 
