@@ -81,8 +81,9 @@ dual plan review (one revision if needed), your approval, build, gate,
 guardrails, dual code review, then revise / gate / review again, up to `FACTORY_ROUNDS`
 times. With `--pr` (or `FACTORY_PR=1`) an approved branch is pushed and a pull request
 opened with `gh`; the bead records the URL. By default the factory then requests a GitHub
-Copilot code review, hands its comments to the builder, gates, pushes, and asks again, up
-to `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit has no comments.
+Copilot code review, hands its comments to the builder, gates, pushes, posts one summary
+comment on the PR and resolves the threads it addressed, then asks again, up to
+`FACTORY_COPILOT_ROUNDS` times or until a review of the head commit has no comments.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns that off. Copilot never approves, it only
 comments, so "clean" is the finish line; your own review and merge stay yours.
 At the approval step the factory prints the plan in its terminal, sends a toast,

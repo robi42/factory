@@ -443,6 +443,18 @@ JSON
   [ "$output" = "" ]
 }
 
+@test "copilot_reply_body lists the addressed comments and any pushback" {
+  printf 'hello.py:7: Use f-strings\n    here.\ntest_hello.py:9: Missing case\n' >"$TMP/c.md"
+  run copilot_reply_body 2 abcdef0123456 "$TMP/c.md" "$TMP/none.md"
+  [ "${lines[0]}" = "Addressed Copilot review round 2 in abcdef0:" ]
+  [ "${lines[1]}" = "- hello.py:7" ]
+  [ "${lines[2]}" = "- test_hello.py:9" ]
+  [ "${#lines[@]}" -eq 3 ]
+  printf 'f-strings are not house style here.\n' >"$TMP/r.md"
+  run copilot_reply_body 2 abcdef0123456 "$TMP/c.md" "$TMP/r.md"
+  [[ $output == *"Not changed, and why:"*"house style"* ]]
+}
+
 @test "take_flags: --no-copilot" {
   FACTORY_COPILOT=1
   take_flags --no-copilot repo id

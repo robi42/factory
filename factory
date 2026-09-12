@@ -495,6 +495,53 @@ copilot_comments() { # pr-number sha
   (cd "$WT" && gh api --paginate "repos/{owner}/{repo}/pulls/$1/comments") | copilot_format "$2"
 }
 
+# copilot_reply_body round sha comments-file [response-file] -> one PR comment for the round
+copilot_reply_body() {
+  local round=$1 sha=$2 comments=$3 response=${4:-}
+  printf 'Addressed Copilot review round %s in %s:\n\n' "$round" "${sha:0:7}"
+  grep -oE '^[^ ]+:[0-9?]+:' "$comments" | sed 's/:$//; s/^/- /'
+  if [[ -n $response && -s $response ]]; then
+    printf '\nNot changed, and why:\n\n%s\n' "$(cat "$response")"
+  fi
+}
+
+copilot_reply() { # pr-number round sha
+  local body
+  body=$(copilot_reply_body "$2" "$3" "$WT/$RUN_DIR/copilot-$2.md" "$WT/$RUN_DIR/copilot-$2-response.md")
+  (cd "$WT" && gh pr comment "$1" --body "$body" >/dev/null) || warn "could not comment on the PR"
+}
+
+# copilot_resolve pr-number sha: resolve Copilot's review threads that start on that commit.
+copilot_resolve() {
+  local ids id query mutation
+  query=$(
+    cat <<'Q'
+query($owner: String!, $repo: String!, $pr: Int!) {
+  repository(owner: $owner, name: $repo) { pullRequest(number: $pr) {
+    reviewThreads(first: 100) { nodes { id isResolved
+      comments(first: 1) { nodes { author { login } commit { oid } } } } } } } }
+Q
+  )
+  mutation=$(
+    cat <<'Q'
+mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }
+Q
+  )
+  ids=$(cd "$WT" && gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr="$1" -f query="$query" \
+    --jq ".data.repository.pullRequest.reviewThreads.nodes[]
+      | select(.isResolved | not)
+      | select((.comments.nodes[0].author.login // \"\" | ascii_downcase | startswith(\"copilot\")) and .comments.nodes[0].commit.oid == \"$2\")
+      | .id") || {
+    warn "could not list review threads"
+    return 0
+  }
+  for id in $ids; do
+    (cd "$WT" && gh api graphql -f query="$mutation" -F id="$id" >/dev/null) || warn "could not resolve thread $id"
+  done
+  [[ -n $ids ]] && log "resolved $(grep -c '' <<<"$ids") Copilot thread(s)"
+  return 0
+}
+
 copilot_fix_prompt() { # round
   cat <<P
 GitHub Copilot reviewed the pull request and left the comments in $RUN_DIR/copilot-$1.md (file:line: comment).
@@ -539,6 +586,8 @@ copilot_loop() {
       return 1
     }
     git -C "$WT" push -q
+    copilot_reply "$n" "$round" "$(git -C "$WT" rev-parse HEAD)"
+    copilot_resolve "$n" "$sha"
     round=$((round + 1))
   done
   warn "Copilot still has comments after $FACTORY_COPILOT_ROUNDS rounds; see $url"
