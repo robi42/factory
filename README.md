@@ -142,3 +142,7 @@ runs gate plus guardrails on any branch without agents.
 ```sh
 just ci      # shfmt, shellcheck, guardrails applied to ourselves, codespell, bats
 ```
+
+## License
+
+MIT, see `LICENSE`.
