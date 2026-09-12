@@ -1,5 +1,8 @@
 # factory: CI for the factory itself. Tools come from mise.toml (run `mise install`).
 
+# Recipes use bash features (process substitution); sh is dash on Debian-family runners.
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
 _default:
     @just help
 
