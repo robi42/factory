@@ -151,9 +151,43 @@ agent's word for it. It is resolved once per run, in this order, and printed at 
 After each build or revision the gate runs in the worktree, output to
 `.factory/run/gate-N.log`; exit code zero means pass. On failure the builder gets the
 last forty lines and one round to fix, rerun and commit. Guardrails run only after the
-gate passes, reviews only after both. Put everything language-specific in the gate:
-tests, linters, type checks, coverage thresholds, semgrep rules, architecture tests.
-Factory stays language-agnostic.
+gate passes, reviews only after both, and the final close-out checks that a passing gate
+log exists for the approved round.
+
+### What belongs in a gate
+
+Everything language-specific, and everything you would otherwise have to say in prose:
+
+- **Tests**, with a coverage threshold if you want coverage enforced. Factory does not
+  check coverage itself; a `--fail-under` in the gate does.
+- **Formatting and lint** as errors, not warnings, so a run cannot go green on a nit.
+- **Type checks and static analysis**, including security scanners.
+- **Custom rules** for the shortcuts you have seen agents take in this codebase:
+  semgrep patterns, "no default values", "no skipped tests", banned constructs.
+- **Architecture tests** (ArchUnit, Konsist, dependency-cruiser, pytestarch and the
+  like) when a module boundary matters. This is where design rules become mechanical.
+- **Fixtures that prove the gate itself fails** on bad input. A gate that has never
+  been seen to go red is a guess.
+
+Three properties matter more than the tool list. The gate must fail loudly or not at
+all: a missing tool is a failure, never a skip. It must run the same way locally and in
+CI, so the agents cannot pass here and fail there. And it should be fast enough to run
+after every build round, or split into a fast part and a full part the way `bin/test`
+and `bin/check-fast` do in a well-kept repo.
+
+### A good starting point
+
+For a new project, [ai-guardrails](https://github.com/florianbuetow/ai-guardrails) by
+Florian Bütow ships copier blueprints for Python, Java, Go, Rust, Kotlin, Scala, Clojure,
+Elixir, C++, TypeScript and shell that already contain all of the above behind one
+`just ci`: formatting, lint, type checks, security scan, dependency hygiene, spell check,
+custom semgrep rules, coverage thresholds, architecture tests, and a pre-commit hook that
+runs the same thing. Factory detects `just ci` on its own, so a repo scaffolded from a
+blueprint needs no gate setup at all, and Factory's own guardrail patterns are adapted
+from the same rules. For an existing project, borrowing a blueprint's `justfile` and
+`config/semgrep/` is the quickest way to a strict gate.
+
+Factory stays language-agnostic; whatever the gate says is done, is done.
 
 ## Guardrails
 
