@@ -318,9 +318,10 @@ check and the tests-required rule each earned their place on a real task first.
 Factory borrows deliberately, and leaves out even more deliberately.
 
 - [Oh My OpenAgent](https://github.com/code-yeongyu/oh-my-opencode) showed the value of
-  distinct roles on distinct models: a planner that interviews, an executor, and hostile
-  critics before anything is built. Factory keeps that split and the plan interview, and
-  drops the harness around it.
+  distinct roles on distinct models: a planner that interviews, an executor, a plan critic
+  and a plan consultant before anything is built, and a loop that does not stop until the
+  work is done. Factory keeps the roles, the interview, the dual plan review and the loop,
+  and drops the harness around them.
 - [Gas Town](https://github.com/steveyegge/gastown) and [Beads](https://github.com/steveyegge/beads)
   showed that agents need a work ledger that outlives a session: tasks, comments and
   memories in a database beside the code, pushed with it. Factory uses Beads as is and
