@@ -16,7 +16,7 @@ A simple software factory on [Herdr](https://herdr.dev): one task in, one review
   artifacts, or touch protected files. The patterns live in `guardrails.txt`, adapted
   from [ai-guardrails](https://github.com/florianbuetow/ai-guardrails).
 
-Every task gets its own git worktree and Herdr workspace, so you can watch or step in.
+Every task gets its own git worktree and Herdr workspace, so you can watch, or step in.
 The agents are your normal `claude` and `codex` sessions, so your skills, MCP servers,
 hooks, `CLAUDE.md` and `AGENTS.md` all apply; the factory adds nothing to them at run
 time. Claude runs in its `auto` permission mode; whenever an agent stops for a question
