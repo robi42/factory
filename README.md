@@ -285,6 +285,30 @@ detection more reliable. Factory handles the known startup dialogs either way.
 **Beads housekeeping.** `git config beads.role maintainer` in each repo silences a
 warning, and untracking `.beads/interactions.jsonl` keeps `git status` quiet.
 
+## Why so little
+
+Factory is about a thousand lines of Bash, and that is the point. Current models plan,
+build and review well when given a clear task, a real codebase and a hard definition of
+done; what they need from a harness is less than the frameworks of a year ago assumed.
+So Factory bets on a few things:
+
+- **Short prompts over rulebooks.** Each role gets a paragraph: the task, the gate, where
+  to write. Long instruction files drift, contradict each other, and get skimmed.
+- **Mechanical gates over instructions.** "Do not skip tests" is a sentence an agent can
+  ignore; a guardrail that rejects the diff is not. Whatever can be checked, is checked.
+- **Two model families over one.** A second reviewer from a different family catches
+  different mistakes, at the cost of one extra turn. Beyond two, returns diminish and
+  dialogs multiply.
+- **Your own tools over a toolbox.** The agents are plain `claude` and `codex` sessions;
+  every skill, MCP server and hook you already use applies. Factory installs nothing.
+- **Humans at the two points that matter.** Approving the plan, and merging. Everything
+  in between runs on its own, and every stop becomes a toast.
+- **State in the repo's orbit.** Tasks and memories live in Beads beside the code and
+  travel with the git remote; run artifacts live in the worktree and disappear with it.
+
+When a step turns out not to pull its weight, it goes. The plan interview, the design
+check and the tests-required rule each earned their place on a real task first.
+
 ## Inspiration
 
 Factory borrows deliberately, and leaves out even more deliberately.
