@@ -1077,10 +1077,16 @@ cmd_add() {
   bd_push "$repo"
 }
 
-cmd_sync() { # repo: pull then push the beads database
-  local repo=$1
+cmd_sync() { # repo: pull (when the remote has beads data), then push
+  local repo=$1 out
   [[ -d $repo/.beads ]] || die "no beads in $repo; run: factory init $repo"
-  bd -C "$repo" dolt pull 2>&1 | tail -n1 >&2
+  if out=$(bd -C "$repo" dolt pull 2>&1); then
+    log "beads: $(tail -n1 <<<"$out")"
+  elif [[ $out == *"no branches found"* ]]; then
+    log "beads: remote has no beads data yet, nothing to pull"
+  else
+    die "beads pull failed: $(tail -n1 <<<"$out")"
+  fi
   FACTORY_BD_PUSH=1 bd_push "$repo"
 }
 
