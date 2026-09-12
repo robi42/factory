@@ -603,7 +603,7 @@ Task $TASK_ID: $TASK_TITLE
 $TASK_DESC
 
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
-Do not write the code itself.
+Do not write the code itself and do not change any file outside $RUN_DIR/; the factory checks.
 If the task is ambiguous in a way that would change the design, do not plan yet: write your numbered questions to $RUN_DIR/questions.md and reply with just QUESTIONS. Prefer a plan with stated assumptions over questions when the ambiguity is minor.
 $MEMORY
 Reply with just PLAN READY once the file is written.
@@ -791,6 +791,20 @@ collect_answers() {
   printf '%s' "$answers"
 }
 
+# tree_dirty worktree: 0 when files outside .factory/ changed or appeared
+tree_dirty() {
+  [[ -n $(git -C "$1" status --porcelain --untracked-files=all -- . ':(exclude).factory') ]]
+}
+
+# planner_kept_hands_off planner-agent: the planner must not change code; give it one chance to revert.
+planner_kept_hands_off() {
+  tree_dirty "$WT" || return 0
+  warn "the planner changed files; asking it to revert"
+  ask "$1" "You changed files in the worktree, but planning must leave the code untouched (only $RUN_DIR/ is yours). Revert every change outside $RUN_DIR/ (git checkout -- . and remove new files), keep the plan, and reply DONE."
+  tree_dirty "$WT" || return 0
+  die "the planner left changes in $WT; planning must not touch code"
+}
+
 # plan_or_interview planner-agent: ask for a plan; relay questions and answers until one exists.
 plan_or_interview() {
   local plan_agent=$1 q="$WT/$RUN_DIR/questions.md" file="$WT/$RUN_DIR/plan.md" rounds=0 answers
@@ -915,6 +929,7 @@ run_task() { # repo arg
     bd -C "$repo" comment "$TASK_ID" "factory: stopped at planner questions. workspace $WS, worktree $WT" >/dev/null
     die "stopped at planner questions for $TASK_ID; the workspace stays open"
   fi
+  planner_kept_hands_off "$plan"
   log "plan review: $review and $build"
   ask_for_file "$review" "$(plan_review_prompt)" "$WT/$RUN_DIR/plan-review.md"
   ask_for_file "$build" "$(plan_build_check_prompt)" "$WT/$RUN_DIR/plan-review-build.md"
@@ -923,6 +938,7 @@ run_task() { # repo arg
   if [[ $verdict != "APPROVE APPROVE" ]]; then
     log "plan revision"
     ask "$plan" "$(plan_fix_prompt)"
+    planner_kept_hands_off "$plan"
   fi
   if ! approve_plan "$plan" "$WT/$RUN_DIR/plan.md"; then
     bd -C "$repo" comment "$TASK_ID" "factory: stopped at plan approval. workspace $WS, worktree $WT" >/dev/null

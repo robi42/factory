@@ -516,6 +516,26 @@ JSON
   [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
 }
 
+@test "planner_kept_hands_off: clean tree passes, dirty tree gets one revert, then dies" {
+  make_repo
+  WT=$REPO
+  RUN_DIR=.factory/run
+  planner_kept_hands_off planner
+  printf 'sneaky\n' >"$REPO/run.sh"
+  ask() { git -C "$REPO" checkout -q -- .; } # the planner reverts when told
+  run planner_kept_hands_off planner
+  [ "$status" -eq 0 ]
+  [[ $output == *"asking it to revert"* ]]
+  printf 'sneaky\n' >"$REPO/run.sh"
+  ask() { :; } # ...or does not
+  run planner_kept_hands_off planner
+  [ "$status" -eq 1 ]
+  [[ $output == *"must not touch code"* ]]
+  mkdir -p "$REPO/.factory/run" && printf 'plan\n' >"$REPO/.factory/run/plan.md"
+  git -C "$REPO" checkout -q -- .
+  planner_kept_hands_off planner # files under .factory/ are fine
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]
