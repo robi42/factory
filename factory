@@ -1056,7 +1056,7 @@ cmd_status() {
       esac
     fi
     printf '%-14s %-8s %s%-9s%s %-5s %s\n' "$task" "$role" "$c" "$status" "$reset" "$ws" \
-      "$([[ $task != "$last" ]] && awk -F'\t' -v w="$ws" '$1 == w {print $2}' <<<"$labels")"
+      "$([[ $task != "$last" ]] && awk -F'\t' -v w="$ws" '$1 == w {print $2}' <<<"$labels" | sed "s/^$task //")"
     last=$task
   done <<<"$rows"
 }
