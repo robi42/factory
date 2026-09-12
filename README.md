@@ -1,5 +1,9 @@
 # Factory
 
+[![CI](https://github.com/robi42/factory/actions/workflows/ci.yml/badge.svg)](https://github.com/robi42/factory/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Runs on Herdr](https://img.shields.io/badge/runs%20on-Herdr-8b5cf6.svg)](https://herdr.dev)
+
 A simple software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
 The CLI is `factory`; `fy` is the alias used below.
 
