@@ -30,7 +30,7 @@ die() {
 }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
 
-row() { printf '  %-48s %s\n' "$1" "$2"; }
+row() { printf '  %-54s %s\n' "$1" "$2"; }
 
 usage() {
   printf 'factory %s: a simple software factory on Herdr\n\nusage:\n' "$FACTORY_VERSION"
