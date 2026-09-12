@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# factory: a simple software factory on Herdr.
+# Factory: a simple software factory on Herdr. CLI name: factory.
 # Claude Code plans (Fable) and builds (Opus), Codex reviews (GPT), Beads remembers.
 set -euo pipefail
 
@@ -38,7 +38,7 @@ need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
 row() { printf '  %-54s %s\n' "$1" "$2"; }
 
 usage() {
-  printf 'factory %s: a simple software factory on Herdr\n\nusage:\n' "$FACTORY_VERSION"
+  printf 'Factory %s: a simple software factory on Herdr\n\nusage:\n' "$FACTORY_VERSION"
   row 'factory run     <repo> <bead-id | "task title">' 'plan, build, gate, review one task'
   row 'factory next    <repo>' 'claim the next ready bead and run it'
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
@@ -89,7 +89,7 @@ toast() { # title body sound
 
 attention() { # agent message
   warn "$1 $2"
-  toast "factory: $TASK_ID" "$1 $2" request
+  toast "Factory: $TASK_ID" "$1 $2" request
 }
 
 agent_status() { h agent get "$1" | jq -r '.result.agent.agent_status'; }
@@ -707,7 +707,7 @@ approve_plan() {
   [[ $FACTORY_PLAN_APPROVAL == ask ]] || return 0
   rm -f "$dir/plan.approved" "$dir/plan-reject.md"
   while :; do
-    toast "factory: $TASK_ID plan ready" "$TASK_TITLE. Approve it in the factory terminal or with: factory approve" request
+    toast "Factory: $TASK_ID plan ready" "$TASK_TITLE. Approve it in the Factory terminal or with: factory approve" request
     printf '\n\033[34m[factory]\033[0m plan for %s (%s):\n\n' "$TASK_ID" "$file" >&2
     sed 's/^/    /' "$file" >&2
     printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' >&2
@@ -765,7 +765,7 @@ collect_answers() {
   local q=$1 dir line stdin_open=1 rc answers=""
   dir=$(dirname "$q")
   rm -f "$dir/answers.md"
-  toast "factory: $TASK_ID has questions" "$TASK_TITLE. Answer in the factory terminal or with: factory answer" request
+  toast "Factory: $TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal or with: factory answer" request
   printf '\n\033[34m[factory]\033[0m the planner asks (%s):\n\n' "$q" >&2
   sed 's/^/    /' "$q" >&2
   printf '\n\033[34m[factory]\033[0m answer below, finish with a line containing only "."  (or: factory answer <repo> %s "...")\n' "$TASK_ID" >&2
@@ -931,7 +931,7 @@ run_task() { # repo arg
 
   log "planning"
   if ! plan_or_interview "$plan"; then
-    bd -C "$repo" comment "$TASK_ID" "factory: stopped at planner questions. workspace $WS, worktree $WT" >/dev/null
+    bd -C "$repo" comment "$TASK_ID" "Factory: stopped at planner questions. workspace $WS, worktree $WT" >/dev/null
     die "stopped at planner questions for $TASK_ID; the workspace stays open"
   fi
   planner_kept_hands_off "$plan"
@@ -946,7 +946,7 @@ run_task() { # repo arg
     planner_kept_hands_off "$plan"
   fi
   if ! approve_plan "$plan" "$WT/$RUN_DIR/plan.md"; then
-    bd -C "$repo" comment "$TASK_ID" "factory: stopped at plan approval. workspace $WS, worktree $WT" >/dev/null
+    bd -C "$repo" comment "$TASK_ID" "Factory: stopped at plan approval. workspace $WS, worktree $WT" >/dev/null
     die "stopped at plan approval for $TASK_ID; the workspace stays open"
   fi
 
@@ -998,14 +998,14 @@ run_task() { # repo arg
         if copilot_loop "$build" "$pr"; then copilot=", Copilot review clean"; else copilot=", Copilot comments remain on the PR"; fi
       fi
     fi
-    bd -C "$repo" comment "$TASK_ID" "factory: approved. $summary${pr:+, pr $pr}$copilot" >/dev/null
-    bd -C "$repo" close "$TASK_ID" -r "factory: gate green, review approved; $next" >/dev/null
-    toast "factory: $TASK_ID done" "$TASK_TITLE. ${next^}." "done"
+    bd -C "$repo" comment "$TASK_ID" "Factory: approved. $summary${pr:+, pr $pr}$copilot" >/dev/null
+    bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null
+    toast "Factory: $TASK_ID done" "$TASK_TITLE. ${next^}." "done"
     log "done: $summary${pr:+, pr $pr}"
     bd_push "$repo"
   else
-    bd -C "$repo" comment "$TASK_ID" "factory: needs a human. $summary" >/dev/null
-    toast "factory: $TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
+    bd -C "$repo" comment "$TASK_ID" "Factory: needs a human. $summary" >/dev/null
+    toast "Factory: $TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
     warn "not approved after $FACTORY_ROUNDS rounds: $summary"
     bd_push "$repo"
     return 2
@@ -1242,7 +1242,7 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
       copilot_request "${url##*/}" && note=", Copilot review requested (no builder agent to act on it)"
     fi
   fi
-  bd -C "$repo" comment "$2" "factory: pull request opened by hand: $url$note" >/dev/null
+  bd -C "$repo" comment "$2" "Factory: pull request opened by hand: $url$note" >/dev/null
   bd_push "$repo"
   printf '%s\n' "$url"
 }
@@ -1286,7 +1286,7 @@ cmd_clean() {
       if [[ -n $status && $status != closed ]]; then
         why=merged
         ((force)) && why=dropped
-        bd -C "$repo" close "$id" -r "factory clean: branch $branch $why" >/dev/null
+        bd -C "$repo" close "$id" -r "Factory clean: branch $branch $why" >/dev/null
       fi
       log "cleaned $branch${ws:+ (workspace $ws)}"
       n=$((n + 1))

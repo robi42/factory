@@ -1,6 +1,7 @@
-# factory
+# Factory
 
 A simple software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
+The CLI is `factory`; `fy` is the alias used below.
 
 - **Claude Code** plans (Fable 5.1) and builds (Opus 5), each in its own Herdr pane.
   The plan states the design in a few lines: what changes, responsibilities, interfaces.
@@ -10,9 +11,9 @@ A simple software factory on [Herdr](https://herdr.dev): one task in, one review
   missed requirements, shortcuts, security problems, and design problems. Both must approve.
 - **Beads** (`bd`) is the task queue and the memory: tasks are beads, and agents leave
   `bd remember` notes that the next run gets to see. After a task, or a new task is
-  filed, the factory pushes the Beads database to the repo's git remote (`bd dolt push`,
+  filed, Factory pushes the Beads database to the repo's git remote (`bd dolt push`,
   under `refs/dolt/data`), so that state survives the machine; `fy sync` pulls and pushes by hand.
-- **Guardrails** are mechanical, not prose. The factory itself runs your gate
+- **Guardrails** are mechanical, not prose. Factory itself runs your gate
   (`just ci`, or `.factory/gate`) and rejects branches that add suppressions, skipped
   tests, or swallowed errors, change code without touching a test, commit build
   artifacts, or touch protected files. The patterns live in `guardrails.txt`, adapted
@@ -20,9 +21,9 @@ A simple software factory on [Herdr](https://herdr.dev): one task in, one review
 
 Every task gets its own git worktree and Herdr workspace, so you can watch or step in.
 The agents are your normal `claude` and `codex` sessions, so your skills, MCP servers,
-hooks, `CLAUDE.md` and `AGENTS.md` all apply; the factory adds nothing to them at run
+hooks, `CLAUDE.md` and `AGENTS.md` all apply; Factory adds nothing to them at run
 time. Claude runs in its `auto` permission mode; whenever an agent stops for a question
-or an approval you get a Herdr toast, answer in the pane, and the factory carries on.
+or an approval you get a Herdr toast, answer in the pane, and Factory carries on.
 
 ## Requirements
 
@@ -44,11 +45,11 @@ fy doctor
 Herdr must be running. `claude` and `codex` must be logged in. `bd` and whatever your
 gate needs must resolve from a fresh login shell (Claude Code runs its commands from one),
 so install them globally, e.g. `mise use -g 'ubi:steveyegge/beads[exe=bd]@1.2.2'`.
-`fy doctor` checks this. The examples below say `factory`; `fy` is the same command.
+`fy doctor` checks this. 
 
 ## Optional extras
 
-None of these are required; each was worth it in practice. The factory adds nothing
+None of these are required; each was worth it in practice. Factory adds nothing
 to the agents itself, so anything you install into Claude Code or Codex applies to
 every run.
 
@@ -61,7 +62,7 @@ codex mcp add context7 --url https://mcp.context7.com/mcp
 codex mcp add grep_app --url https://mcp.grep.app
 ```
 
-Codex runs without approvals in the factory, so give grep.app a pass in `~/.codex/config.toml`:
+Codex runs without approvals in Factory, so give grep.app a pass in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.grep_app]
@@ -100,7 +101,7 @@ it needs a Copilot subscription on the GitHub account.
 
 **Herdr agent integrations.** `herdr integration install claude` and `codex` switch
 Herdr from screen heuristics to hook-based agent state, which makes idle and blocked
-detection more reliable. Not required; the factory handles the known dialogs itself.
+detection more reliable. Not required; Factory handles the known dialogs itself.
 
 **Beads housekeeping.** `git config beads.role maintainer` in each repo silences a
 Beads warning, and untracking `.beads/interactions.jsonl` keeps `git status` quiet.
@@ -133,13 +134,13 @@ A run goes plan (the planner may first ask you questions if the task is ambiguou
 dual plan review (one revision if needed), your approval, build, gate,
 guardrails, dual code review, then revise / gate / review again, up to `FACTORY_ROUNDS`
 times. With `--pr` (or `FACTORY_PR=1`) an approved branch is pushed and a pull request
-opened with `gh`; the bead records the URL. By default the factory then requests a GitHub
+opened with `gh`; the bead records the URL. By default Factory then requests a GitHub
 Copilot code review, hands its comments to the builder, gates, pushes, posts one summary
 comment on the PR and resolves the threads it addressed, then asks again, up to
 `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit has no comments.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns that off. Copilot never approves, it only
 comments, so "clean" is the finish line; your own review and merge stay yours.
-At the approval step the factory prints the plan in its terminal, sends a toast,
+At the approval step Factory prints the plan in its terminal, sends a toast,
 and waits. Answer there (approve, revise with a note, abort) or from any terminal with
 `factory approve <repo> <id>` and `factory reject <repo> <id> "note"`. A note goes to
 the planner, the plan comes back revised, and you are asked again. You can also edit
@@ -167,7 +168,7 @@ layout where not obvious, rules and reasons. Workflow lives in the prompts, not 
 
 ## The gate
 
-The gate is your repo's definition of done. The factory runs it itself and never takes
+The gate is your repo's definition of done. Factory runs it itself and never takes
 an agent's word for it. It is resolved once per run, in this order, and printed at start:
 
 1. `FACTORY_GATE`, any shell command.
@@ -180,14 +181,14 @@ an agent's word for it. It is resolved once per run, in this order, and printed 
    The run says so at start; add `.factory/gate` when you want it explicit and protected.
 4. Otherwise the run refuses to start and says what to add.
 
-After each build or revision the factory runs the gate in the worktree, output to
+After each build or revision Factory runs the gate in the worktree, output to
 `.factory/run/gate-N.log`, exit code zero means pass. On failure the builder gets the
 last forty lines of the log and one round to fix, rerun, and commit. Guardrails run only
 after the gate passes, reviews only after both. The final close-out checks that a passing
 gate log exists for the approved round.
 
 Put everything language-specific in the gate: tests, linters, type checks, coverage
-thresholds, semgrep rules, architecture tests. The factory stays language-agnostic.
+thresholds, semgrep rules, architecture tests. Factory stays language-agnostic.
 `.factory/gate` is protected, so agents cannot relax it. `factory check <worktree> <base>`
 runs gate plus guardrails on any branch without agents.
 
@@ -203,7 +204,7 @@ runs gate plus guardrails on any branch without agents.
 | `FACTORY_TURN_TIMEOUT_MS` | `3600000` |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
 | `FACTORY_REQUIRE_TESTS` | `1`: a change to code files must also touch a test file |
-| `FACTORY_PLAN_APPROVAL` | `ask`: you approve each plan in the factory terminal; `auto` skips |
+| `FACTORY_PLAN_APPROVAL` | `ask`: you approve each plan in the Factory terminal; `auto` skips |
 | `FACTORY_PR` | `0`; `1` pushes the approved branch and opens a pull request with `gh` |
 | `FACTORY_COPILOT` | `1`: request a Copilot review on the PR and act on its comments |
 | `FACTORY_COPILOT_ROUNDS` | `3` |
