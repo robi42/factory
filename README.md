@@ -46,7 +46,13 @@ gate needs must resolve from a fresh login shell (Claude Code runs its commands 
 so install them globally, e.g. `mise use -g 'ubi:steveyegge/beads[exe=bd]@1.2.2'`.
 `fy doctor` checks this. The examples below say `factory`; `fy` is the same command.
 
-Optional, and worth it: library docs and GitHub code search for both agents.
+## Optional extras
+
+None of these are required; each was worth it in practice. The factory adds nothing
+to the agents itself, so anything you install into Claude Code or Codex applies to
+every run.
+
+**Library docs and GitHub code search, for both agents.**
 
 ```sh
 claude plugin install context7@claude-plugins-official
@@ -62,6 +68,42 @@ Codex runs without approvals in the factory, so give grep.app a pass in `~/.code
 url = "https://mcp.grep.app"
 default_tools_approval_mode = "approve"
 ```
+
+**Language servers for the Claude Code agents.** One plugin per language you build in;
+each expects its server binary on the PATH of a fresh login shell.
+
+```sh
+claude plugin install typescript-lsp@claude-plugins-official     # needs typescript-language-server
+claude plugin install gopls-lsp@claude-plugins-official          # needs gopls
+claude plugin install rust-analyzer-lsp@claude-plugins-official  # needs rust-analyzer
+claude plugin install kotlin-lsp@claude-plugins-official         # needs kotlin-lsp
+claude plugin install jdtls-lsp@claude-plugins-official          # needs jdtls and JAVA_HOME
+mise use -g 'npm:typescript-language-server' 'npm:typescript' 'go:golang.org/x/tools/gopls'
+```
+
+`jdtls` cannot start through a mise `java` shim; point `JAVA_HOME` at a real JDK in your
+login profile, e.g. `export JAVA_HOME="$(mise where java@21)"`. Codex has no language
+server support; the gate covers that side.
+
+**GitHub for the Codex reviewer.** GitHub's remote MCP server, authenticated with a
+token in an environment variable (your Herdr panes are non-login shells, so `.bashrc`):
+
+```sh
+codex mcp add github --url https://api.githubcopilot.com/mcp/ \
+  --bearer-token-env-var CODEX_GITHUB_PERSONAL_ACCESS_TOKEN
+```
+
+The builder side gets the same through `claude plugin install github@claude-plugins-official`.
+
+**Copilot code review** on pull requests is built in and on by default, see above;
+it needs a Copilot subscription on the GitHub account.
+
+**Herdr agent integrations.** `herdr integration install claude` and `codex` switch
+Herdr from screen heuristics to hook-based agent state, which makes idle and blocked
+detection more reliable. Not required; the factory handles the known dialogs itself.
+
+**Beads housekeeping.** `git config beads.role maintainer` in each repo silences a
+Beads warning, and untracking `.beads/interactions.jsonl` keeps `git status` quiet.
 
 ## Use
 
