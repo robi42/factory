@@ -285,6 +285,22 @@ detection more reliable. Factory handles the known startup dialogs either way.
 **Beads housekeeping.** `git config beads.role maintainer` in each repo silences a
 warning, and untracking `.beads/interactions.jsonl` keeps `git status` quiet.
 
+## Inspiration
+
+Factory borrows deliberately, and leaves out even more deliberately.
+
+- [Oh My OpenAgent](https://github.com/code-yeongyu/oh-my-opencode) showed the value of
+  distinct roles on distinct models: a planner that interviews, an executor, and hostile
+  critics before anything is built. Factory keeps that split and the plan interview, and
+  drops the harness around it.
+- [Gas Town](https://github.com/steveyegge/gastown) and [Beads](https://github.com/steveyegge/beads)
+  showed that agents need a work ledger that outlives a session: tasks, comments and
+  memories in a database beside the code, pushed with it. Factory uses Beads as is and
+  skips the town.
+- [ai-guardrails](https://github.com/florianbuetow/ai-guardrails) showed that the rules
+  worth having are the ones a machine checks: a strict gate, forbidden patterns, no silent
+  defaults. Factory's guardrails and its own CI follow that model.
+
 ## Develop
 
 ```sh
