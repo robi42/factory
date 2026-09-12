@@ -839,8 +839,34 @@ cmd_doctor() {
 }
 
 cmd_status() {
-  h agent list | jq -r '.result.agents[] | select(.name // "" | test("-(plan|build|review)$")) |
-    "\(.name)\t\(.agent_status)\t\(.workspace_id)\t\(.cwd)"'
+  local color=0 name status ws task role c reset='' labels last=""
+  [[ -t 1 ]] && color=1
+  ((color)) && reset=$'\033[0m'
+  labels=$(h workspace list | jq -r '.result.workspaces[] | "\(.workspace_id)\t\(.label)"')
+  local rows
+  rows=$(h agent list | jq -r '.result.agents[] | select(.name // "" | test("-(plan|build|review)$")) |
+    "\(.name)\t\(.agent_status)\t\(.workspace_id)"' | sort)
+  if [[ -z $rows ]]; then
+    log "no factory agents running"
+    return 0
+  fi
+  printf '%-14s %-8s %-9s %-5s %s\n' TASK ROLE STATE WS LABEL
+  while IFS=$'\t' read -r name status ws; do
+    task=${name%-*}
+    role=${name##*-}
+    c=""
+    if ((color)); then
+      case $status in
+        working) c=$'\033[36m' ;;
+        idle | done) c=$'\033[32m' ;;
+        blocked) c=$'\033[31m' ;;
+        *) c=$'\033[2m' ;;
+      esac
+    fi
+    printf '%-14s %-8s %s%-9s%s %-5s %s\n' "$task" "$role" "$c" "$status" "$reset" "$ws" \
+      "$([[ $task != "$last" ]] && awk -F'\t' -v w="$ws" '$1 == w {print $2}' <<<"$labels")"
+    last=$task
+  done <<<"$rows"
 }
 
 cmd_init() {
