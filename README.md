@@ -1,6 +1,6 @@
 # factory
 
-A small software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
+A simple software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
 
 - **Claude Code** plans (Fable 5.1) and builds (Opus 5), each in its own Herdr pane.
   The plan states the design in a few lines: what changes, responsibilities, interfaces.

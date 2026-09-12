@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# factory: a small software factory on Herdr.
+# factory: a simple software factory on Herdr.
 # Claude Code plans (Fable) and builds (Opus), Codex reviews (GPT), Beads remembers.
 set -euo pipefail
 
@@ -33,7 +33,7 @@ need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
 row() { printf '  %-48s %s\n' "$1" "$2"; }
 
 usage() {
-  printf 'factory %s: a small software factory on Herdr\n\nusage:\n' "$FACTORY_VERSION"
+  printf 'factory %s: a simple software factory on Herdr\n\nusage:\n' "$FACTORY_VERSION"
   row 'factory run     <repo> <bead-id | "task title">' 'plan, build, gate, review one task'
   row 'factory next    <repo>' 'claim the next ready bead and run it'
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
