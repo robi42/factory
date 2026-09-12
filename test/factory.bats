@@ -359,6 +359,20 @@ IN
   [ "$status" -eq 1 ]
 }
 
+@test "take_flags: --pr and --auto set knobs, the rest stay in order, unknown flags fail" {
+  FACTORY_PR=0
+  FACTORY_PLAN_APPROVAL=ask
+  take_flags --pr repo "a task" --auto
+  [ "$FACTORY_PR" = 1 ]
+  [ "$FACTORY_PLAN_APPROVAL" = auto ]
+  [ "${#ARGS[@]}" -eq 2 ]
+  [ "${ARGS[0]}" = repo ]
+  [ "${ARGS[1]}" = "a task" ]
+  run take_flags --nope repo
+  [ "$status" -eq 1 ]
+  [[ $output == *"unknown flag: --nope"* ]]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

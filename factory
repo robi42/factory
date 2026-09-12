@@ -37,6 +37,7 @@ usage() {
   row 'factory run     <repo> <bead-id | "task title">' 'plan, build, gate, review one task'
   row 'factory next    <repo>' 'claim the next ready bead and run it'
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
+  row '  flags: --pr, --auto' 'open a pull request when approved; skip the plan approval'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory init    <repo> [bd init args...]' 'lean bd init, detect the gate, AGENTS.md stub'
   row 'factory approve <repo> <bead-id>' 'approve a waiting plan from any terminal'
@@ -953,24 +954,41 @@ cmd_check() { # worktree base
   guard_check "$1" "$2" && log "guardrails passed"
 }
 
+# take_flags args...: consume --pr (and --auto) anywhere in the args; the rest land in ARGS.
+take_flags() {
+  ARGS=()
+  local a
+  for a in "$@"; do
+    case $a in
+      --pr) FACTORY_PR=1 ;;
+      --auto) FACTORY_PLAN_APPROVAL=auto ;;
+      --*) die "unknown flag: $a" ;;
+      *) ARGS+=("$a") ;;
+    esac
+  done
+}
+
 main() {
   local cmd=${1:-help} t
   if (($# > 0)); then shift; fi
   case $cmd in
     run)
-      (($# == 2)) || die "usage: factory run <repo> <bead-id | task>"
+      take_flags "$@"
+      ((${#ARGS[@]} == 2)) || die "usage: factory run [--pr] [--auto] <repo> <bead-id | task>"
       for t in herdr claude codex bd jq git; do need "$t"; done
-      run_task "$1" "$2"
+      run_task "${ARGS[0]}" "${ARGS[1]}"
       ;;
     next)
-      (($# == 1)) || die "usage: factory next <repo>"
+      take_flags "$@"
+      ((${#ARGS[@]} == 1)) || die "usage: factory next [--pr] [--auto] <repo>"
       for t in herdr claude codex bd jq git; do need "$t"; done
-      cmd_next "$1"
+      cmd_next "${ARGS[0]}"
       ;;
     queue)
-      (($# >= 1)) || die "usage: factory queue <repo> [max]"
+      take_flags "$@"
+      ((${#ARGS[@]} >= 1)) || die "usage: factory queue [--pr] [--auto] <repo> [max]"
       for t in herdr claude codex bd jq git; do need "$t"; done
-      cmd_queue "$@"
+      cmd_queue "${ARGS[@]}"
       ;;
     add)
       (($# >= 1)) || die "usage: factory add <repo> [\"title\" [description]]"

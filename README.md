@@ -61,6 +61,7 @@ factory add    ~/src/app                          # ...or compose title + descri
 factory next   ~/src/app                          # claim the next ready bead, run it
 factory run    ~/src/app "Fix flaky login test"   # a one-off, also filed as a bead
 factory queue  ~/src/app                          # work through everything that is ready
+factory next   --pr --auto ~/src/app              # flags: open a PR when approved; skip plan approval
 factory approve ~/src/app toy-abe                 # approve a waiting plan from anywhere
 factory reject  ~/src/app toy-abe "keep it in one module"   # steer the planner instead
 factory answer  ~/src/app toy-abe "1. yes  2. keep the old format"   # planner questions
@@ -71,14 +72,14 @@ factory status                                    # live factory agents in Herdr
 A run goes plan (the planner may first ask you questions if the task is ambiguous),
 dual plan review (one revision if needed), your approval, build, gate,
 guardrails, dual code review, then revise / gate / review again, up to `FACTORY_ROUNDS`
-times. With `FACTORY_PR=1` an approved branch is pushed and a pull request opened with
-`gh`, its body carrying the plan and the check results; the bead records the URL.
+times. With `--pr` (or `FACTORY_PR=1`) an approved branch is pushed and a pull request
+opened with `gh`, its body carrying the plan and the check results; the bead records the URL.
 At the approval step the factory prints the plan in its terminal, sends a toast,
 and waits. Answer there (approve, revise with a note, abort) or from any terminal with
 `factory approve <repo> <id>` and `factory reject <repo> <id> "note"`. A note goes to
 the planner, the plan comes back revised, and you are asked again. You can also edit
 `plan.md` directly or talk to the planner in its Herdr pane first; the builder reads the
-file. `FACTORY_PLAN_APPROVAL=auto` skips the step for unattended queues. Planner questions
+file. `--auto` (or `FACTORY_PLAN_APPROVAL=auto`) skips the step for unattended queues. Planner questions
 work the same way: answer in the terminal (end with a line containing only `.`) or with
 `factory answer <repo> <id> "..."`; up to three rounds, then the plan comes. On approval
 the bead is closed and you get a toast; merge the `factory/<bead-id>` branch when you are
