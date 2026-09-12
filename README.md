@@ -294,7 +294,10 @@ done; what they need from a harness is less than the frameworks of a year ago as
 So Factory bets on a few things:
 
 - **Short prompts over rulebooks.** Each role gets a paragraph: the task, the gate, where
-  to write. Long instruction files drift, contradict each other, and get skimmed.
+  to write. Long instruction files drift, contradict each other, and get skimmed. DHH
+  reports the same from the other side: the system prompt Anthropic ships for Opus 5
+  shrank by 80% because the model "was actually being damaged by overly prescriptive
+  humans".
 - **Mechanical gates over instructions.** "Do not skip tests" is a sentence an agent can
   ignore; a guardrail that rejects the diff is not. Whatever can be checked, is checked.
 - **Two model families over one.** A second reviewer from a different family catches
@@ -325,6 +328,12 @@ Factory borrows deliberately, and leaves out even more deliberately.
 - [ai-guardrails](https://github.com/florianbuetow/ai-guardrails) showed that the rules
   worth having are the ones a machine checks: a strict gate, forbidden patterns, no silent
   defaults. Factory's guardrails and its own CI follow that model.
+- [DHH on the Lex Fridman Podcast](https://www.youtube.com/watch?v=NYFGCESmikA) (#501,
+  [transcript](https://lexfridman.com/dhh-2-transcript/)) describes the working style
+  Factory is built for: describe the problem, not the recipe; several models in panes side
+  by side; agents reviewing pull requests and reporting back; the human reviewing the shape
+  of everything and the lines of what is critical. Omarchy Quattro shipped that way with
+  no line written by hand.
 
 ## Develop
 
