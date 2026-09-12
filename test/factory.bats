@@ -484,6 +484,38 @@ JSON
   [ -z "$output" ]
 }
 
+@test "clean: merged task branches go, unmerged stay unless forced" {
+  make_repo
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" branch factory/toy-m
+  git -C "$REPO" worktree add -q "$TMP/wt-m" factory/toy-m
+  printf 'x\n' >"$TMP/wt-m/m.txt"
+  git -C "$TMP/wt-m" add -A && git -C "$TMP/wt-m" -c user.email=t@example.invalid -c user.name=t commit -qm m
+  git -C "$REPO" merge -q factory/toy-m
+  git -C "$REPO" checkout -qb factory/toy-u
+  printf 'u\n' >"$REPO/u.txt"
+  commit_all u
+  git -C "$REPO" checkout -q main
+  herdr() { printf '{"result":{"worktrees":[]}}'; }
+  bd() {
+    case "$*" in
+      *"config get"*) printf 'sync.remote (not set in config.yaml)\n' ;;
+      *) printf 'closed\n' ;;
+    esac
+  }
+  bd_field() { printf 'closed\n'; }
+  run cmd_clean "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"cleaned factory/toy-m"* ]]
+  [[ $output == *"keeping factory/toy-u"* ]]
+  [ ! -e "$TMP/wt-m" ]
+  run git -C "$REPO" branch --list 'factory/*' --format='%(refname:short)'
+  [ "$output" = "factory/toy-u" ]
+  run cmd_clean "$REPO" toy-u --force
+  [[ $output == *"cleaned factory/toy-u"* ]]
+  [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

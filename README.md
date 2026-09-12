@@ -70,6 +70,8 @@ factory pr     --no-copilot ~/src/app toy-abe     # a PR without the Copilot rev
 factory approve ~/src/app toy-abe                 # approve a waiting plan from anywhere
 factory approve ~/src/app toy-abe --allow-protected   # ...when the plan must touch protected files
 factory pr      ~/src/app toy-abe                 # open a PR for a task branch a run left behind
+factory clean   ~/src/app                         # drop workspaces, worktrees, branches of merged tasks
+factory clean   ~/src/app toy-abe --force         # ...or of one task you decided to abandon
 factory reject  ~/src/app toy-abe "keep it in one module"   # steer the planner instead
 factory answer  ~/src/app toy-abe "1. yes  2. keep the old format"   # planner questions
 factory check  <worktree> main                    # gate + guardrails on a branch, no agents
@@ -96,7 +98,9 @@ work the same way: answer in the terminal (end with a line containing only `.`) 
 `factory answer <repo> <id> "..."`; up to three rounds, then the plan comes. On approval
 the bead is closed and you get a toast; merge the `factory/<bead-id>` branch when you are
 happy. Otherwise the bead stays in progress with a comment saying what happened, and the
-workspace stays open for you.
+workspace stays open for you. Once a branch is merged, `fy clean` removes its Herdr
+workspace, worktree and branch (squash merges count when the PR shows as merged) and closes
+the bead if it was still open.
 
 Run artifacts live in `.factory/run/` inside the worktree, ignored by git: `plan.md`,
 `questions.md` (planner, only when asked), `plan-review.md` (Codex), `plan-review-build.md` (builder), `review-N.md` (Codex),

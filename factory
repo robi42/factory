@@ -51,6 +51,7 @@ usage() {
   row 'factory reject  <repo> <bead-id> "note"' 'send the planner a note; the plan comes back revised'
   row 'factory answer  <repo> <bead-id> ["answers" | -]' 'answer the planner'"'"'s questions from any terminal'
   row 'factory pr      <repo> <bead-id>' 'push an existing task branch and open a pull request'
+  row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
   row 'factory check   <worktree> <base>' 'run gate + guardrails on a branch, no agents'
   row 'factory status' 'live factory agents in Herdr'
   row 'factory doctor' 'check prerequisites'
@@ -1225,6 +1226,66 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
   printf '%s\n' "$url"
 }
 
+# merged_into repo branch base: 0 when the branch is merged (ancestor of base, or its PR merged).
+merged_into() {
+  local repo=$1 branch=$2 base=$3
+  git -C "$repo" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$base" 2>/dev/null && return 0
+  if git -C "$repo" remote get-url origin >/dev/null 2>&1 && command -v gh >/dev/null 2>&1; then
+    [[ $(cd "$repo" && gh pr view "$branch" --json state -q .state 2>/dev/null) == MERGED ]] && return 0
+  fi
+  return 1
+}
+
+# cmd_clean repo [bead-id] [--force]: remove finished task workspaces, worktrees and branches.
+cmd_clean() {
+  local repo only="" force=0 a base ws branch path id status why n=0
+  repo=$(cd "$1" && pwd)
+  shift
+  for a in "$@"; do
+    case $a in
+      --force) force=1 ;;
+      *) only=$a ;;
+    esac
+  done
+  base=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  # every factory branch, with its Herdr workspace and checkout when there is one
+  while IFS='|' read -r branch ws path; do
+    [[ -n $branch ]] || continue
+    id=${branch#factory/}
+    [[ -z $only || $only == "$id" ]] || continue
+    if ((force)) || merged_into "$repo" "$branch" "$base"; then
+      if [[ -n $ws ]]; then
+        h worktree remove --workspace "$ws" --force >/dev/null
+      elif [[ -n $path ]]; then
+        git -C "$repo" worktree remove --force "$path"
+      fi
+      git -C "$repo" worktree prune
+      git -C "$repo" branch -D "$branch" >/dev/null
+      status=$(bd_field "$repo" "$id" '.status' 2>/dev/null) || status=""
+      if [[ -n $status && $status != closed ]]; then
+        why=merged
+        ((force)) && why=dropped
+        bd -C "$repo" close "$id" -r "factory clean: branch $branch $why" >/dev/null
+      fi
+      log "cleaned $branch${ws:+ (workspace $ws)}"
+      n=$((n + 1))
+    else
+      log "keeping $branch: not merged into $base (fy clean $repo $id --force to drop it)"
+    fi
+  done < <(clean_targets "$repo")
+  log "cleaned $n task branch(es)"
+  ((n == 0)) || bd_push "$repo"
+}
+
+# clean_targets repo -> "branch|workspace|path" for every factory/* branch (fields may be empty)
+clean_targets() {
+  local repo=$1 known
+  known=$(herdr worktree list --cwd "$repo" 2>/dev/null | jq -r '.result.worktrees[]? | select(.branch | startswith("factory/")) | "\(.branch)|\(.open_workspace_id // "")|\(.path)"')
+  git -C "$repo" branch --list 'factory/*' --format='%(refname:short)' | while IFS= read -r branch; do
+    grep -m1 -F "$branch|" <<<"$known" || printf '%s||%s\n' "$branch" "$(worktree_of "$repo" "${branch#factory/}")"
+  done
+}
+
 cmd_check() { # worktree base
   local gate log_file
   gate=$(resolve_gate "$1")
@@ -1311,6 +1372,11 @@ main() {
       ((${#ARGS[@]} == 2)) || die "usage: factory pr [--no-copilot] <repo> <bead-id>"
       for t in gh bd jq git; do need "$t"; done
       cmd_pr "${ARGS[0]}" "${ARGS[1]}"
+      ;;
+    clean)
+      (($# >= 1)) || die "usage: factory clean <repo> [bead-id] [--force]"
+      for t in herdr bd jq git; do need "$t"; done
+      cmd_clean "$@"
       ;;
     check)
       (($# == 2)) || die "usage: factory check <worktree> <base>"
