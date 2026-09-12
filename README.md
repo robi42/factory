@@ -58,6 +58,7 @@ default_tools_approval_mode = "approve"
 factory init   ~/src/app                          # lean bd init, detect + write the gate, AGENTS.md stub
 factory add    ~/src/app "Add CSV export" "..."   # file work as beads
 factory add    ~/src/app                          # ...or compose title + description in $EDITOR
+factory tasks  ~/src/app                          # list open tasks (--all includes closed)
 factory next   ~/src/app                          # claim the next ready bead, run it
 factory run    ~/src/app "Fix flaky login test"   # a one-off, also filed as a bead
 factory queue  ~/src/app                          # work through everything that is ready

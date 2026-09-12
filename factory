@@ -39,6 +39,7 @@ usage() {
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
   row '  flags: --pr, --auto' 'open a pull request when approved; skip the plan approval'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
+  row 'factory tasks   <repo> [--all]' 'list open tasks (beads); --all includes closed'
   row 'factory init    <repo> [bd init args...]' 'lean bd init, detect the gate, AGENTS.md stub'
   row 'factory approve <repo> <bead-id>' 'approve a waiting plan from any terminal'
   row 'factory reject  <repo> <bead-id> "note"' 'send the planner a note; the plan comes back revised'
@@ -894,6 +895,13 @@ cmd_add() {
   bd -C "$repo" create "$TASK_TITLE" -d "$TASK_DESC"
 }
 
+cmd_tasks() { # repo [bd list args...]
+  local repo=$1
+  shift
+  [[ -d $repo/.beads ]] || die "no beads in $repo; run: factory init $repo"
+  bd -C "$repo" list "$@"
+}
+
 cmd_next() {
   local repo=$1 id
   id=$(bd -C "$repo" ready --json 2>/dev/null | jq -r 'if type == "array" then .[0].id // empty else .id // empty end') || id=""
@@ -989,6 +997,11 @@ main() {
       ((${#ARGS[@]} >= 1)) || die "usage: factory queue [--pr] [--auto] <repo> [max]"
       for t in herdr claude codex bd jq git; do need "$t"; done
       cmd_queue "${ARGS[@]}"
+      ;;
+    tasks)
+      (($# >= 1)) || die "usage: factory tasks <repo> [--all | bd list args...]"
+      need bd
+      cmd_tasks "$@"
       ;;
     add)
       (($# >= 1)) || die "usage: factory add <repo> [\"title\" [description]]"
