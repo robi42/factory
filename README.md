@@ -5,6 +5,7 @@
 [![Runs on Herdr](https://img.shields.io/badge/runs%20on-Herdr-8b5cf6.svg)](https://herdr.dev)
 
 A simple software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
+
 The CLI is `factory`; `fy` is the alias used below.
 
 - **Claude Code** plans (Fable 5.1) and builds (Opus 5), each in its own Herdr pane. The
