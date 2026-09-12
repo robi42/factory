@@ -689,9 +689,12 @@ run_task() { # repo arg
   h pane rename "$plan_pane" plan >/dev/null
   h pane rename "$review_pane" review >/dev/null
   sleep 1
+  # Give the agents the factory's PATH (bd, gate tools) via a short command; a long
+  # inline export trips line editors such as ble.sh into multiline mode.
   local pane
+  printf "export PATH='%s'\n" "$PATH" >"$WT/$RUN_DIR/env.sh"
   for pane in "$BUILD_PANE" "$plan_pane" "$review_pane"; do
-    h pane run "$pane" "export PATH='$PATH'; clear" >/dev/null
+    h pane run "$pane" ". $RUN_DIR/env.sh && clear" >/dev/null
   done
   sleep 1
 
