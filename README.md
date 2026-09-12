@@ -178,7 +178,7 @@ and `bin/check-fast` do in a well-kept repo.
 
 ### A good starting point
 
-For a new project, [ai-guardrails](https://github.com/florianbuetow/ai-guardrails) by
+For a new project, [AI Guardrails](https://github.com/florianbuetow/ai-guardrails) by
 Florian Bütow ships copier blueprints for Python, Java, Go, Rust, Kotlin, Scala, Clojure,
 Elixir, C++, TypeScript and shell that already contain all of the above behind one
 `just ci`: formatting, lint, type checks, security scan, dependency hygiene, spell check,
@@ -196,7 +196,7 @@ Checked by Factory on the branch, after the gate and before review:
 
 - No added lines matching `guardrails.txt`: suppressions such as `noqa`, `type: ignore`,
   `eslint-disable`, `shellcheck disable`; skipped tests; `|| true`. Adapted from
-  [ai-guardrails](https://github.com/florianbuetow/ai-guardrails); edit to taste.
+  [AI Guardrails](https://github.com/florianbuetow/ai-guardrails); edit to taste.
 - A change to code files must also touch a test file (`FACTORY_REQUIRE_TESTS=0` to relax).
 - No committed build artifacts, no uncommitted changes, at least one commit.
 - Protected paths untouched: `.factory/gate`, `.factory/protected`, and every glob listed
@@ -326,7 +326,7 @@ Factory borrows deliberately, and leaves out even more deliberately.
   showed that agents need a work ledger that outlives a session: tasks, comments and
   memories in a database beside the code, pushed with it. Factory uses Beads as is and
   skips the town.
-- [ai-guardrails](https://github.com/florianbuetow/ai-guardrails) showed that the rules
+- [AI Guardrails](https://github.com/florianbuetow/ai-guardrails) showed that the rules
   worth having are the ones a machine checks: a strict gate, forbidden patterns, no silent
   defaults. Factory's guardrails and its own CI follow that model.
 - [DHH on the Lex Fridman Podcast](https://www.youtube.com/watch?v=NYFGCESmikA) (#501,
