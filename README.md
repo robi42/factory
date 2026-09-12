@@ -24,18 +24,27 @@ hooks, `CLAUDE.md` and `AGENTS.md` all apply; the factory adds nothing to them a
 time. Claude runs in its `auto` permission mode; whenever an agent stops for a question
 or an approval you get a Herdr toast, answer in the pane, and the factory carries on.
 
+## Requirements
+
+- Linux with bash 4 or newer (macOS works with a newer bash and GNU coreutils, untested).
+- [Herdr](https://herdr.dev) running, with `claude` (Claude Code) and `codex` logged in.
+- [Beads](https://github.com/steveyegge/beads) `bd`, `jq`, `git`; `gh` for pull requests.
+- [mise](https://mise.jdx.dev) installs the dev tools and `bd` from `mise.toml`.
+
+Status: early. Built and used by one person on Arch Linux; expect rough edges on other setups.
+
 ## Setup
 
 ```sh
 mise install            # just, shfmt, shellcheck, bats, codespell, bd
-ln -s "$PWD/factory" ~/.local/bin/factory
-factory doctor
+ln -s "$PWD/factory" ~/.local/bin/fy     # or any name you like
+fy doctor
 ```
 
 Herdr must be running. `claude` and `codex` must be logged in. `bd` and whatever your
 gate needs must resolve from a fresh login shell (Claude Code runs its commands from one),
 so install them globally, e.g. `mise use -g 'ubi:steveyegge/beads[exe=bd]@1.2.2'`.
-`factory doctor` checks this.
+`fy doctor` checks this. The examples below say `factory`; `fy` is the same command.
 
 Optional, and worth it: library docs and GitHub code search for both agents.
 

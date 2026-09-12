@@ -419,7 +419,7 @@ IN
 [
   {"user":{"login":"Copilot"},"commit_id":"abc123","path":"hello.py","line":7,"body":"Use f-strings\r\nhere."},
   {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"old111","path":"hello.py","line":1,"body":"stale"},
-  {"user":{"login":"robi42"},"commit_id":"abc123","path":"hello.py","line":2,"body":"human"},
+  {"user":{"login":"human"},"commit_id":"abc123","path":"hello.py","line":2,"body":"human"},
   {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","path":"test_hello.py","line":null,"original_line":9,"body":"Missing case"}
 ]
 JSON
@@ -435,7 +435,7 @@ JSON
 [
   {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"old111","state":"COMMENTED","body":"### 🔴 Changes needed\nold"},
   {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","state":"COMMENTED","body":"### 🟢 Approval recommended\nThe only comment is a nit."},
-  {"user":{"login":"robi42"},"commit_id":"abc123","state":"APPROVED","body":"lgtm"}
+  {"user":{"login":"human"},"commit_id":"abc123","state":"APPROVED","body":"lgtm"}
 ]
 JSON
   [ "$output" = "🟢 Approval recommended" ]
