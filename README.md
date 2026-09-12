@@ -211,12 +211,13 @@ default_tools_approval_mode = "approve"
 each expects its server binary on the PATH of a fresh login shell.
 
 ```sh
+claude plugin install pyright-lsp@claude-plugins-official        # needs pyright
 claude plugin install typescript-lsp@claude-plugins-official     # needs typescript-language-server
 claude plugin install gopls-lsp@claude-plugins-official          # needs gopls
 claude plugin install rust-analyzer-lsp@claude-plugins-official  # needs rust-analyzer
 claude plugin install kotlin-lsp@claude-plugins-official         # needs kotlin-lsp
 claude plugin install jdtls-lsp@claude-plugins-official          # needs jdtls and JAVA_HOME
-mise use -g 'npm:typescript-language-server' 'npm:typescript' 'go:golang.org/x/tools/gopls'
+mise use -g 'npm:pyright' 'npm:typescript-language-server' 'npm:typescript' 'go:golang.org/x/tools/gopls'
 ```
 
 `jdtls` cannot start through a mise `java` shim; point `JAVA_HOME` at a real JDK in your
