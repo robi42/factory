@@ -329,8 +329,8 @@ Factory borrows deliberately, and leaves out even more deliberately.
   worth having are the ones a machine checks: a strict gate, forbidden patterns, no silent
   defaults. Factory's guardrails and its own CI follow that model.
 - [DHH on the Lex Fridman Podcast](https://www.youtube.com/watch?v=NYFGCESmikA) (#501,
-  [transcript](https://lexfridman.com/dhh-2-transcript/)) describes the working style
-  Factory is built for: describe the problem, not the recipe; several models in panes side
+  [transcript](https://lexfridman.com/dhh-2-transcript/)) showed the working style
+  Factory is built for: state the problem, not the recipe; several models in panes side
   by side; agents reviewing pull requests and reporting back; the human reviewing the shape
   of everything and the lines of what is critical. Omarchy Quattro shipped that way with
   no line written by hand.
