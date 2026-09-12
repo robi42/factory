@@ -41,9 +41,10 @@ usage() {
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory tasks   <repo> [--all]' 'list open tasks (beads); --all includes closed'
   row 'factory init    <repo> [bd init args...]' 'lean bd init, detect the gate, AGENTS.md stub'
-  row 'factory approve <repo> <bead-id>' 'approve a waiting plan from any terminal'
+  row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve a waiting plan from any terminal'
   row 'factory reject  <repo> <bead-id> "note"' 'send the planner a note; the plan comes back revised'
   row 'factory answer  <repo> <bead-id> ["answers" | -]' 'answer the planner'"'"'s questions from any terminal'
+  row 'factory pr      <repo> <bead-id>' 'push an existing task branch and open a pull request'
   row 'factory check   <worktree> <base>' 'run gate + guardrails on a branch, no agents'
   row 'factory status' 'live factory agents in Herdr'
   row 'factory doctor' 'check prerequisites'
@@ -330,11 +331,15 @@ guard_check() {
     printf 'source files changed but no test files did; add or adjust a test\n'
     bad=1
   fi
-  mapfile -t globs < <(protected_globs "$wt")
-  while IFS= read -r f; do
-    printf 'protected path changed: %s\n' "$f"
-    bad=1
-  done < <(git -C "$wt" diff --name-only "$base...HEAD" -- "${globs[@]}")
+  if [[ -e $wt/$RUN_DIR/allow-protected ]]; then
+    printf 'note: protected-path check waived by the human for this task\n' >&2
+  else
+    mapfile -t globs < <(protected_globs "$wt")
+    while IFS= read -r f; do
+      printf 'protected path changed: %s\n' "$f"
+      bad=1
+    done < <(git -C "$wt" diff --name-only "$base...HEAD" -- "${globs[@]}")
+  fi
   local hits=0
   while IFS= read -r f; do
     if git -C "$wt" diff -U0 "$base...HEAD" -- "$f" | grep -E '^\+[^+]' \
@@ -373,7 +378,29 @@ verdicts() { # files... -> one word per file, NONE when missing
 }
 
 # ------------------------------------------------------------------- pr ----
-pr_body() { # round
+pr_checks() { # -> markdown bullets describing what the run directory proves
+  local d="$WT/$RUN_DIR" f v gates reviews
+  shopt -s nullglob
+  gates=("$d"/gate-*.log)
+  reviews=("$d"/review-*.md)
+  shopt -u nullglob
+  if ((${#gates[@]})); then
+    f=$(printf '%s\n' "${gates[@]}" | sort -V | tail -n1)
+    printf -- '- Gate %s passed (%s)\n' "\`$GATE\`" "$(basename "$f" .log)"
+  else
+    printf -- '- Gate: not run by the factory\n'
+  fi
+  if ((${#reviews[@]})); then
+    while IFS= read -r f; do
+      v=$(verdict_of "$f") || v=NONE
+      printf -- '- %s: %s\n' "$(basename "$f" .md)" "$v"
+    done < <(printf '%s\n' "${reviews[@]}" | sort -V)
+  fi
+  [[ -e $d/allow-protected ]] && printf -- '- Protected-path check waived by the human\n'
+  return 0
+}
+
+pr_body() {
   cat <<B
 Bead $TASK_ID: $TASK_TITLE
 
@@ -381,23 +408,21 @@ $TASK_DESC
 
 ## Plan
 
-$(cat "$WT/$RUN_DIR/plan.md")
+$(cat "$WT/$RUN_DIR/plan.md" 2>/dev/null || printf 'no plan file')
 
 ## Checks
 
-- Gate \`$GATE\` passed (round $1)
-- Factory guardrails passed
-- Review: Codex approved, planner approved (round $1)
+$(pr_checks)
 
 Built by factory on branch \`$BRANCH\`.
 B
 }
 
-raise_pr() { # round -> prints the PR url
+raise_pr() { # -> prints the PR url
   need gh
-  git -C "$WT" remote get-url origin >/dev/null 2>&1 || die "FACTORY_PR=1 but $WT has no origin remote"
+  git -C "$WT" remote get-url origin >/dev/null 2>&1 || die "$WT has no origin remote"
   git -C "$WT" push -q -u origin "$BRANCH"
-  (cd "$WT" && gh pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body "$1")")
+  (cd "$WT" && gh pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)")
 }
 
 # --------------------------------------------------------------- prompts ----
@@ -510,7 +535,7 @@ approve_plan() {
     toast "factory: $TASK_ID plan ready" "$TASK_TITLE. Approve it in the factory terminal or with: factory approve" request
     printf '\n\033[34m[factory]\033[0m plan for %s (%s):\n\n' "$TASK_ID" "$file" >&2
     sed 's/^/    /' "$file" >&2
-    printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), [r]evise with a note, a[b]ort? (a/r/b) ' >&2
+    printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' >&2
     answer=""
     while :; do
       if [[ -s $dir/plan-reject.md ]]; then
@@ -542,6 +567,11 @@ approve_plan() {
     done
     case $answer in
       a | A | y | Y) return 0 ;;
+      p | P)
+        : >"$dir/allow-protected"
+        log "protected-path check waived for this task"
+        return 0
+        ;;
       r | R)
         printf '\033[34m[factory]\033[0m note for the planner: ' >&2
         read -r note || return 3
@@ -770,7 +800,7 @@ run_task() { # repo arg
   if [[ $verdict == APPROVE ]] && [[ -f $gate_log ]] && guard_check "$WT" "$BASE" >/dev/null; then
     local pr="" next="merge $BRANCH"
     if ((FACTORY_PR)); then
-      pr=$(raise_pr "$round")
+      pr=$(raise_pr)
       next="review $pr"
       log "opened $pr"
     fi
@@ -924,10 +954,14 @@ cmd_queue() {
   log "queue finished after $n task(s)"
 }
 
-cmd_approve() { # repo bead-id
+cmd_approve() { # repo bead-id [--allow-protected]
   local wt
   wt=$(worktree_of "$1" "$2")
   [[ -n $wt ]] || die "no worktree for factory/$2 in $1"
+  if [[ ${3:-} == --allow-protected ]]; then
+    : >"$wt/$RUN_DIR/allow-protected"
+    log "protected-path check waived for $2"
+  fi
   : >"$wt/$RUN_DIR/plan.approved"
   log "approved plan for $2"
 }
@@ -948,6 +982,24 @@ cmd_answer() { # repo bead-id [text | -]
   [[ -n $text ]] || die "empty answer"
   printf '%s\n' "$text" >"$wt/$RUN_DIR/answers.md"
   log "sent your answers to the planner of $2"
+}
+
+cmd_pr() { # repo bead-id: open a pull request for an existing task branch
+  local repo url
+  repo=$(cd "$1" && pwd)
+  WT=$(worktree_of "$repo" "$2")
+  [[ -n $WT ]] || die "no worktree for factory/$2 in $repo"
+  TASK_ID=$2
+  TASK_TITLE=$(bd_field "$repo" "$2" '.title')
+  TASK_DESC=$(bd_field "$repo" "$2" '.description // ""')
+  BRANCH="factory/$2"
+  BASE=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  GATE=$(resolve_gate "$repo")
+  [[ -z $(git -C "$WT" status --porcelain -- . ':(exclude).factory') ]] || die "$WT has uncommitted changes"
+  url=$(raise_pr)
+  bd -C "$repo" comment "$2" "factory: pull request opened by hand: $url" >/dev/null
+  log "opened $url"
+  printf '%s\n' "$url"
 }
 
 cmd_check() { # worktree base
@@ -1014,8 +1066,8 @@ main() {
       cmd_init "$@"
       ;;
     approve)
-      (($# == 2)) || die "usage: factory approve <repo> <bead-id>"
-      cmd_approve "$1" "$2"
+      (($# == 2 || $# == 3)) || die "usage: factory approve <repo> <bead-id> [--allow-protected]"
+      cmd_approve "$@"
       ;;
     reject)
       (($# == 3)) || die "usage: factory reject <repo> <bead-id> \"note for the planner\""
@@ -1024,6 +1076,11 @@ main() {
     answer)
       (($# >= 2)) || die "usage: factory answer <repo> <bead-id> [\"answers\" | -]  (stdin when omitted or -)"
       cmd_answer "$@"
+      ;;
+    pr)
+      (($# == 2)) || die "usage: factory pr <repo> <bead-id>"
+      for t in gh bd jq git; do need "$t"; done
+      cmd_pr "$1" "$2"
       ;;
     check)
       (($# == 2)) || die "usage: factory check <worktree> <base>"

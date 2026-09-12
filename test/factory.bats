@@ -312,7 +312,7 @@ IN
   [[ $output == *"empty title"* ]]
 }
 
-@test "pr_body carries task, plan and checks" {
+@test "pr_body carries task, plan and whatever checks exist" {
   make_repo
   fake_task
   TASK_DESC="details"
@@ -321,9 +321,46 @@ IN
   BRANCH=factory/toy-1
   mkdir -p "$REPO/.factory/run"
   printf 'the plan\n' >"$REPO/.factory/run/plan.md"
-  run pr_body 2
+  run pr_body
   [[ $output == "Bead toy-1: t"* ]]
-  [[ $output == *"details"*"the plan"*"passed (round 2)"*"factory/toy-1"* ]]
+  [[ $output == *"details"*"the plan"*"Gate: not run"*"factory/toy-1"* ]]
+  : >"$REPO/.factory/run/gate-2.log"
+  printf 'VERDICT: APPROVE\n' >"$REPO/.factory/run/review-2.md"
+  printf 'VERDICT: REVISE\n' >"$REPO/.factory/run/review-2-plan.md"
+  : >"$REPO/.factory/run/allow-protected"
+  run pr_body
+  [[ $output == *"passed (gate-2)"*"review-2: APPROVE"*"review-2-plan: REVISE"*"waived by the human"* ]]
+}
+
+@test "guard: waiver skips only the protected-path check" {
+  make_repo
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
+  commit_all "relax gate"
+  mkdir -p "$REPO/.factory/run"
+  : >"$REPO/.factory/run/allow-protected"
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+  [[ $output == *"waived"* ]]
+  printf 'echo x\n' >>"$REPO/run.sh"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"uncommitted"* ]]
+}
+
+@test "approve --allow-protected and the p answer write the waiver" {
+  make_repo
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" worktree add -q -b factory/toy-9 "$TMP/wt-9"
+  mkdir -p "$TMP/wt-9/.factory/run"
+  cmd_approve "$REPO" toy-9 --allow-protected
+  [ -e "$TMP/wt-9/.factory/run/allow-protected" ]
+  [ -e "$TMP/wt-9/.factory/run/plan.approved" ]
+  fake_task
+  toast() { :; }
+  printf 'the plan\n' >"$TMP/plan.md"
+  FACTORY_PLAN_APPROVAL=ask
+  approve_plan planner "$TMP/plan.md" <<<"p"
+  [ -e "$TMP/allow-protected" ]
 }
 
 @test "collect_answers: terminal lines until a dot, or answers.md from factory answer" {

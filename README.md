@@ -64,6 +64,8 @@ factory run    ~/src/app "Fix flaky login test"   # a one-off, also filed as a b
 factory queue  ~/src/app                          # work through everything that is ready
 factory next   --pr --auto ~/src/app              # flags: open a PR when approved; skip plan approval
 factory approve ~/src/app toy-abe                 # approve a waiting plan from anywhere
+factory approve ~/src/app toy-abe --allow-protected   # ...when the plan must touch protected files
+factory pr      ~/src/app toy-abe                 # open a PR for a task branch a run left behind
 factory reject  ~/src/app toy-abe "keep it in one module"   # steer the planner instead
 factory answer  ~/src/app toy-abe "1. yes  2. keep the old format"   # planner questions
 factory check  <worktree> main                    # gate + guardrails on a branch, no agents
@@ -91,7 +93,9 @@ Run artifacts live in `.factory/run/` inside the worktree, ignored by git: `plan
 `questions.md` (planner, only when asked), `plan-review.md` (Codex), `plan-review-build.md` (builder), `review-N.md` (Codex),
 `review-N-plan.md` (planner), `response-N.md` (builder's pushback), `gate-N.log`.
 The gate script `.factory/gate` and `.factory/protected` (one glob per line) are
-committed, and the agents may not change them.
+committed, and the agents may not change them, unless you waive that for one task at plan
+approval (`p` instead of `a`, or `--allow-protected`), which a bootstrap task like "add the
+gate" needs. The waiver skips only the protected-path check; the PR body records it.
 
 `factory init` writes a short `AGENTS.md` (with `CLAUDE.md` linking to it) only when a
 repo has neither. Keep it to what the code cannot tell a new engineer: how to verify,
