@@ -125,6 +125,11 @@ settle_dialogs() {
     elif grep -qE 'hooks need review|Press enter to view hooks' <<<"$txt"; then
       log "$name: closing Codex hooks dialog without enabling hooks (attempt $i)"
       herdr agent send-keys "$name" esc >/dev/null
+    elif grep -qE 'q close +esc to edit prev|T R A N S C R I P T' <<<"$txt"; then
+      # Codex opens its transcript overlay to show startup warnings (e.g. a failed MCP);
+      # Herdr sees an idle agent, but typed prompts go nowhere until it is closed.
+      log "$name: closing Codex transcript overlay (attempt $i)"
+      herdr agent send-keys "$name" q >/dev/null
     else
       status=$(agent_status "$name")
       case $status in
