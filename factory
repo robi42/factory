@@ -471,6 +471,55 @@ verdicts() { # files... -> one word per file, NONE when missing
 }
 
 # ------------------------------------------------------------------- pr ----
+rebase_fix_prompt() { # upstream files
+  cat <<P
+Rebasing this branch onto $1 stopped on conflicts in:
+$2
+Resolve them so both sides' intent survives, git add the files, and run git rebase --continue until the rebase is done (repeat if it stops again). Do not skip commits or abort. Then run the gate: $GATE
+Commit anything the gate needed. Reply with just DONE.
+P
+}
+
+rebase_in_progress() { # worktree
+  [[ -d $(git -C "$1" rev-parse --path-format=absolute --git-path rebase-merge) ||
+  -d $(git -C "$1" rev-parse --path-format=absolute --git-path rebase-apply) ]]
+}
+
+# rebase_onto_base builder-agent: bring the branch up to date with the base before a PR.
+# Returns 0 when nothing changed, 10 when the branch was rebased (gate and guards must rerun).
+rebase_onto_base() {
+  local agent=$1 upstream="$BASE" files
+  if git -C "$WT" remote get-url origin >/dev/null 2>&1 && git -C "$WT" fetch -q origin "$BASE" 2>/dev/null; then
+    upstream="origin/$BASE"
+  fi
+  if git -C "$WT" merge-base --is-ancestor "$upstream" HEAD 2>/dev/null; then
+    return 0
+  fi
+  log "rebasing $BRANCH onto $upstream"
+  if git -C "$WT" rebase -q "$upstream" >/dev/null 2>&1; then
+    return 10
+  fi
+  files=$(git -C "$WT" diff --name-only --diff-filter=U | paste -sd' ')
+  warn "rebase conflicts in: $files; asking the builder"
+  ask "$agent" "$(rebase_fix_prompt "$upstream" "$files")"
+  if rebase_in_progress "$WT"; then
+    die "the rebase onto $upstream is still in progress in $WT; finish or abort it"
+  fi
+  tree_dirty "$WT" && die "the worktree is dirty after the rebase; commit or clean it"
+  git -C "$WT" merge-base --is-ancestor "$upstream" HEAD || die "$BRANCH is still not on top of $upstream"
+  return 10
+}
+
+# regate builder-agent round: after a rebase, gate and guards must hold again; one fix round.
+regate() {
+  local agent=$1 gate_log="$WT/$RUN_DIR/gate-rebase-$2.log"
+  if ! run_gate "$WT" "$GATE" "$gate_log"; then
+    ask "$agent" "$(gate_fix_prompt "$gate_log")"
+    run_gate "$WT" "$GATE" "$gate_log" || die "gate fails after the rebase; see $gate_log"
+  fi
+  guard_check "$WT" "$BASE" >/dev/null || die "guardrails fail after the rebase"
+}
+
 pr_checks() { # -> markdown bullets describing what the run directory proves
   local d="$WT/$RUN_DIR" f v gates reviews
   shopt -s nullglob
@@ -510,10 +559,14 @@ $(cat "$WT/$RUN_DIR/plan.md" 2>/dev/null || printf 'no plan file')
 B
 }
 
-raise_pr() { # -> prints the PR url
+raise_pr() { # builder-agent -> prints the PR url
   need gh
   git -C "$WT" remote get-url origin >/dev/null 2>&1 || die "$WT has no origin remote"
-  git -C "$WT" push -q -u origin "$BRANCH"
+  local rc=0
+  rebase_onto_base "$1" || rc=$?
+  ((rc == 0 || rc == 10)) || exit "$rc"
+  ((rc == 10)) && regate "$1" pr
+  git -C "$WT" push -q -u --force-with-lease origin "$BRANCH"
   (cd "$WT" && gh pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)")
 }
 
@@ -1068,7 +1121,7 @@ run_task() { # repo arg
   if [[ $verdict == APPROVE ]] && [[ -f $gate_log ]] && guard_check "$WT" "$BASE" >/dev/null; then
     local pr="" next="merge $BRANCH" copilot=""
     if ((FACTORY_PR)); then
-      pr=$(raise_pr)
+      pr=$(raise_pr "$build")
       next="review $pr"
       log "opened $pr"
       if ((FACTORY_COPILOT)); then
@@ -1311,7 +1364,8 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
   BASE=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
   GATE=$(resolve_gate "$repo")
   [[ -z $(git -C "$WT" status --porcelain -- . ':(exclude).factory') ]] || die "$WT has uncommitted changes"
-  url=$(raise_pr)
+  herdr agent get "$2-build" >/dev/null 2>&1 || die "no live builder agent for $2 to handle a rebase; rebase by hand, or rerun the task"
+  url=$(raise_pr "$2-build")
   log "opened $url"
   local note=""
   if ((FACTORY_COPILOT)); then

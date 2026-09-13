@@ -618,6 +618,55 @@ JSON
   grep -q 'ready --claim --json' "$TMP/bd.log"
 }
 
+@test "rebase_onto_base: up to date, clean rebase, and conflicts handed to the builder" {
+  make_repo
+  WT=$REPO
+  BASE=main
+  BRANCH=work
+  GATE=true
+  # up to date: nothing to do
+  rebase_onto_base builder
+  # base moves on another file: clean rebase
+  git -C "$REPO" checkout -q main
+  printf 'other\n' >"$REPO/other.txt"
+  commit_all "base moves"
+  git -C "$REPO" checkout -q work
+  printf 'mine\n' >"$REPO/mine.txt"
+  commit_all "work"
+  run rebase_onto_base builder
+  [ "$status" -eq 10 ]
+  git -C "$REPO" merge-base --is-ancestor main work
+  # base changes the same line: conflict, the stubbed builder resolves it
+  git -C "$REPO" checkout -q main
+  printf 'echo base\n' >"$REPO/run.sh"
+  commit_all "base edits run.sh"
+  git -C "$REPO" checkout -q work
+  printf 'echo work\n' >"$REPO/run.sh"
+  commit_all "work edits run.sh"
+  ask() {
+    printf 'echo both\n' >"$REPO/run.sh"
+    git -C "$REPO" add run.sh
+    GIT_EDITOR=true git -C "$REPO" rebase --continue >/dev/null 2>&1
+  }
+  run rebase_onto_base builder
+  [ "$status" -eq 10 ]
+  [[ $output == *"rebase conflicts in: run.sh"* ]]
+  [ "$(cat "$REPO/run.sh")" = "echo both" ]
+  git -C "$REPO" merge-base --is-ancestor main work
+  # a builder that leaves the rebase unfinished is an error
+  git -C "$REPO" checkout -q main
+  printf 'echo base2\n' >"$REPO/run.sh"
+  commit_all "base again"
+  git -C "$REPO" checkout -q work
+  printf 'echo work2\n' >"$REPO/run.sh"
+  commit_all "work again"
+  ask() { :; }
+  run rebase_onto_base builder
+  [ "$status" -eq 1 ]
+  [[ $output == *"still in progress"* ]]
+  git -C "$REPO" rebase --abort
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

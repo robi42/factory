@@ -123,7 +123,8 @@ Herdr panes. Each task has its own worktree, workspace and agents; `fy next` cla
 bead atomically, so two starts never pick the same one. `fy queue` itself is sequential
 on purpose: one plan approval prompt per terminal is enough. Watch for two things when
 running in parallel: heavy gates compete for CPU, and branches that touch the same files
-need a rebase before their pull requests, which the builder does not do for you.
+get rebased at PR time, conflicts going to the builder, so the second one to open a PR
+pays for the overlap.
 
 ### The human gates
 
@@ -144,8 +145,10 @@ merged), `fy clean` removes the workspace, worktree and branch and closes the be
 
 ### Pull requests and Copilot
 
-With `--pr` (or `FACTORY_PR=1`) an approved branch is pushed and a pull request opened
-with `gh`: the task as summary, the checks as a list, the plan folded away. By default
+With `--pr` (or `FACTORY_PR=1`) an approved branch is first rebased onto the base branch,
+the builder resolving any conflicts and the gate and guardrails running again if the
+rebase changed anything, then pushed and a pull request opened with `gh`: the task as
+summary, the checks as a list, the plan folded away. By default
 Factory then requests a GitHub Copilot code review, hands its comments to the builder,
 gates, pushes, posts one summary comment and resolves the threads it addressed, and asks
 again, up to `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit is
