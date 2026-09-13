@@ -43,9 +43,10 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
 5. **Gate and guardrails.** Factory runs the gate itself and checks the branch.
 6. **Code review.** Codex and the planner each review the diff. Anything but two approvals
    sends it back to step 4, up to `FACTORY_ROUNDS` times.
-7. **Done.** Memories stored, bead closed, toast sent. With `--pr` the branch is pushed, a
-   pull request opened, and a GitHub Copilot review requested and acted on until it is
-   clean. Merging stays yours; `fy clean` tidies up afterwards.
+7. **Done.** Memories stored, bead closed, toast sent. With `--pr` the branch is rebased
+   onto the base (the builder resolves conflicts), pushed, a pull request opened, and a
+   GitHub Copilot review requested and acted on until it is clean. Merging stays yours;
+   `fy clean` tidies up afterwards.
 
 ## How it drives the agents
 
@@ -108,7 +109,7 @@ fy approve ~/src/app app-k3x                 # add --allow-protected when the pl
 fy reject  ~/src/app app-k3x "keep it in one module"
 
 # afterwards
-fy pr      ~/src/app app-k3x                 # open a PR for a branch a run left behind (--no-copilot to skip the loop)
+fy pr      ~/src/app app-k3x                 # open a PR for a branch a run left behind; needs its builder agent alive
 fy clean   ~/src/app                         # drop workspaces, worktrees and branches of merged tasks
 fy clean   ~/src/app app-k3x --force         # ...or of one task you abandoned
 fy check   <worktree> main                   # gate + guardrails on a branch, no agents
@@ -317,8 +318,8 @@ The builder side gets the same through `claude plugin install github@claude-plug
 Herdr from screen heuristics to hook-based agent state, which makes idle and blocked
 detection more reliable. Factory handles the known startup dialogs either way.
 
-**Beads housekeeping.** `git config beads.role maintainer` in each repo silences a
-warning, and untracking `.beads/interactions.jsonl` keeps `git status` quiet.
+**Beads housekeeping.** `fy init` sets `beads.role` so Beads stops warning; untracking
+`.beads/interactions.jsonl` keeps `git status` quiet.
 
 ## Why so lean
 
