@@ -222,6 +222,11 @@ blueprint needs no gate setup at all, and Factory's own guardrail patterns are a
 from the same rules. For an existing project, borrowing a blueprint's `justfile` and
 `config/semgrep/` is the quickest way to a strict gate.
 
+Commit hooks are the project's business, not Factory's. Factory installs none and does not
+need any, since it runs the gate itself on the committed branch; but a repo's hooks do run
+for the builder's commits, because worktrees share them, and fast ones give the builder
+feedback before the gate does. Keep them fast and leave the slow checks to the gate.
+
 Factory stays language-agnostic; whatever the gate says is done, is done.
 
 ## Guardrails
