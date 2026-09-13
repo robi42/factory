@@ -69,18 +69,18 @@ minutes so a thirty-minute gate is visibly a wait, not a hang.
 ## Requirements
 
 - Linux with Bash 4 or newer (macOS with a newer Bash and GNU coreutils is untested).
-- [Herdr](https://herdr.dev) running, with `claude` (Claude Code) and `codex` logged in.
-- [Beads](https://github.com/steveyegge/beads) `bd`, `jq`, `git`; `gh` for pull requests.
-- [mise](https://mise.jdx.dev) installs the dev tools and `bd` from `mise.toml`.
+- [Herdr](https://herdr.dev), [Claude Code](https://docs.claude.com/en/docs/claude-code)
+  and [Codex](https://github.com/openai/codex).
+- [mise](https://mise.jdx.dev), which installs the dev tools and
+  [Beads](https://github.com/steveyegge/beads) (`bd`) from `mise.toml`; `jq` and `git`;
+  `gh` for pull requests.
 
 Status: early. Built and used by one person on Arch Linux; expect rough edges elsewhere.
 
 ## Install
 
-1. Prerequisites, each with its own installer: [Herdr](https://herdr.dev) (run it once so
-   its server is up), [Claude Code](https://docs.claude.com/en/docs/claude-code) and
-   [Codex](https://github.com/openai/codex) (both logged in), [mise](https://mise.jdx.dev),
-   `jq` and `git`; `gh` logged in if you want pull requests.
+1. Install the requirements above with their own installers, start Herdr once so its
+   server is up, and log in to `claude`, `codex` and, for pull requests, `gh`.
 2. Clone and install the tools Factory manages:
    ```sh
    git clone https://github.com/robi42/factory ~/Projects/factory
