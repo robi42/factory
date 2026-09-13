@@ -386,6 +386,9 @@ Factory borrows deliberately, and leaves out even more deliberately.
 just ci      # shfmt, shellcheck, guardrails applied to ourselves, codespell, bats
 ```
 
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
+`fix:`, `docs:`, `test:`, `chore:`, with an optional scope such as `docs(readme):`.
+
 ## License
 
 MIT, see `LICENSE`.
