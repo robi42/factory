@@ -1083,8 +1083,9 @@ start_or_adopt_agents() {
   fi
   [[ $live == 0 ]] || die "some agents of $TASK_ID are still alive in workspace $WS; run: fy clean $repo $TASK_ID --force"
   close_extra_panes "$WS" "$BUILD_PANE"
-  plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.6 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
-  review_pane=$(h pane split --pane "$plan_pane" --direction down --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
+  # builder left, planner over reviewer right; equal columns, the planner a little taller
+  plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.5 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
+  review_pane=$(h pane split --pane "$plan_pane" --direction down --ratio 0.6 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
   h pane rename "$BUILD_PANE" build >/dev/null
   h pane rename "$plan_pane" plan >/dev/null
   h pane rename "$review_pane" review >/dev/null
