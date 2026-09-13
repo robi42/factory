@@ -116,6 +116,15 @@ fy sync    ~/src/app                         # pull, then push the beads databas
 fy status                                    # live Factory agents in Herdr
 ```
 
+### Parallel tasks
+
+Run several tasks at once by starting `fy next` (or `fy run`) in separate terminals or
+Herdr panes. Each task has its own worktree, workspace and agents; `fy next` claims its
+bead atomically, so two starts never pick the same one. `fy queue` itself is sequential
+on purpose: one plan approval prompt per terminal is enough. Watch for two things when
+running in parallel: heavy gates compete for CPU, and branches that touch the same files
+need a rebase before their pull requests, which the builder does not do for you.
+
 ### The human gates
 
 **Questions.** When the planner asks, Factory prints the questions in its terminal and

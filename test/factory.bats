@@ -605,6 +605,19 @@ JSON
   [[ $output == *".factory/guardrails.txt"* ]]
 }
 
+@test "next claims atomically through bd ready --claim" {
+  herdr() { :; }
+  claude() { :; }
+  codex() { :; }
+  bd() {
+    printf '%s\n' "$*" >>"$TMP/bd.log"
+    printf '[]'
+  }
+  run cmd_next "$TMP"
+  [ "$status" -eq 3 ]
+  grep -q 'ready --claim --json' "$TMP/bd.log"
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

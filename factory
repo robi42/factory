@@ -1147,6 +1147,7 @@ cmd_init() {
   local repo=$1
   shift
   [[ -d $repo/.git ]] || die "$repo is not a git repo"
+  git -C "$repo" config beads.role >/dev/null 2>&1 || git -C "$repo" config beads.role maintainer
   if [[ -d $repo/.beads ]]; then log "beads already set up in $repo"; else
     # No generated AGENTS.md/CLAUDE.md, hooks, or editor files: the prompts carry what agents need.
     (cd "$repo" && BD_NON_INTERACTIVE=1 bd init --non-interactive --skip-agents --skip-hooks "$@")
@@ -1247,7 +1248,8 @@ cmd_tasks() { # repo [bd list args...]
 
 cmd_next() {
   local repo=$1 id
-  id=$(bd -C "$repo" ready --json 2>/dev/null | jq -r 'if type == "array" then .[0].id // empty else .id // empty end') || id=""
+  # --claim is atomic, so several fy next in parallel never pick the same bead
+  id=$(bd -C "$repo" ready --claim --json 2>/dev/null | jq -r 'if type == "array" then .[0].id // empty else .id // empty end') || id=""
   [[ -n $id ]] || {
     log "nothing ready in $repo"
     return 3
