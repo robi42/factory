@@ -1301,7 +1301,7 @@ cmd_clean() {
 # clean_targets repo -> "branch|workspace|path" for every factory/* branch (fields may be empty)
 clean_targets() {
   local repo=$1 known
-  known=$(herdr worktree list --cwd "$repo" 2>/dev/null | jq -r '.result.worktrees[]? | select(.branch | startswith("factory/")) | "\(.branch)|\(.open_workspace_id // "")|\(.path)"')
+  known=$(herdr worktree list --cwd "$repo" 2>/dev/null | jq -r '.result.worktrees[]? | select((.branch // "") | startswith("factory/")) | "\(.branch)|\(.open_workspace_id // "")|\(.path)"') || known=""
   git -C "$repo" branch --list 'factory/*' --format='%(refname:short)' | while IFS= read -r branch; do
     grep -m1 -F "$branch|" <<<"$known" || printf '%s||%s\n' "$branch" "$(worktree_of "$repo" "${branch#factory/}")"
   done
