@@ -4,7 +4,7 @@
 set -euo pipefail
 
 FACTORY_HOME=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
-FACTORY_VERSION=0.1.1
+FACTORY_VERSION=0.1.2
 
 # Knobs. Every value is printed at the start of a run.
 : "${FACTORY_PLAN_MODEL:=claude-fable-5-1}"
@@ -191,6 +191,21 @@ live_agents() {
     '[.result.agents[] | select(.workspace_id == $ws and ((.name // "") as $n | $names | index($n)))] | length'
 }
 
+# prime_shell pane: run the env setup in the pane and make sure it actually ran. A fresh
+# shell's line editor (ble.sh) sometimes swallows the Enter and sits in multiline mode;
+# Ctrl-C gives a clean prompt again, then the command is retried.
+prime_shell() {
+  local pane=$1 i
+  for i in 1 2 3; do
+    h pane run "$pane" ". $RUN_DIR/env.sh && clear && printf 'factory-%s\\n' ready" >/dev/null
+    herdr pane wait-output --match factory-ready --source visible --timeout 8000 "$pane" >/dev/null 2>&1 && return 0
+    warn "pane $pane did not run its setup command; clearing the input line and retrying"
+    herdr pane send-keys "$pane" c-c >/dev/null 2>&1
+    sleep 1
+  done
+  die "pane $pane: the shell does not run commands; look at it"
+}
+
 # start_agent name kind pane [agent args...]
 start_agent() {
   local name=$1 kind=$2 pane=$3 out code i
@@ -209,6 +224,14 @@ start_agent() {
         ;;
       pane_not_available | pane_busy | shell_not_ready)
         sleep 1
+        ;;
+      agent_start_failed)
+        # usually "timed out waiting for agent startup": the pane's shell never ran the
+        # command (line editor stuck in multiline mode); clear its input and try again
+        grep -q 'timed out' <<<"$out" || die "start $name: $(herr_msg "$out")"
+        warn "$name: startup timed out; clearing the pane's input line and retrying"
+        herdr pane send-keys "$pane" c-c >/dev/null 2>&1
+        sleep 2
         ;;
       *) die "start $name: $(herr_msg "$out")" ;;
     esac
@@ -1136,9 +1159,8 @@ start_or_adopt_agents() {
   # inline export trips line editors such as ble.sh into multiline mode.
   printf "export PATH='%s'\n" "$PATH" >"$WT/$RUN_DIR/env.sh"
   for pane in "$BUILD_PANE" "$plan_pane" "$review_pane"; do
-    h pane run "$pane" ". $RUN_DIR/env.sh && clear" >/dev/null
+    prime_shell "$pane"
   done
-  sleep 1
   repo_root=$(git -C "$repo" rev-parse --show-toplevel)
   start_agent "$PLAN_AGENT" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
   start_agent "$BUILD_AGENT" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
