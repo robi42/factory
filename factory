@@ -4,7 +4,7 @@
 set -euo pipefail
 
 FACTORY_HOME=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
-FACTORY_VERSION=0.1.0
+FACTORY_VERSION=0.1.1
 
 # Knobs. Every value is printed at the start of a run.
 : "${FACTORY_PLAN_MODEL:=claude-fable-5-1}"

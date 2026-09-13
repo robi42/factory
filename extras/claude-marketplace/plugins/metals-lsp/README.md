@@ -18,6 +18,6 @@ project, hence the generous startup timeout.
 Then add this marketplace and install the plugin:
 
 ```sh
-claude plugin marketplace add ~/Projects/factory/extras/claude-marketplace
+claude plugin marketplace add <path to your clone>/extras/claude-marketplace
 claude plugin install metals-lsp@factory-extras
 ```
