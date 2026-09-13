@@ -67,7 +67,7 @@ minutes so a thirty-minute gate is visibly a wait, not a hang.
 
 ## Requirements
 
-- Linux with bash 4 or newer (macOS with a newer bash and GNU coreutils is untested).
+- Linux with Bash 4 or newer (macOS with a newer Bash and GNU coreutils is untested).
 - [Herdr](https://herdr.dev) running, with `claude` (Claude Code) and `codex` logged in.
 - [Beads](https://github.com/steveyegge/beads) `bd`, `jq`, `git`; `gh` for pull requests.
 - [mise](https://mise.jdx.dev) installs the dev tools and `bd` from `mise.toml`.
