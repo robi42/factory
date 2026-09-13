@@ -3,6 +3,14 @@
 All notable changes to Factory. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- An interrupted run (Ctrl-C, kill) leaves a note on the bead saying at which step it
+  stopped; rerunning the same command resumes.
+- A rerun that reaches the pull request stage reuses the branch's open pull request instead
+  of failing to create a second one.
+
 ## [0.1.1] - 2026-09-13
 
 ### Added
@@ -50,5 +58,6 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
+[Unreleased]: https://github.com/robi42/factory/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/robi42/factory/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/robi42/factory/releases/tag/v0.1.0

@@ -594,14 +594,25 @@ $(cat "$WT/$RUN_DIR/plan.md" 2>/dev/null || printf 'no plan file')
 B
 }
 
+# existing_pr -> url of the branch's open pull request, empty if none
+existing_pr() {
+  (cd "$WT" && gh pr view "$BRANCH" --json url,state -q 'select(.state == "OPEN") | .url' 2>/dev/null) || printf ''
+}
+
 raise_pr() { # builder-agent -> prints the PR url
   need gh
   git -C "$WT" remote get-url origin >/dev/null 2>&1 || die "$WT has no origin remote"
-  local rc=0
+  local rc=0 url
   rebase_onto_base "$1" || rc=$?
   ((rc == 0 || rc == 10)) || exit "$rc"
   ((rc == 10)) && regate "$1" pr
   git -C "$WT" push -q -u --force-with-lease origin "$BRANCH"
+  url=$(existing_pr)
+  if [[ -n $url ]]; then
+    log "pull request already open, reusing it" >&2
+    printf '%s\n' "$url"
+    return 0
+  fi
   (cd "$WT" && gh pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)")
 }
 
@@ -1227,16 +1238,33 @@ finish_task() {
   bd_push "$repo"
 }
 
+# on_interrupt repo: the run was killed or Ctrl-C'd; leave a note on the bead, the state
+# lives in the worktree and the agents, and the same command resumes.
+on_interrupt() {
+  trap - INT TERM
+  printf '\n' >&2
+  warn "interrupted during $STEP; workspace ${WS:-?} stays open, rerun the same command to continue"
+  [[ -n ${TASK_ID:-} ]] && bd -C "$1" comment "$TASK_ID" "Factory: interrupted during $STEP. workspace ${WS:-?}, worktree ${WT:-?}; rerun the same command" >/dev/null 2>&1
+  exit 130
+}
+
 run_task() { # repo arg
   local repo
   repo=$(cd "$1" && pwd)
   git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$repo is not a git repo"
+  STEP=setup
+  trap 'on_interrupt "$repo"' INT TERM
   setup_task "$repo" "$2"
   open_task_workspace "$repo"
+  STEP=agents
   start_or_adopt_agents "$repo"
+  STEP=planning
   plan_phase "$repo"
+  STEP=building
   build_phase
+  STEP=finishing
   finish_task "$repo"
+  trap - INT TERM
 }
 
 # --------------------------------------------------------------- commands ----

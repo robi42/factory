@@ -59,9 +59,11 @@ roles are files in the worktree's `.factory/run/`: the plan, the reviews with a 
 line, the gate log. Factory never trusts an agent's word for "done": it checks the file
 exists, runs the gate itself, and inspects the diff.
 
-Because the state is the worktree plus Beads, the orchestrator is disposable. Kill it, fix
-something, run the same `fy run` again: it reopens the workspace, adopts the three agents
-still alive in it, and starts the pipeline over. Known startup dialogs (trust prompts,
+Because the state is the worktree plus Beads, the orchestrator is disposable. Kill it or
+Ctrl-C it: the agents, worktree and workspace stay, the bead gets a note saying at which
+step it was interrupted, and the same `fy run` resumes: it reopens the workspace, adopts
+the three agents still alive in it, reuses an open pull request, and starts the pipeline
+over from planning (there is no mid-pipeline resume). Known startup dialogs (trust prompts,
 Codex's hook review and transcript overlay) are cleared from the screen automatically; a
 block it does not recognise becomes a toast, and long waits print a heartbeat every five
 minutes so a thirty-minute gate is visibly a wait, not a hang.

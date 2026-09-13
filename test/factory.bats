@@ -705,6 +705,29 @@ JSON
   [ "$output" = "$HOME/.herdr/worktrees/app/factory-toy-abe" ]
 }
 
+@test "existing_pr: the branch's open pull request, or nothing" {
+  WT=$TMP
+  BRANCH=factory/toy-1
+  gh() { printf '%s\n' "$GH_OUT"; }
+  GH_OUT="https://example.test/pr/7" run existing_pr
+  [ "$output" = "https://example.test/pr/7" ]
+  gh() { return 1; }
+  run existing_pr
+  [ -z "$output" ]
+}
+
+@test "on_interrupt notes the bead and exits 130" {
+  fake_task
+  STEP=building
+  WS=w9
+  WT=$TMP
+  bd() { printf '%s\n' "$*" >"$TMP/bd.log"; }
+  run on_interrupt "$TMP"
+  [ "$status" -eq 130 ]
+  [[ $output == *"interrupted during building"* ]]
+  grep -q "comment toy-1 Factory: interrupted during building" "$TMP/bd.log"
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]
