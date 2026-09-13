@@ -75,17 +75,24 @@ minutes so a thirty-minute gate is visibly a wait, not a hang.
 
 Status: early. Built and used by one person on Arch Linux; expect rough edges elsewhere.
 
-## Setup
+## Install
 
-```sh
-mise install                              # just, shfmt, shellcheck, bats, codespell, bd
-ln -s "$PWD/factory" ~/.local/bin/fy      # or any name you like
-fy doctor
-```
-
-`bd` and whatever your gate needs must resolve from a fresh login shell, because Claude
-Code runs its commands from one; install them globally, e.g.
-`mise use -g 'ubi:steveyegge/beads[exe=bd]@1.2.2'`. `fy doctor` checks this.
+1. Prerequisites, each with its own installer: [Herdr](https://herdr.dev) (run it once so
+   its server is up), [Claude Code](https://docs.claude.com/en/docs/claude-code) and
+   [Codex](https://github.com/openai/codex) (both logged in), [mise](https://mise.jdx.dev),
+   `jq` and `git`; `gh` logged in if you want pull requests.
+2. Clone and install the tools Factory manages:
+   ```sh
+   git clone https://github.com/robi42/factory ~/Projects/factory
+   cd ~/Projects/factory
+   mise install                              # just, shfmt, shellcheck, bats, codespell, bd
+   ln -s "$PWD/factory" ~/.local/bin/fy      # or any name you like
+   ```
+3. Make `bd` resolve from a fresh login shell, because Claude Code runs its commands from
+   one: `mise use -g 'ubi:steveyegge/beads[exe=bd]@1.2.2'`. Anything your gate needs
+   (`just`, language toolchains) has the same requirement.
+4. Check: `fy doctor`. It reports each prerequisite, whether the Herdr server answers, and
+   whether `bd` resolves from a login shell; fix what it marks MISSING and run it again.
 
 ## Use
 
