@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-13
+
 ### Added
 - An interrupted run (Ctrl-C, kill) leaves a note on the bead saying at which step it
   stopped; rerunning the same command resumes.
@@ -12,6 +14,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   of failing to create a second one.
 - Reruns resume after the last completed milestone, an approved plan or an approved build,
   instead of replanning; `--fresh` starts over.
+
+### Fixed
+- Agent startup no longer fails when a pane's line editor swallows the setup command's
+  Enter and sits in multiline mode: the setup is verified and retried, and a startup
+  timeout clears the pane's input line before trying again.
 
 ## [0.1.1] - 2026-09-13
 
@@ -60,6 +67,7 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/robi42/factory/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/robi42/factory/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/robi42/factory/releases/tag/v0.1.0
