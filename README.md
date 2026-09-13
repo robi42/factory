@@ -284,7 +284,7 @@ default_tools_approval_mode = "approve"
 
 **Language servers for the Claude Code agents.** One plugin per language you build in,
 for instance the ones below; each expects its server binary on the PATH of a fresh login
-shell. The official marketplace has more (C/C++, C#, PHP, Ruby, Swift, Lua).
+shell. The official marketplace has more (C/C++, C#, Swift, Lua, PHP).
 
 ```sh
 claude plugin install pyright-lsp@claude-plugins-official        # needs pyright
