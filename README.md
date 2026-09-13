@@ -317,6 +317,12 @@ The builder side gets the same through `claude plugin install github@claude-plug
 
 **Copilot code review** needs a Copilot subscription on the GitHub account.
 
+**Desktop notifications.** Factory's toasts (plan ready, questions, blocked, done) are
+Herdr notifications, so where they appear is Herdr's `[ui.toast] delivery` setting:
+`herdr` shows them inside Herdr only, `system` hands them to the desktop's notification
+service so an approval request reaches you on another workspace. Set it in
+`~/.config/herdr/config.toml` and apply with `herdr server reload-config`.
+
 **Herdr agent integrations.** `herdr integration install claude` and `codex` switch
 Herdr from screen heuristics to hook-based agent state, which makes idle and blocked
 detection more reliable. Factory handles the known startup dialogs either way.
