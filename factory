@@ -22,6 +22,7 @@ FACTORY_VERSION=0.1.1
 : "${FACTORY_COPILOT_ROUNDS:=3}"
 : "${FACTORY_COPILOT_WAIT_S:=900}"
 : "${FACTORY_BD_PUSH:=1}"
+: "${FACTORY_FRESH:=0}"
 COPILOT_BOT='copilot-pull-request-reviewer[bot]'
 RUN_DIR=.factory/run
 # files that look like tests, for the tests-required guardrail
@@ -48,7 +49,7 @@ usage() {
   row 'factory run     <repo> <bead-id | "task title">' 'plan, build, gate, review one task'
   row 'factory next    <repo>' 'claim the next ready bead and run it'
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
-  row '  flags: --pr, --auto, --no-copilot' 'open a PR when approved; skip plan approval; no Copilot review'
+  row '  flags: --pr, --auto, --no-copilot, --fresh' 'open a PR; skip plan approval; no Copilot review; do not resume'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory tasks   <repo> [--all]' 'list open tasks (beads); --all includes closed'
   row 'factory sync    <repo>' 'pull, then push the beads database to its git remote'
@@ -1149,6 +1150,18 @@ start_or_adopt_agents() {
   log "agents up: $PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
 }
 
+# Resume: the run directory records the last completed milestone ("planned" once the human
+# approved the plan, "built <round>" once the reviews approved the build). A rerun skips
+# what is done; --fresh starts over.
+mark() { printf '%s\n' "$*" >"$WT/$RUN_DIR/state"; }
+resume_point() { # -> planned | built <round> | (empty)
+  if ((FACTORY_FRESH)); then
+    rm -f "$WT/$RUN_DIR/state"
+    return 0
+  fi
+  cat "$WT/$RUN_DIR/state" 2>/dev/null || printf ''
+}
+
 # stop_task repo what: a human gate ended the run; leave the workspace for them.
 stop_task() {
   bd -C "$1" comment "$TASK_ID" "Factory: stopped at $2. workspace $WS, worktree $WT" >/dev/null
@@ -1172,13 +1185,18 @@ plan_phase() {
     planner_kept_hands_off "$PLAN_AGENT"
   fi
   approve_plan "$PLAN_AGENT" "$WT/$RUN_DIR/plan.md" || stop_task "$1" "plan approval"
+  mark planned
 }
 
 # build_phase: build, then gate, guardrails and dual review per round. Sets ROUND VERDICT GATE_LOG.
-build_phase() {
+build_phase() { # [resume]
   local violations
   log "building"
-  ask "$BUILD_AGENT" "$(build_prompt)"
+  if [[ ${1:-} == resume ]]; then
+    ask "$BUILD_AGENT" "$(build_prompt) Part of it may already be implemented or committed on this branch from an earlier run; check the branch and continue from there."
+  else
+    ask "$BUILD_AGENT" "$(build_prompt)"
+  fi
   ROUND=1
   VERDICT=""
   while ((ROUND <= FACTORY_ROUNDS)); do
@@ -1201,6 +1219,7 @@ build_phase() {
     log "verdicts: $VERDICT"
     if [[ $VERDICT == "APPROVE APPROVE" ]]; then
       VERDICT=APPROVE
+      mark built "$ROUND"
       return 0
     fi
     VERDICT=REVISE
@@ -1235,6 +1254,7 @@ finish_task() {
   bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null
   toast "$TASK_ID done" "$TASK_TITLE. ${next^}." "done"
   log "done: $summary${pr:+, pr $pr}"
+  rm -f "$WT/$RUN_DIR/state"
   bd_push "$repo"
 }
 
@@ -1258,10 +1278,26 @@ run_task() { # repo arg
   open_task_workspace "$repo"
   STEP=agents
   start_or_adopt_agents "$repo"
-  STEP=planning
-  plan_phase "$repo"
-  STEP=building
-  build_phase
+  local point
+  point=$(resume_point)
+  [[ -z $point ]] || log "resuming after: $point (use --fresh to start over)"
+  case $point in
+    built*)
+      VERDICT=APPROVE
+      ROUND=${point#built }
+      GATE_LOG="$WT/$RUN_DIR/gate-$ROUND.log"
+      ;;
+    planned)
+      STEP=building
+      build_phase resume
+      ;;
+    *)
+      STEP=planning
+      plan_phase "$repo"
+      STEP=building
+      build_phase
+      ;;
+  esac
   STEP=finishing
   finish_task "$repo"
   trap - INT TERM
@@ -1588,6 +1624,7 @@ take_flags() {
       --pr) FACTORY_PR=1 ;;
       --no-copilot) FACTORY_COPILOT=0 ;;
       --auto) FACTORY_PLAN_APPROVAL=auto ;;
+      --fresh) FACTORY_FRESH=1 ;;
       --*) die "unknown flag: $a" ;;
       *) ARGS+=("$a") ;;
     esac

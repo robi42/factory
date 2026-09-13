@@ -10,6 +10,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   stopped; rerunning the same command resumes.
 - A rerun that reaches the pull request stage reuses the branch's open pull request instead
   of failing to create a second one.
+- Reruns resume after the last completed milestone, an approved plan or an approved build,
+  instead of replanning; `--fresh` starts over.
 
 ## [0.1.1] - 2026-09-13
 

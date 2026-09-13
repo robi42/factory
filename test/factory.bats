@@ -728,6 +728,20 @@ JSON
   grep -q "comment toy-1 Factory: interrupted during building" "$TMP/bd.log"
 }
 
+@test "resume markers: planned, built <round>, cleared by --fresh" {
+  WT=$TMP
+  mkdir -p "$TMP/.factory/run"
+  FACTORY_FRESH=0
+  [ -z "$(resume_point)" ]
+  mark planned
+  [ "$(resume_point)" = planned ]
+  mark built 2
+  [ "$(resume_point)" = "built 2" ]
+  FACTORY_FRESH=1
+  [ -z "$(resume_point)" ]
+  [ ! -e "$TMP/.factory/run/state" ]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

@@ -62,8 +62,8 @@ exists, runs the gate itself, and inspects the diff.
 Because the state is the worktree plus Beads, the orchestrator is disposable. Kill it or
 Ctrl-C it: the agents, worktree and workspace stay, the bead gets a note saying at which
 step it was interrupted, and the same `fy run` resumes: it reopens the workspace, adopts
-the three agents still alive in it, reuses an open pull request, and starts the pipeline
-over from planning (there is no mid-pipeline resume). Known startup dialogs (trust prompts,
+the three agents still alive in it, and picks up after the last completed milestone, an
+approved plan or an approved build, reusing an open pull request. `--fresh` starts over. Known startup dialogs (trust prompts,
 Codex's hook review and transcript overlay) are cleared from the screen automatically; a
 block it does not recognise becomes a toast, and long waits print a heartbeat every five
 minutes so a thirty-minute gate is visibly a wait, not a hang.
@@ -112,6 +112,7 @@ fy next    ~/src/app                         # claim the next ready bead and run
 fy run     ~/src/app "Fix flaky login test"  # a one-off, also filed as a bead
 fy queue   ~/src/app                         # work through everything that is ready
 fy next    --pr --auto ~/src/app             # open a PR when approved; skip plan approval
+fy run     --fresh ~/src/app app-k3x         # rerun from scratch instead of resuming
 
 # while a run waits for you (from any terminal)
 fy answer  ~/src/app app-k3x "1. CSV  2. keep the old format"
