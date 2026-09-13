@@ -645,6 +645,16 @@ copilot_verdict() { # pr-number sha
   (cd "$WT" && gh api "repos/{owner}/{repo}/pulls/$1/reviews") | copilot_verdict_of "$2"
 }
 
+# copilot_summary_of: the sentence under Copilot's verdict line, from reviews JSON on stdin.
+copilot_summary_of() { # sha
+  jq -r --arg sha "$1" \
+    '[.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .commit_id == $sha)] | last | (.body // "") | split("\n") | map(select(length > 0)) | (.[1] // "") | select(startswith("<") | not)'
+}
+
+copilot_summary() { # pr-number sha
+  (cd "$WT" && gh api "repos/{owner}/{repo}/pulls/$1/reviews") | copilot_summary_of "$2"
+}
+
 copilot_comments() { # pr-number sha
   (cd "$WT" && gh api --paginate "repos/{owner}/{repo}/pulls/$1/comments") | copilot_format "$2"
 }
@@ -726,7 +736,9 @@ copilot_loop() {
     comments=$(copilot_comments "$n" "$sha")
     # Copilot's verdict line is the useful summary; keep it for the bead and the log.
     if [[ -z $comments ]]; then
-      COPILOT_NOTE="Copilot: ${verdict:-reviewed}, no inline comments"
+      local summary
+      summary=$(copilot_summary "$n" "$sha")
+      COPILOT_NOTE="Copilot: ${verdict:-reviewed}${summary:+: $summary}"
       log "$COPILOT_NOTE"
       return 0
     fi

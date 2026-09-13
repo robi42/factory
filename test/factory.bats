@@ -456,6 +456,17 @@ JSON
   [[ $output == *"Not changed, and why:"*"house style"* ]]
 }
 
+@test "copilot_summary_of takes the sentence under the verdict, not a details block" {
+  run copilot_summary_of abc123 <<'JSON'
+[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","body":"### 🔵 Needs a closer look\n\nRemove the unrelated helper.\n\n<details>\nmore\n</details>"}]
+JSON
+  [ "$output" = "Remove the unrelated helper." ]
+  run copilot_summary_of abc123 <<'JSON'
+[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","body":"### 🟢 Approval recommended\n<details>\nx\n</details>"}]
+JSON
+  [ "$output" = "" ]
+}
+
 @test "take_flags: --no-copilot" {
   FACTORY_COPILOT=1
   take_flags --no-copilot repo id
