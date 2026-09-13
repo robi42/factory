@@ -19,9 +19,10 @@ The CLI is `factory`; `fy` is the alias used below.
 - **Beads** (`bd`) is the task queue and the memory: tasks are beads, agents leave
   `bd remember` notes that later runs see, and the database is pushed to the repo's Git
   remote so it survives the machine.
-- **Guardrails are mechanical, not prose.** Factory runs your repo's own gate and rejects
-  branches that add suppressions, skipped tests or swallowed errors, change code without
-  a test, commit build artifacts, or touch protected files.
+- **Checks are mechanical, not prose.** The gate is your repo's own definition of done,
+  tests and lint and whatever else, and Factory runs it itself. The guardrails are
+  Factory's own checks on the branch: no suppressions, skipped tests or swallowed errors
+  added, no code change without a test, no build artifacts, no protected files touched.
 - **You stay in the loop** where it counts: the planner may ask you questions, you
   approve every plan, and you merge.
 
@@ -172,8 +173,10 @@ where not obvious, rules and reasons. Workflow lives in the prompts, not there.
 
 ## The gate
 
-The gate is your repo's definition of done. Factory runs it itself and never takes an
-agent's word for it. It is resolved once per run, in this order, and printed at start:
+The gate is your repo's definition of done: the checks the project itself defines, tests,
+lint, types, coverage, whatever you would run before merging by hand. It is owned by the
+repo and language-specific; Factory only runs it, and never takes an agent's word for it.
+It is resolved once per run, in this order, and printed at start:
 
 1. `FACTORY_GATE`, any shell command.
 2. `.factory/gate` in the repo, run as `bash .factory/gate`: a committed script, protected
@@ -231,7 +234,9 @@ Factory stays language-agnostic; whatever the gate says is done, is done.
 
 ## Guardrails
 
-Checked by Factory on the branch, after the gate and before review:
+Where the gate asks "does it work", the guardrails ask "was it done honestly". They are
+Factory's own checks, language-agnostic and the same for every repo, run on the branch
+after the gate passes and before review:
 
 - No added lines matching `guardrails.txt`: suppressions such as `noqa`, `type: ignore`,
   `eslint-disable`, `shellcheck disable`; skipped tests; `|| true`. Adapted from
