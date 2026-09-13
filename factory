@@ -1020,10 +1020,22 @@ P
 }
 
 # ------------------------------------------------------------ workspace ----
+# worktrees_dir -> Herdr's worktree directory ([worktrees] directory in its config, else its default)
+worktrees_dir() {
+  local d
+  d=$(awk -F'"' '/^\[worktrees\]/ {in_section = 1; next} /^\[/ {in_section = 0} in_section && /^directory *=/ {print $2}' "${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" 2>/dev/null)
+  d=${d:-~/.herdr/worktrees}
+  printf '%s' "${d/#\~/$HOME}"
+}
+
+# worktree_path repo bead-id -> where the task's checkout goes: <worktrees dir>/<repo>/factory-<id>,
+# short on purpose; the branch carries the title slug, the directory does not.
+worktree_path() { printf '%s/%s/factory-%s' "$(worktrees_dir)" "$(basename "$1")" "$2"; }
+
 open_workspace() { # repo branch label -> WS WT BUILD_PANE
   local out
   # Herdr checks out an existing branch too; open is the fallback for a checkout that already exists.
-  if ! out=$(herdr worktree create --cwd "$1" --branch "$2" --label "$3" --no-focus 2>&1); then
+  if ! out=$(herdr worktree create --cwd "$1" --branch "$2" --path "$(worktree_path "$1" "$TASK_ID")" --label "$3" --no-focus 2>&1); then
     log "worktree create failed ($(jq -r '.error.message // .' <<<"$out" | tail -n1)); trying to open it"
     out=$(h worktree open --cwd "$1" --branch "$2" --label "$3" --no-focus)
   fi

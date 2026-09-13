@@ -686,6 +686,14 @@ JSON
   [ -z "$(worktree_of "$REPO" toy-90)" ]
 }
 
+@test "worktree_path: short directory under Herdr's worktree dir, from its config when set" {
+  printf '[ui]\nx = 1\n[worktrees]\ndirectory = "~/wt"\n[other]\ndirectory = "nope"\n' >"$TMP/herdr.toml"
+  HERDR_CONFIG_PATH=$TMP/herdr.toml run worktree_path /home/me/src/app toy-abe
+  [ "$output" = "$HOME/wt/app/factory-toy-abe" ]
+  HERDR_CONFIG_PATH=$TMP/missing.toml run worktree_path /home/me/src/app toy-abe
+  [ "$output" = "$HOME/.herdr/worktrees/app/factory-toy-abe" ]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

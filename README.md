@@ -143,7 +143,8 @@ edit `plan.md` or talk to the planner in its pane first; the builder reads the f
 for the files.
 
 **Merge.** On approval the bead is closed and you get a toast; the branch, named
-`factory/<bead-id>-<title-slug>`, is yours to merge. Otherwise the bead stays in progress
+`factory/<bead-id>-<title-slug>` and checked out under Herdr's worktree directory as
+`<repo>/factory-<bead-id>`, is yours to merge. Otherwise the bead stays in progress
 with a comment saying why, and the workspace stays open. Once merged (squash merges count
 when the pull request shows as merged), `fy clean` removes the workspace, worktree and
 branch and closes the bead.
