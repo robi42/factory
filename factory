@@ -1294,6 +1294,7 @@ cmd_clean() {
       log "keeping $branch: not merged into $base (fy clean $repo $id --force to drop it)"
     fi
   done < <(clean_targets "$repo")
+  git -C "$repo" worktree prune # stale entries from anywhere, not only ours
   log "cleaned $n task branch(es)"
   ((n == 0)) || bd_push "$repo"
 }
