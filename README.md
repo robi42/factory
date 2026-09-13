@@ -17,7 +17,7 @@ The CLI is `factory`; `fy` is the alias used below.
   execute it; the build by Codex and by the planner who wrote the plan. Reviewers look
   for bugs, missed requirements, shortcuts, security and design problems. Both must approve.
 - **Beads** (`bd`) is the task queue and the memory: tasks are beads, agents leave
-  `bd remember` notes that later runs see, and the database is pushed to the repo's git
+  `bd remember` notes that later runs see, and the database is pushed to the repo's Git
   remote so it survives the machine.
 - **Guardrails are mechanical, not prose.** Factory runs your repo's own gate and rejects
   branches that add suppressions, skipped tests or swallowed errors, change code without
@@ -27,7 +27,7 @@ The CLI is `factory`; `fy` is the alias used below.
 
 ![A Herdr workspace during the dual plan review: the planner (Fable 5.1, top right) has written the plan, its prompt carrying the repo's Beads memories; the builder (Opus 5, left, cyan prompt line) and the Codex reviewer (GPT 6 Astra, bottom right) are each writing their review of it](assets/screenshot.png)
 
-Every task gets its own git worktree and Herdr workspace, so you can watch or step in.
+Every task gets its own Git worktree and Herdr workspace, so you can watch or step in.
 The agents are your normal `claude` and `codex` sessions, so your skills, MCP servers,
 hooks, `CLAUDE.md` and `AGENTS.md` apply unchanged; Factory adds no instruction files.
 Whenever an agent stops for a question or an approval you get a Herdr toast.
@@ -113,7 +113,7 @@ fy pr      ~/src/app app-k3x                 # open a PR for a branch a run left
 fy clean   ~/src/app                         # drop workspaces, worktrees and branches of merged tasks
 fy clean   ~/src/app app-k3x --force         # ...or of one task you abandoned
 fy check   <worktree> main                   # gate + guardrails on a branch, no agents
-fy sync    ~/src/app                         # pull, then push the beads database
+fy sync    ~/src/app                         # pull, then push the Beads database
 fy status                                    # live Factory agents in Herdr
 ```
 
@@ -124,8 +124,8 @@ Herdr panes. Each task has its own worktree, workspace and agents; `fy next` cla
 bead atomically, so two starts never pick the same one. `fy queue` itself is sequential
 on purpose: one plan approval prompt per terminal is enough. Watch for two things when
 running in parallel: heavy gates compete for CPU, and branches that touch the same files
-get rebased at PR time, conflicts going to the builder, so the second one to open a PR
-pays for the overlap.
+get rebased when their pull request is opened, conflicts going to the builder, so the
+second one pays for the overlap.
 
 ### The human gates
 
@@ -136,22 +136,24 @@ three rounds, then the plan comes.
 **Plan approval.** Factory prints the plan and waits. Answer in its terminal: `a` approve,
 `p` approve and allow protected paths, `r` revise with a note, `b` abort. Or from anywhere:
 `fy approve` (with `--allow-protected` for the `p` case) and `fy reject "note"`. A note
-goes to the planner, the plan comes back revised, and you are asked again. You can also edit `plan.md`
-or talk to the planner in its pane first; the builder reads the file. `--auto` skips the
-step for unattended queues. If the run has no terminal it simply waits for the files.
+goes to the planner, the plan comes back revised, and you are asked again. You can also
+edit `plan.md` or talk to the planner in its pane first; the builder reads the file.
+`--auto` skips the step for unattended queues. If the run has no terminal it simply waits
+for the files.
 
 **Merge.** On approval the bead is closed and you get a toast; the branch, named
-`factory/<bead-id>-<title-slug>`, is yours to merge. Otherwise the bead stays in progress with a comment saying why,
-and the workspace stays open. Once merged (squash merges count when the PR shows as
-merged), `fy clean` removes the workspace, worktree and branch and closes the bead.
+`factory/<bead-id>-<title-slug>`, is yours to merge. Otherwise the bead stays in progress
+with a comment saying why, and the workspace stays open. Once merged (squash merges count
+when the pull request shows as merged), `fy clean` removes the workspace, worktree and
+branch and closes the bead.
 
 ### Pull requests and Copilot
 
 With `--pr` (or `FACTORY_PR=1`) an approved branch is first rebased onto the base branch,
 the builder resolving any conflicts and the gate and guardrails running again if the
 rebase changed anything, then pushed and a pull request opened with `gh`: the task as
-summary, the checks as a list, the plan folded away. By default
-Factory then requests a GitHub Copilot code review, hands its comments to the builder,
+summary, the checks as a list, the plan folded away. By default Factory then requests a
+GitHub Copilot code review, hands its comments to the builder,
 gates, pushes, posts one summary comment and resolves the threads it addressed, and asks
 again, up to `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit is
 clean. Copilot never approves, it only comments, so "clean" is the finish line.
@@ -159,7 +161,7 @@ clean. Copilot never approves, it only comments, so "clean" is the finish line.
 
 ### Run artifacts
 
-They live in `.factory/run/` inside the worktree, ignored by git: `plan.md`,
+They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
 `questions.md` (only when asked), `plan-review.md` (Codex), `plan-review-build.md`
 (builder), `review-N.md` (Codex), `review-N-plan.md` (planner), `response-N.md`
 (builder's pushback), `copilot-N.md`, `gate-N.log`.
@@ -234,9 +236,9 @@ Checked by Factory on the branch, after the gate and before review:
 - A change to code files must also touch a test file (`FACTORY_REQUIRE_TESTS=0` to relax).
 - No committed build artifacts, no uncommitted changes, at least one commit.
 - Protected paths untouched: `.factory/gate`, `.factory/protected`, `.factory/guardrails.txt`,
-  and every glob listed in `.factory/protected`. A task that legitimately must change them, such as adding the
-  gate, gets a one-task waiver from you at plan approval (`p`, or `--allow-protected`);
-  the PR body records it.
+  and every glob listed in `.factory/protected`. A task that legitimately must change
+  them, such as adding the gate, gets a one-task waiver from you at plan approval (`p`,
+  or `--allow-protected`); the pull request body records it.
 - The planner must leave the code untouched; a dirty tree after planning is sent back once.
 
 ## Knobs
@@ -250,13 +252,13 @@ Checked by Factory on the branch, after the gate and before review:
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
 | `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h) per agent turn |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
-| `FACTORY_REQUIRE_TESTS` | `1` |
+| `FACTORY_REQUIRE_TESTS` | `1`: code changes must also touch a test file |
 | `FACTORY_PLAN_APPROVAL` | `ask`; `auto` skips (`--auto`) |
 | `FACTORY_PR` | `0`; `1` opens a pull request (`--pr`) |
 | `FACTORY_COPILOT` | `1`; `0` skips the Copilot review loop (`--no-copilot`) |
-| `FACTORY_COPILOT_ROUNDS` | `3` |
+| `FACTORY_COPILOT_ROUNDS` | `3` Copilot review rounds |
 | `FACTORY_COPILOT_WAIT_S` | `900` (15 min) per Copilot review |
-| `FACTORY_BD_PUSH` | `1`: push beads to their sync remote after tasks and adds |
+| `FACTORY_BD_PUSH` | `1`: push the Beads database to its sync remote after tasks and adds |
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
 
 `fy help` prints the current values.
@@ -333,10 +335,10 @@ detection more reliable. Factory handles the known startup dialogs either way.
 
 ## Why so lean
 
-Factory is a single Bash script of about fifteen hundred lines, and that is the point. Current models plan,
-build and review well when given a clear task, a real codebase and a hard definition of
-done; what they need from a harness is less than the frameworks of a year ago assumed.
-So Factory bets on a few things:
+Factory is a single Bash script of about fifteen hundred lines, and that is the point.
+Current models plan, build and review well when given a clear task, a real codebase and
+a hard definition of done; what they need from a harness is less than the frameworks of
+a year ago assumed. So Factory bets on a few things:
 
 - **Short prompts over rulebooks.** Each role gets a paragraph: the task, the gate, where
   to write. Long instruction files drift, contradict each other, and get skimmed. DHH
@@ -353,7 +355,7 @@ So Factory bets on a few things:
 - **Humans at the two points that matter.** Approving the plan, and merging. Everything
   in between runs on its own, and every stop becomes a toast.
 - **State in the repo's orbit.** Tasks and memories live in Beads beside the code and
-  travel with the git remote; run artifacts live in the worktree and disappear with it.
+  travel with the Git remote; run artifacts live in the worktree and disappear with it.
 
 When a step turns out not to pull its weight, it goes. The plan interview, the design
 check and the tests-required rule each earned their place on a real task first.
