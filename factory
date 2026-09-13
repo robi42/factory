@@ -712,31 +712,44 @@ copilot_loop() {
   while ((round <= FACTORY_COPILOT_ROUNDS)); do
     sha=$(git -C "$WT" rev-parse HEAD)
     copilot_request "$n" || {
-      warn "could not request a Copilot review on $url"
+      COPILOT_NOTE="Copilot review could not be requested"
+      warn "$COPILOT_NOTE on $url"
       return 1
     }
     log "Copilot review requested for ${sha:0:7} (round $round)"
     copilot_wait "$n" "$sha" || {
-      warn "no Copilot review within ${FACTORY_COPILOT_WAIT_S}s"
+      COPILOT_NOTE="no Copilot review within $((FACTORY_COPILOT_WAIT_S / 60)) min"
+      warn "$COPILOT_NOTE"
       return 1
     }
     verdict=$(copilot_verdict "$n" "$sha")
     comments=$(copilot_comments "$n" "$sha")
-    if [[ $verdict == *"Approval recommended"* || -z $comments ]]; then
-      log "Copilot: ${verdict:-no verdict line}, $(grep -c '' <<<"${comments:-}" | sed 's/^1$/&/')${comments:+ comment(s), all nits}${comments:-no comments}"
+    # Copilot's verdict line is the useful summary; keep it for the bead and the log.
+    if [[ -z $comments ]]; then
+      COPILOT_NOTE="Copilot: ${verdict:-reviewed}, no inline comments"
+      log "$COPILOT_NOTE"
+      return 0
+    fi
+    if [[ $verdict == *"Approval recommended"* ]]; then
+      COPILOT_NOTE="Copilot: $verdict, $(grep -c '' <<<"$comments") nit(s) left open"
+      log "$COPILOT_NOTE"
       return 0
     fi
     log "Copilot: $verdict"
     printf '%s\n' "$comments" >"$WT/$RUN_DIR/copilot-$round.md"
     log "Copilot left $(grep -c '' "$WT/$RUN_DIR/copilot-$round.md") comment(s); asking the builder"
     ask "$agent" "$(copilot_fix_prompt "$round")"
-    gate_then_guards "$agent" "copilot-$round" || return 1
+    gate_then_guards "$agent" "copilot-$round" || {
+      COPILOT_NOTE="gate or guardrails failed while addressing Copilot's comments"
+      return 1
+    }
     git -C "$WT" push -q
     copilot_reply "$n" "$round" "$(git -C "$WT" rev-parse HEAD)"
     copilot_resolve "$n" "$sha"
     round=$((round + 1))
   done
-  warn "Copilot still has comments after $FACTORY_COPILOT_ROUNDS rounds; see $url"
+  COPILOT_NOTE="Copilot comments remain after $FACTORY_COPILOT_ROUNDS rounds"
+  warn "$COPILOT_NOTE; see $url"
   return 1
 }
 
@@ -1171,7 +1184,9 @@ finish_task() {
     next="review $pr"
     log "opened $pr"
     if ((FACTORY_COPILOT)); then
-      if copilot_loop "$BUILD_AGENT" "$pr"; then copilot=", Copilot review clean"; else copilot=", Copilot comments remain on the PR"; fi
+      COPILOT_NOTE=""
+      copilot_loop "$BUILD_AGENT" "$pr" || warn "Copilot loop ended without a clean review: $COPILOT_NOTE"
+      copilot=", $COPILOT_NOTE"
     fi
   fi
   bd -C "$repo" comment "$TASK_ID" "Factory: approved. $summary${pr:+, pr $pr}$copilot" >/dev/null
@@ -1421,7 +1436,9 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
   local note=""
   if ((FACTORY_COPILOT)); then
     if herdr agent get "$2-build" >/dev/null 2>&1; then
-      if copilot_loop "$2-build" "$url"; then note=", Copilot review clean"; else note=", Copilot comments remain"; fi
+      COPILOT_NOTE=""
+      copilot_loop "$2-build" "$url" || warn "Copilot loop ended without a clean review: $COPILOT_NOTE"
+      note=", $COPILOT_NOTE"
     else
       copilot_request "${url##*/}" && note=", Copilot review requested (no builder agent to act on it)"
     fi
