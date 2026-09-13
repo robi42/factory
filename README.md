@@ -292,6 +292,7 @@ claude plugin install typescript-lsp@claude-plugins-official     # needs typescr
 claude plugin install gopls-lsp@claude-plugins-official          # needs gopls
 claude plugin install rust-analyzer-lsp@claude-plugins-official  # needs rust-analyzer
 claude plugin install kotlin-lsp@claude-plugins-official         # needs kotlin-lsp
+claude plugin install ruby-lsp@claude-plugins-official           # needs ruby-lsp (gem install ruby-lsp)
 claude plugin install jdtls-lsp@claude-plugins-official          # needs jdtls and JAVA_HOME
 claude plugin install metals-lsp@factory-extras                  # Scala; needs metals, see below
 mise use -g 'npm:pyright' 'npm:typescript-language-server' 'npm:typescript' 'go:golang.org/x/tools/gopls'
