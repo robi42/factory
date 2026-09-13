@@ -293,13 +293,15 @@ claude plugin install gopls-lsp@claude-plugins-official          # needs gopls
 claude plugin install rust-analyzer-lsp@claude-plugins-official  # needs rust-analyzer
 claude plugin install kotlin-lsp@claude-plugins-official         # needs kotlin-lsp
 claude plugin install jdtls-lsp@claude-plugins-official          # needs jdtls and JAVA_HOME
+claude plugin install metals-lsp@factory-extras                  # Scala; needs metals, see below
 mise use -g 'npm:pyright' 'npm:typescript-language-server' 'npm:typescript' 'go:golang.org/x/tools/gopls'
 ```
 
 `jdtls` cannot start through a mise `java` shim; point `JAVA_HOME` at a real JDK in your
 login profile, e.g. `export JAVA_HOME="$(mise where java@21)"`. Scala has no official
-plugin; `extras/claude-marketplace` ships a `metals-lsp` one (`cs install metals`, then
-`claude plugin marketplace add <that dir>` and `claude plugin install metals-lsp@factory-extras`).
+plugin, so `extras/claude-marketplace` in this repo ships `metals-lsp`: install Metals with
+`cs install metals`, register the marketplace once with
+`claude plugin marketplace add <path to extras/claude-marketplace>`, then install as above.
 Codex has no language server support; the gate covers that side.
 
 **GitHub for the Codex reviewer.** GitHub's remote MCP server, authenticated with a
