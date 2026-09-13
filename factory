@@ -23,8 +23,9 @@ FACTORY_VERSION=0.1.0
 : "${FACTORY_COPILOT_WAIT_S:=900}"
 : "${FACTORY_BD_PUSH:=1}"
 COPILOT_BOT='copilot-pull-request-reviewer[bot]'
-
 RUN_DIR=.factory/run
+# files that look like tests, for the tests-required guardrail
+TEST_PATH_RE='(^|/)(tests?|spec|specs|__tests__|bats)/|(^|/)test_[^/]*\.py$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|scala|cs|swift)$|_spec\.rb$|\.bats$'
 
 # ---------------------------------------------------------------- output ----
 log() { printf '\033[34m[factory]\033[0m %s\n' "$*" >&2; }
@@ -81,20 +82,21 @@ usage() {
 h() {
   local out
   if ! out=$(herdr "$@" 2>&1); then
-    die "herdr $1 $2: $(jq -r '.error.message // .' <<<"$out" 2>/dev/null || printf '%s' "$out")"
+    die "herdr $1 $2: $(herr_msg "$out")"
   fi
   printf '%s' "$out"
 }
 
 herr_code() { jq -r '.error.code // empty' <<<"$1" 2>/dev/null; }
+herr_msg() { jq -r '.error.message // .' <<<"$1" 2>/dev/null || printf '%s' "$1"; }
 
-toast() { # title body sound
-  herdr notification show "$1" --body "$2" --sound "$3" >/dev/null 2>&1 || warn "toast failed: $1"
+toast() { # title body sound; the title is prefixed with the product name
+  herdr notification show "Factory: $1" --body "$2" --sound "$3" >/dev/null 2>&1 || warn "toast failed: $1"
 }
 
 attention() { # agent message
   warn "$1 $2"
-  toast "Factory: $TASK_ID" "$1 $2" request
+  toast "$TASK_ID" "$1 $2" request
 }
 
 agent_status() { h agent get "$1" | jq -r '.result.agent.agent_status'; }
@@ -114,7 +116,7 @@ wait_for() {
       return 0
     fi
     code=$(herr_code "$out")
-    [[ $code == timeout ]] || die "$name: waiting for ${*}: $(jq -r '.error.message // .' <<<"$out")"
+    [[ $code == timeout ]] || die "$name: waiting for ${*}: $(herr_msg "$out")"
     waited=$((waited + chunk))
     ((waited < timeout)) || die "$name: no ${*} within $((timeout / 60000)) min; look at its pane"
     status=$(agent_status "$name")
@@ -207,7 +209,7 @@ start_agent() {
       pane_not_available | pane_busy | shell_not_ready)
         sleep 1
         ;;
-      *) die "start $name: $(jq -r '.error.message // .' <<<"$out")" ;;
+      *) die "start $name: $(herr_msg "$out")" ;;
     esac
   done
   die "start $name: pane $pane never became an available shell"
@@ -234,7 +236,7 @@ ask() {
         [[ $status == blocked ]] && unblock "$name"
         return 0
         ;;
-      *) die "$name: $(jq -r '.error.message // .' <<<"$out")" ;;
+      *) die "$name: $(herr_msg "$out")" ;;
     esac
   done
   status=$(jq -r '.result.agent.agent_status' <<<"$out")
@@ -484,8 +486,6 @@ tests_changed_with_source() {
   tests=$(grep -E "$TEST_PATH_RE" <<<"$files") || tests=""
   [[ -z $src || -n $tests ]]
 }
-TEST_PATH_RE='(^|/)(tests?|spec|specs|__tests__|bats)/|(^|/)test_[^/]*\.py$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|scala|cs|swift)$|_spec\.rb$|\.bats$'
-
 verdict_of() { # review file -> APPROVE | REVISE | (empty)
   grep -oE '^VERDICT:\s*(APPROVE|REVISE)' "$1" 2>/dev/null | tail -n1 | grep -oE 'APPROVE|REVISE'
 }
@@ -786,7 +786,7 @@ The gate failed ($GATE). Last lines of $1:
 
 $(tail -n 40 "$1")
 
-Fix it, run the gate until green, commit, then reply DONE.
+Fix it, run the gate until green, and commit. Reply with just DONE.
 P
 }
 
@@ -796,7 +796,7 @@ The factory guardrails rejected the branch:
 
 $1
 
-Fix the cause (no suppressions, no skipped tests, no swallowed errors, leave protected files alone), make sure everything is committed, then reply DONE.
+Fix the cause (no suppressions, no skipped tests, no swallowed errors, leave protected files alone) and make sure everything is committed. Reply with just DONE.
 P
 }
 
@@ -860,7 +860,7 @@ approve_plan() {
   [[ $FACTORY_PLAN_APPROVAL == ask ]] || return 0
   rm -f "$dir/plan.approved" "$dir/plan-reject.md"
   while :; do
-    toast "Factory: $TASK_ID plan ready" "$TASK_TITLE. Approve it in the Factory terminal or with: factory approve" request
+    toast "$TASK_ID plan ready" "$TASK_TITLE. Approve it in the Factory terminal or with: factory approve" request
     printf '\n\033[34m[factory]\033[0m plan for %s (%s):\n\n' "$TASK_ID" "$file" >&2
     sed 's/^/    /' "$file" >&2
     printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' >&2
@@ -918,7 +918,7 @@ collect_answers() {
   local q=$1 dir line stdin_open=1 rc answers=""
   dir=$(dirname "$q")
   rm -f "$dir/answers.md"
-  toast "Factory: $TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal or with: factory answer" request
+  toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal or with: factory answer" request
   printf '\n\033[34m[factory]\033[0m the planner asks (%s):\n\n' "$q" >&2
   sed 's/^/    /' "$q" >&2
   printf '\n\033[34m[factory]\033[0m answer below, finish with a line containing only "."  (or: factory answer <repo> %s "...")\n' "$TASK_ID" >&2
@@ -984,10 +984,6 @@ plan_or_interview() {
   done
 }
 
-worktree_of() { # repo bead-id -> checkout path of the task's branch, empty if none
-  git -C "$1" worktree list --porcelain | awk -v b="^refs/heads/factory/$2(-|$)" '$1 == "worktree" {p = $2} $1 == "branch" && $2 ~ b {print p}'
-}
-
 plan_fix_prompt() {
   cat <<P
 Reviewers left notes on your plan in $RUN_DIR/plan-review.md and $RUN_DIR/plan-review-build.md. Update $RUN_DIR/plan.md where they are right; ignore what is not.
@@ -1008,7 +1004,7 @@ revise_prompt() { # round
   cat <<P
 Reviewers asked for changes in $RUN_DIR/review-$1.md and $RUN_DIR/review-$1-plan.md. Fix real issues; if a point is wrong, say why in $RUN_DIR/response-$1.md instead.
 The gate must pass: $GATE
-Commit, then reply DONE.
+Commit. Reply with just DONE.
 P
 }
 
@@ -1028,6 +1024,10 @@ worktrees_dir() {
   printf '%s' "${d/#\~/$HOME}"
 }
 
+worktree_of() { # repo bead-id -> checkout path of the task's branch, empty if none
+  git -C "$1" worktree list --porcelain | awk -v b="^refs/heads/factory/$2(-|$)" '$1 == "worktree" {p = $2} $1 == "branch" && $2 ~ b {print p}'
+}
+
 # worktree_path repo bead-id -> where the task's checkout goes: <worktrees dir>/<repo>/factory-<id>,
 # short on purpose; the branch carries the title slug, the directory does not.
 worktree_path() { printf '%s/%s/factory-%s' "$(worktrees_dir)" "$(basename "$1")" "$2"; }
@@ -1036,7 +1036,7 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
   local out
   # Herdr checks out an existing branch too; open is the fallback for a checkout that already exists.
   if ! out=$(herdr worktree create --cwd "$1" --branch "$2" --path "$(worktree_path "$1" "$TASK_ID")" --label "$3" --no-focus 2>&1); then
-    log "worktree create failed ($(jq -r '.error.message // .' <<<"$out" | tail -n1)); trying to open it"
+    log "worktree create failed ($(herr_msg "$out" | tail -n1)); trying to open it"
     out=$(h worktree open --cwd "$1" --branch "$2" --label "$3" --no-focus)
   fi
   WS=$(jq -r '.result.workspace.workspace_id' <<<"$out")
@@ -1050,20 +1050,26 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
 #   TASK_ID TASK_TITLE TASK_DESC  GATE BASE BRANCH MEMORY  WS WT BUILD_PANE
 #   PLAN_AGENT BUILD_AGENT REVIEW_AGENT  ROUND VERDICT GATE_LOG
 
-setup_task() { # repo arg
-  local repo=$1 arg=$2 slug st
-  resolve_task "$repo" "$arg"
-  GATE=$(resolve_gate "$repo")
-  BASE=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
-  BRANCH=$(branch_of "$repo" "$TASK_ID")
+# task_context repo: from TASK_ID and TASK_TITLE, derive GATE BASE BRANCH and the agent names.
+task_context() {
+  local slug
+  GATE=$(resolve_gate "$1")
+  BASE=$(git -C "$1" rev-parse --abbrev-ref HEAD)
+  BRANCH=$(branch_of "$1" "$TASK_ID")
   if [[ -z $BRANCH ]]; then
     slug=$(slugify "$TASK_TITLE")
     BRANCH="factory/$TASK_ID${slug:+-$slug}"
   fi
-  MEMORY=$(memory_block "$repo")
   PLAN_AGENT="$TASK_ID-plan"
   BUILD_AGENT="$TASK_ID-build"
   REVIEW_AGENT="$TASK_ID-review"
+}
+
+setup_task() { # repo arg
+  local repo=$1 arg=$2 st
+  resolve_task "$repo" "$arg"
+  task_context "$repo"
+  MEMORY=$(memory_block "$repo")
   log "task $TASK_ID: $TASK_TITLE"
   log "models: plan=$FACTORY_PLAN_MODEL build=$FACTORY_BUILD_MODEL review=$FACTORY_REVIEW_MODEL"
   log "gate: $GATE$([[ -n ${FACTORY_GATE:-} || -f $repo/.factory/gate ]] || printf ' (detected from the repo; add .factory/gate to make it explicit)') | base: $BASE | rounds: $FACTORY_ROUNDS | claude: $FACTORY_CLAUDE_PERMISSIONS"
@@ -1187,7 +1193,7 @@ finish_task() {
   ask "$BUILD_AGENT" "$(memory_prompt)"
   if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_check "$WT" "$BASE" >/dev/null; then
     bd -C "$repo" comment "$TASK_ID" "Factory: needs a human. $summary" >/dev/null
-    toast "Factory: $TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
+    toast "$TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
     warn "not approved after $FACTORY_ROUNDS rounds: $summary"
     bd_push "$repo"
     return 2
@@ -1204,7 +1210,7 @@ finish_task() {
   fi
   bd -C "$repo" comment "$TASK_ID" "Factory: approved. $summary${pr:+, pr $pr}$copilot" >/dev/null
   bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null
-  toast "Factory: $TASK_ID done" "$TASK_TITLE. ${next^}." "done"
+  toast "$TASK_ID done" "$TASK_TITLE. ${next^}." "done"
   log "done: $summary${pr:+, pr $pr}"
   bd_push "$repo"
 }
@@ -1224,7 +1230,7 @@ run_task() { # repo arg
 # --------------------------------------------------------------- commands ----
 cmd_doctor() {
   local ok=0 t
-  for t in herdr claude codex bd jq git; do
+  for t in "${RUN_TOOLS[@]}"; do
     if command -v "$t" >/dev/null 2>&1; then printf '  ok       %s\n' "$t"; else
       printf '  MISSING  %s\n' "$t"
       ok=1
@@ -1401,60 +1407,59 @@ cmd_queue() {
   log "queue finished after $n task(s)"
 }
 
-cmd_approve() { # repo bead-id [--allow-protected]
+# task_run_dir repo bead-id -> the task's .factory/run directory, or die. The human-gate
+# commands below talk to a waiting run by writing files there.
+task_run_dir() {
   local wt
   wt=$(worktree_of "$1" "$2")
   [[ -n $wt ]] || die "no worktree for task $2 in $1"
+  printf '%s/%s' "$wt" "$RUN_DIR"
+}
+
+cmd_approve() { # repo bead-id [--allow-protected]
+  local dir
+  dir=$(task_run_dir "$1" "$2") || return 1
   if [[ ${3:-} == --allow-protected ]]; then
-    : >"$wt/$RUN_DIR/allow-protected"
+    : >"$dir/allow-protected"
     log "protected-path check waived for $2"
   fi
-  : >"$wt/$RUN_DIR/plan.approved"
+  : >"$dir/plan.approved"
   log "approved plan for $2"
 }
 
 cmd_reject() { # repo bead-id note
-  local wt
-  wt=$(worktree_of "$1" "$2")
-  [[ -n $wt ]] || die "no worktree for task $2 in $1"
-  printf '%s\n' "$3" >"$wt/$RUN_DIR/plan-reject.md"
+  local dir
+  dir=$(task_run_dir "$1" "$2") || return 1
+  printf '%s\n' "$3" >"$dir/plan-reject.md"
   log "sent your note to the planner of $2"
 }
 
 cmd_answer() { # repo bead-id [text | -]
-  local wt text=${3:-}
-  wt=$(worktree_of "$1" "$2")
-  [[ -n $wt ]] || die "no worktree for task $2 in $1"
+  local dir text=${3:-}
+  dir=$(task_run_dir "$1" "$2") || return 1
   if [[ -z $text || $text == - ]]; then text=$(cat); fi
   [[ -n $text ]] || die "empty answer"
-  printf '%s\n' "$text" >"$wt/$RUN_DIR/answers.md"
+  printf '%s\n' "$text" >"$dir/answers.md"
   log "sent your answers to the planner of $2"
 }
 
 cmd_pr() { # repo bead-id: open a pull request for an existing task branch
-  local repo url
+  local repo url note=""
   repo=$(cd "$1" && pwd)
   WT=$(worktree_of "$repo" "$2")
   [[ -n $WT ]] || die "no worktree for task $2 in $repo"
   TASK_ID=$2
   TASK_TITLE=$(bd_field "$repo" "$2" '.title')
   TASK_DESC=$(bd_field "$repo" "$2" '.description // ""')
-  BRANCH=$(branch_of "$repo" "$2")
-  BASE=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
-  GATE=$(resolve_gate "$repo")
-  [[ -z $(git -C "$WT" status --porcelain -- . ':(exclude).factory') ]] || die "$WT has uncommitted changes"
-  herdr agent get "$2-build" >/dev/null 2>&1 || die "no live builder agent for $2 to handle a rebase; rebase by hand, or rerun the task"
-  url=$(raise_pr "$2-build")
+  task_context "$repo"
+  tree_dirty "$WT" && die "$WT has uncommitted changes"
+  herdr agent get "$BUILD_AGENT" >/dev/null 2>&1 || die "no live builder agent for $2 to handle a rebase; rebase by hand, or rerun the task"
+  url=$(raise_pr "$BUILD_AGENT")
   log "opened $url"
-  local note=""
   if ((FACTORY_COPILOT)); then
-    if herdr agent get "$2-build" >/dev/null 2>&1; then
-      COPILOT_NOTE=""
-      copilot_loop "$2-build" "$url" || warn "Copilot loop ended without a clean review: $COPILOT_NOTE"
-      note=", $COPILOT_NOTE"
-    else
-      copilot_request "${url##*/}" && note=", Copilot review requested (no builder agent to act on it)"
-    fi
+    COPILOT_NOTE=""
+    copilot_loop "$BUILD_AGENT" "$url" || warn "Copilot loop ended without a clean review: $COPILOT_NOTE"
+    note=", $COPILOT_NOTE"
   fi
   bd -C "$repo" comment "$2" "Factory: pull request opened by hand: $url$note" >/dev/null
   bd_push "$repo"
