@@ -333,7 +333,7 @@ detection more reliable. Factory handles the known startup dialogs either way.
 
 ## Why so lean
 
-Factory is about a thousand lines of Bash, and that is the point. Current models plan,
+Factory is a single Bash script of about fifteen hundred lines, and that is the point. Current models plan,
 build and review well when given a clear task, a real codebase and a hard definition of
 done; what they need from a harness is less than the frameworks of a year ago assumed.
 So Factory bets on a few things:
