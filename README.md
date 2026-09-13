@@ -288,13 +288,13 @@ shell. The official marketplace has more (C/C++, C#, Swift, Lua, PHP).
 
 ```sh
 claude plugin install pyright-lsp@claude-plugins-official        # needs pyright
+claude plugin install ruby-lsp@claude-plugins-official           # needs ruby-lsp (gem install ruby-lsp)
 claude plugin install typescript-lsp@claude-plugins-official     # needs typescript-language-server
 claude plugin install gopls-lsp@claude-plugins-official          # needs gopls
 claude plugin install rust-analyzer-lsp@claude-plugins-official  # needs rust-analyzer
 claude plugin install kotlin-lsp@claude-plugins-official         # needs kotlin-lsp
-claude plugin install ruby-lsp@claude-plugins-official           # needs ruby-lsp (gem install ruby-lsp)
-claude plugin install jdtls-lsp@claude-plugins-official          # needs jdtls and JAVA_HOME
 claude plugin install metals-lsp@factory-extras                  # Scala; needs metals, see below
+claude plugin install jdtls-lsp@claude-plugins-official          # needs jdtls and JAVA_HOME
 mise use -g 'npm:pyright' 'npm:typescript-language-server' 'npm:typescript' 'go:golang.org/x/tools/gopls'
 ```
 
