@@ -413,8 +413,18 @@ protected_globs() { # repo -> one glob per line
 }
 
 run_gate() { # worktree gate logfile
+  local pid waited=0 rc=0
   log "gate: $2"
-  if (cd "$1" && bash -c "$2") >"$3" 2>&1; then
+  (cd "$1" && bash -c "$2") >"$3" 2>&1 &
+  pid=$!
+  # heartbeat every five minutes: a cold build can be silent for a long time
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 5
+    waited=$((waited + 5))
+    ((waited % 300 == 0)) && log "gate still running ($((waited / 60)) min, log: $3)"
+  done
+  wait "$pid" || rc=$?
+  if ((rc == 0)); then
     log "gate passed"
     return 0
   fi
