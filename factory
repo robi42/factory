@@ -34,6 +34,11 @@ die() {
   exit 1
 }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
+need_all() {
+  local t
+  for t in "$@"; do need "$t"; done
+}
+RUN_TOOLS=(herdr claude codex bd jq git)
 
 row() { printf '  %-54s %s\n' "$1" "$2"; }
 
@@ -524,15 +529,21 @@ rebase_onto_base() {
   return 10
 }
 
-# regate builder-agent round: after a rebase, gate and guards must hold again; one fix round.
-regate() {
-  local agent=$1 gate_log="$WT/$RUN_DIR/gate-rebase-$2.log"
+# gate_then_guards builder-agent label: gate with one fix round, then guardrails. 1 on failure.
+gate_then_guards() {
+  local agent=$1 gate_log="$WT/$RUN_DIR/gate-$2.log"
   if ! run_gate "$WT" "$GATE" "$gate_log"; then
     ask "$agent" "$(gate_fix_prompt "$gate_log")"
-    run_gate "$WT" "$GATE" "$gate_log" || die "gate fails after the rebase; see $gate_log"
+    run_gate "$WT" "$GATE" "$gate_log" || return 1
   fi
-  guard_check "$WT" "$BASE" >/dev/null || die "guardrails fail after the rebase"
+  guard_check "$WT" "$BASE" >/dev/null || {
+    warn "guardrails failed after $2"
+    return 1
+  }
 }
+
+# regate builder-agent label: after a rebase, gate and guards must hold again.
+regate() { gate_then_guards "$1" "rebase-$2" || die "gate or guardrails fail after the rebase; see $WT/$RUN_DIR"; }
 
 pr_checks() { # -> markdown bullets describing what the run directory proves
   local d="$WT/$RUN_DIR" f v gates reviews
@@ -686,7 +697,7 @@ P
 
 # copilot_loop builder-agent pr-url: request reviews and act on comments until a review is clean.
 copilot_loop() {
-  local agent=$1 url=$2 n sha round=1 comments gate_log verdict
+  local agent=$1 url=$2 n sha round=1 comments verdict
   n=${url##*/}
   while ((round <= FACTORY_COPILOT_ROUNDS)); do
     sha=$(git -C "$WT" rev-parse HEAD)
@@ -709,15 +720,7 @@ copilot_loop() {
     printf '%s\n' "$comments" >"$WT/$RUN_DIR/copilot-$round.md"
     log "Copilot left $(grep -c '' "$WT/$RUN_DIR/copilot-$round.md") comment(s); asking the builder"
     ask "$agent" "$(copilot_fix_prompt "$round")"
-    gate_log="$WT/$RUN_DIR/gate-copilot-$round.log"
-    if ! run_gate "$WT" "$GATE" "$gate_log"; then
-      ask "$agent" "$(gate_fix_prompt "$gate_log")"
-      run_gate "$WT" "$GATE" "$gate_log" || return 1
-    fi
-    guard_check "$WT" "$BASE" >/dev/null || {
-      warn "guardrails failed after the Copilot round"
-      return 1
-    }
+    gate_then_guards "$agent" "copilot-$round" || return 1
     git -C "$WT" push -q
     copilot_reply "$n" "$round" "$(git -C "$WT" rev-parse HEAD)"
     copilot_resolve "$n" "$sha"
@@ -993,12 +996,12 @@ Skip what is obvious from the code. Reply with just DONE.
 P
 }
 
-# ------------------------------------------------------------- pipeline ----
+# ------------------------------------------------------------ workspace ----
 open_workspace() { # repo branch label -> WS WT BUILD_PANE
   local out
   # Herdr checks out an existing branch too; open is the fallback for a checkout that already exists.
   if ! out=$(herdr worktree create --cwd "$1" --branch "$2" --label "$3" --no-focus 2>&1); then
-    log "worktree create failed ($(jq -r '.error.message // .' <<<"$out")); trying to open it"
+    log "worktree create failed ($(jq -r '.error.message // .' <<<"$out" | tail -n1)); trying to open it"
     out=$(h worktree open --cwd "$1" --branch "$2" --label "$3" --no-focus)
   fi
   WS=$(jq -r '.result.workspace.workspace_id' <<<"$out")
@@ -1007,158 +1010,177 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
   [[ -n $WS && -n $WT && -n $BUILD_PANE ]] || die "unexpected worktree response: $out"
 }
 
-run_task() { # repo arg
-  local repo arg round=1 status verdict violations gate_log
-  repo=$(cd "$1" && pwd) && arg=$2
-  git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$repo is not a git repo"
+# ------------------------------------------------------------- pipeline ----
+# Shared task state, set by setup_task and read by the phases below:
+#   TASK_ID TASK_TITLE TASK_DESC  GATE BASE BRANCH MEMORY  WS WT BUILD_PANE
+#   PLAN_AGENT BUILD_AGENT REVIEW_AGENT  ROUND VERDICT GATE_LOG
 
+setup_task() { # repo arg
+  local repo=$1 arg=$2 slug st
   resolve_task "$repo" "$arg"
   GATE=$(resolve_gate "$repo")
   BASE=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
   BRANCH=$(branch_of "$repo" "$TASK_ID")
   if [[ -z $BRANCH ]]; then
-    local slug
     slug=$(slugify "$TASK_TITLE")
     BRANCH="factory/$TASK_ID${slug:+-$slug}"
   fi
   MEMORY=$(memory_block "$repo")
-
+  PLAN_AGENT="$TASK_ID-plan"
+  BUILD_AGENT="$TASK_ID-build"
+  REVIEW_AGENT="$TASK_ID-review"
   log "task $TASK_ID: $TASK_TITLE"
   log "models: plan=$FACTORY_PLAN_MODEL build=$FACTORY_BUILD_MODEL review=$FACTORY_REVIEW_MODEL"
   log "gate: $GATE$([[ -n ${FACTORY_GATE:-} || -f $repo/.factory/gate ]] || printf ' (detected from the repo; add .factory/gate to make it explicit)') | base: $BASE | rounds: $FACTORY_ROUNDS | claude: $FACTORY_CLAUDE_PERMISSIONS"
-
   if ! bd -C "$repo" update "$TASK_ID" --claim >/dev/null 2>&1; then
-    local st
     st=$(bd_field "$repo" "$TASK_ID" '.status')
     die "cannot claim $TASK_ID (status: ${st:-unknown}); reopen it with: bd -C $repo reopen $TASK_ID"
   fi
-  open_workspace "$repo" "$BRANCH" "$TASK_ID $TASK_TITLE"
-  mkdir -p "$WT/$RUN_DIR"
+}
+
+open_task_workspace() { # repo
   local exclude
-  exclude="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+  open_workspace "$1" "$BRANCH" "$TASK_ID $TASK_TITLE"
+  mkdir -p "$WT/$RUN_DIR"
+  exclude="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
   grep -qsxF '.factory/run/' "$exclude" || printf '.factory/run/\n' >>"$exclude"
   log "workspace $WS at $WT"
+}
 
-  local plan="$TASK_ID-plan" build="$TASK_ID-build" review="$TASK_ID-review"
-  local live
-  live=$(live_agents "$WS" "$plan" "$build" "$review")
+# start_or_adopt_agents repo: three agents in three panes, or the task's live ones on a rerun.
+start_or_adopt_agents() {
+  local repo=$1 live plan_pane review_pane pane repo_root
+  live=$(live_agents "$WS" "$PLAN_AGENT" "$BUILD_AGENT" "$REVIEW_AGENT")
   if [[ $live == 3 ]]; then
     log "reusing the live agents of $TASK_ID in workspace $WS"
-    settle_dialogs "$plan" quiet
-    settle_dialogs "$build" quiet
-    settle_dialogs "$review" quiet
-  elif [[ $live != 0 ]]; then
-    die "some agents of $TASK_ID are still alive in workspace $WS; run: fy clean $repo $TASK_ID --force"
-  else
-    close_extra_panes "$WS" "$BUILD_PANE"
-    local plan_pane review_pane
-    plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.6 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
-    review_pane=$(h pane split --pane "$plan_pane" --direction down --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
-    h pane rename "$BUILD_PANE" build >/dev/null
-    h pane rename "$plan_pane" plan >/dev/null
-    h pane rename "$review_pane" review >/dev/null
-    sleep 1
-    # Give the agents the factory's PATH (bd, gate tools) via a short command; a long
-    # inline export trips line editors such as ble.sh into multiline mode.
-    local pane
-    printf "export PATH='%s'\n" "$PATH" >"$WT/$RUN_DIR/env.sh"
-    for pane in "$BUILD_PANE" "$plan_pane" "$review_pane"; do
-      h pane run "$pane" ". $RUN_DIR/env.sh && clear" >/dev/null
-    done
-    sleep 1
-    local repo_root
-    repo_root=$(git -C "$repo" rev-parse --show-toplevel)
-    start_agent "$plan" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
-    start_agent "$build" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
-    set_color "$plan" purple
-    set_color "$build" cyan
-    start_agent "$review" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
-      -c "projects.\"$repo_root\".trust_level=\"trusted\"" \
-      -c "sandbox_workspace_write.writable_roots=[\"$repo_root/.beads\"]"
-    log "agents up: $plan $build $review"
+    settle_dialogs "$PLAN_AGENT" quiet
+    settle_dialogs "$BUILD_AGENT" quiet
+    settle_dialogs "$REVIEW_AGENT" quiet
+    return 0
   fi
+  [[ $live == 0 ]] || die "some agents of $TASK_ID are still alive in workspace $WS; run: fy clean $repo $TASK_ID --force"
+  close_extra_panes "$WS" "$BUILD_PANE"
+  plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.6 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
+  review_pane=$(h pane split --pane "$plan_pane" --direction down --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
+  h pane rename "$BUILD_PANE" build >/dev/null
+  h pane rename "$plan_pane" plan >/dev/null
+  h pane rename "$review_pane" review >/dev/null
+  sleep 1
+  # Give the agents the factory's PATH (bd, gate tools) via a short command; a long
+  # inline export trips line editors such as ble.sh into multiline mode.
+  printf "export PATH='%s'\n" "$PATH" >"$WT/$RUN_DIR/env.sh"
+  for pane in "$BUILD_PANE" "$plan_pane" "$review_pane"; do
+    h pane run "$pane" ". $RUN_DIR/env.sh && clear" >/dev/null
+  done
+  sleep 1
+  repo_root=$(git -C "$repo" rev-parse --show-toplevel)
+  start_agent "$PLAN_AGENT" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
+  start_agent "$BUILD_AGENT" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
+  set_color "$PLAN_AGENT" purple
+  set_color "$BUILD_AGENT" cyan
+  start_agent "$REVIEW_AGENT" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
+    -c "projects.\"$repo_root\".trust_level=\"trusted\"" \
+    -c "sandbox_workspace_write.writable_roots=[\"$repo_root/.beads\"]"
+  log "agents up: $PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
+}
 
+# stop_task repo what: a human gate ended the run; leave the workspace for them.
+stop_task() {
+  bd -C "$1" comment "$TASK_ID" "Factory: stopped at $2. workspace $WS, worktree $WT" >/dev/null
+  die "stopped at $2 for $TASK_ID; the workspace stays open"
+}
+
+# plan_phase repo: plan (with questions), dual plan review, one revision, human approval.
+plan_phase() {
+  local verdict
   log "planning"
-  if ! plan_or_interview "$plan"; then
-    bd -C "$repo" comment "$TASK_ID" "Factory: stopped at planner questions. workspace $WS, worktree $WT" >/dev/null
-    die "stopped at planner questions for $TASK_ID; the workspace stays open"
-  fi
-  planner_kept_hands_off "$plan"
-  log "plan review: $review and $build"
-  ask_for_file "$review" "$(plan_review_prompt)" "$WT/$RUN_DIR/plan-review.md"
-  ask_for_file "$build" "$(plan_build_check_prompt)" "$WT/$RUN_DIR/plan-review-build.md"
+  plan_or_interview "$PLAN_AGENT" || stop_task "$1" "planner questions"
+  planner_kept_hands_off "$PLAN_AGENT"
+  log "plan review: $REVIEW_AGENT and $BUILD_AGENT"
+  ask_for_file "$REVIEW_AGENT" "$(plan_review_prompt)" "$WT/$RUN_DIR/plan-review.md"
+  ask_for_file "$BUILD_AGENT" "$(plan_build_check_prompt)" "$WT/$RUN_DIR/plan-review-build.md"
   verdict=$(verdicts "$WT/$RUN_DIR/plan-review.md" "$WT/$RUN_DIR/plan-review-build.md")
   log "plan verdicts: $verdict"
   if [[ $verdict != "APPROVE APPROVE" ]]; then
     log "plan revision"
-    ask "$plan" "$(plan_fix_prompt)"
-    planner_kept_hands_off "$plan"
+    ask "$PLAN_AGENT" "$(plan_fix_prompt)"
+    planner_kept_hands_off "$PLAN_AGENT"
   fi
-  if ! approve_plan "$plan" "$WT/$RUN_DIR/plan.md"; then
-    bd -C "$repo" comment "$TASK_ID" "Factory: stopped at plan approval. workspace $WS, worktree $WT" >/dev/null
-    die "stopped at plan approval for $TASK_ID; the workspace stays open"
-  fi
+  approve_plan "$PLAN_AGENT" "$WT/$RUN_DIR/plan.md" || stop_task "$1" "plan approval"
+}
 
+# build_phase: build, then gate, guardrails and dual review per round. Sets ROUND VERDICT GATE_LOG.
+build_phase() {
+  local violations
   log "building"
-  ask "$build" "$(build_prompt)"
-
-  verdict=""
-  while ((round <= FACTORY_ROUNDS)); do
-    gate_log="$WT/$RUN_DIR/gate-$round.log"
-    if ! run_gate "$WT" "$GATE" "$gate_log"; then
-      ask "$build" "$(gate_fix_prompt "$gate_log")"
-      round=$((round + 1))
+  ask "$BUILD_AGENT" "$(build_prompt)"
+  ROUND=1
+  VERDICT=""
+  while ((ROUND <= FACTORY_ROUNDS)); do
+    GATE_LOG="$WT/$RUN_DIR/gate-$ROUND.log"
+    if ! run_gate "$WT" "$GATE" "$GATE_LOG"; then
+      ask "$BUILD_AGENT" "$(gate_fix_prompt "$GATE_LOG")"
+      ROUND=$((ROUND + 1))
       continue
     fi
     if ! violations=$(guard_check "$WT" "$BASE"); then
       warn "guardrails: $violations"
-      ask "$build" "$(guard_fix_prompt "$violations")"
-      round=$((round + 1))
+      ask "$BUILD_AGENT" "$(guard_fix_prompt "$violations")"
+      ROUND=$((ROUND + 1))
       continue
     fi
-    log "review round $round: $review and $plan"
-    ask_for_file "$review" "$(review_prompt "$round")" "$WT/$RUN_DIR/review-$round.md"
-    ask_for_file "$plan" "$(plan_check_prompt "$round")" "$WT/$RUN_DIR/review-$round-plan.md"
-    verdict=$(verdicts "$WT/$RUN_DIR/review-$round.md" "$WT/$RUN_DIR/review-$round-plan.md")
-    log "verdicts: $verdict"
-    case $verdict in
-      "APPROVE APPROVE")
-        verdict=APPROVE
-        break
-        ;;
-      *)
-        verdict=REVISE
-        ask "$build" "$(revise_prompt "$round")"
-        round=$((round + 1))
-        ;;
-    esac
-  done
-
-  ask "$build" "$(memory_prompt)"
-
-  local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $round, verdict: ${verdict:-none}"
-  if [[ $verdict == APPROVE ]] && [[ -f $gate_log ]] && guard_check "$WT" "$BASE" >/dev/null; then
-    local pr="" next="merge $BRANCH" copilot=""
-    if ((FACTORY_PR)); then
-      pr=$(raise_pr "$build")
-      next="review $pr"
-      log "opened $pr"
-      if ((FACTORY_COPILOT)); then
-        if copilot_loop "$build" "$pr"; then copilot=", Copilot review clean"; else copilot=", Copilot comments remain on the PR"; fi
-      fi
+    log "review round $ROUND: $REVIEW_AGENT and $PLAN_AGENT"
+    ask_for_file "$REVIEW_AGENT" "$(review_prompt "$ROUND")" "$WT/$RUN_DIR/review-$ROUND.md"
+    ask_for_file "$PLAN_AGENT" "$(plan_check_prompt "$ROUND")" "$WT/$RUN_DIR/review-$ROUND-plan.md"
+    VERDICT=$(verdicts "$WT/$RUN_DIR/review-$ROUND.md" "$WT/$RUN_DIR/review-$ROUND-plan.md")
+    log "verdicts: $VERDICT"
+    if [[ $VERDICT == "APPROVE APPROVE" ]]; then
+      VERDICT=APPROVE
+      return 0
     fi
-    bd -C "$repo" comment "$TASK_ID" "Factory: approved. $summary${pr:+, pr $pr}$copilot" >/dev/null
-    bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null
-    toast "Factory: $TASK_ID done" "$TASK_TITLE. ${next^}." "done"
-    log "done: $summary${pr:+, pr $pr}"
-    bd_push "$repo"
-  else
+    VERDICT=REVISE
+    ask "$BUILD_AGENT" "$(revise_prompt "$ROUND")"
+    ROUND=$((ROUND + 1))
+  done
+}
+
+# finish_task repo: memories, then close the bead (with PR and Copilot review) or hand over.
+finish_task() {
+  local repo=$1 pr="" next="merge $BRANCH" copilot=""
+  local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}"
+  ask "$BUILD_AGENT" "$(memory_prompt)"
+  if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_check "$WT" "$BASE" >/dev/null; then
     bd -C "$repo" comment "$TASK_ID" "Factory: needs a human. $summary" >/dev/null
     toast "Factory: $TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
     warn "not approved after $FACTORY_ROUNDS rounds: $summary"
     bd_push "$repo"
     return 2
   fi
+  if ((FACTORY_PR)); then
+    pr=$(raise_pr "$BUILD_AGENT")
+    next="review $pr"
+    log "opened $pr"
+    if ((FACTORY_COPILOT)); then
+      if copilot_loop "$BUILD_AGENT" "$pr"; then copilot=", Copilot review clean"; else copilot=", Copilot comments remain on the PR"; fi
+    fi
+  fi
+  bd -C "$repo" comment "$TASK_ID" "Factory: approved. $summary${pr:+, pr $pr}$copilot" >/dev/null
+  bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null
+  toast "Factory: $TASK_ID done" "$TASK_TITLE. ${next^}." "done"
+  log "done: $summary${pr:+, pr $pr}"
+  bd_push "$repo"
+}
+
+run_task() { # repo arg
+  local repo
+  repo=$(cd "$1" && pwd)
+  git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$repo is not a git repo"
+  setup_task "$repo" "$2"
+  open_task_workspace "$repo"
+  start_or_adopt_agents "$repo"
+  plan_phase "$repo"
+  build_phase
+  finish_task "$repo"
 }
 
 # --------------------------------------------------------------- commands ----
@@ -1488,25 +1510,25 @@ take_flags() {
 }
 
 main() {
-  local cmd=${1:-help} t
+  local cmd=${1:-help}
   if (($# > 0)); then shift; fi
   case $cmd in
     run)
       take_flags "$@"
       ((${#ARGS[@]} == 2)) || die "usage: factory run [--pr] [--auto] <repo> <bead-id | task>"
-      for t in herdr claude codex bd jq git; do need "$t"; done
+      need_all "${RUN_TOOLS[@]}"
       run_task "${ARGS[0]}" "${ARGS[1]}"
       ;;
     next)
       take_flags "$@"
       ((${#ARGS[@]} == 1)) || die "usage: factory next [--pr] [--auto] <repo>"
-      for t in herdr claude codex bd jq git; do need "$t"; done
+      need_all "${RUN_TOOLS[@]}"
       cmd_next "${ARGS[0]}"
       ;;
     queue)
       take_flags "$@"
       ((${#ARGS[@]} >= 1)) || die "usage: factory queue [--pr] [--auto] <repo> [max]"
-      for t in herdr claude codex bd jq git; do need "$t"; done
+      need_all "${RUN_TOOLS[@]}"
       cmd_queue "${ARGS[@]}"
       ;;
     sync)
@@ -1544,12 +1566,12 @@ main() {
     pr)
       take_flags "$@"
       ((${#ARGS[@]} == 2)) || die "usage: factory pr [--no-copilot] <repo> <bead-id>"
-      for t in gh bd jq git; do need "$t"; done
+      need_all gh bd jq git
       cmd_pr "${ARGS[0]}" "${ARGS[1]}"
       ;;
     clean)
       (($# >= 1)) || die "usage: factory clean <repo> [bead-id] [--force]"
-      for t in herdr bd jq git; do need "$t"; done
+      need_all herdr bd jq git
       cmd_clean "$@"
       ;;
     check)
