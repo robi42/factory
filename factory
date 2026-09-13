@@ -95,23 +95,34 @@ attention() { # agent message
 agent_status() { h agent get "$1" | jq -r '.result.agent.agent_status'; }
 
 # wait_for name timeout_ms state... : block until the agent reaches one of the states.
+# Waits in one-minute chunks: every chunk re-checks the screen for a known dialog, every
+# five minutes prints a heartbeat, so a long gate run is visibly a wait and not a hang.
 wait_for() {
-  local name=$1 timeout=$2 out
+  local name=$1 timeout=$2 out code status waited=0 chunk=60000
   shift 2
   local args=()
   local s
   for s in "$@"; do args+=(--until "$s"); done
-  if ! out=$(herdr agent wait "$name" "${args[@]}" --timeout "$timeout" 2>&1); then
-    die "$name: waited ${timeout}ms for ${*}, got: $(jq -r '.error.message // .' <<<"$out")"
-  fi
-  jq -r '.result.agent.agent_status' <<<"$out"
+  while :; do
+    if out=$(herdr agent wait "$name" "${args[@]}" --timeout "$chunk" 2>&1); then
+      jq -r '.result.agent.agent_status' <<<"$out"
+      return 0
+    fi
+    code=$(herr_code "$out")
+    [[ $code == timeout ]] || die "$name: waiting for ${*}: $(jq -r '.error.message // .' <<<"$out")"
+    waited=$((waited + chunk))
+    ((waited < timeout)) || die "$name: no ${*} within $((timeout / 60000)) min; look at its pane"
+    status=$(agent_status "$name")
+    [[ $status == idle || $status == "done" ]] || settle_dialogs "$name" quiet
+    ((waited % 300000 == 0)) && log "still waiting on $name ($status, $((waited / 60000)) min)"
+  done
 }
 
 # settle_dialogs name: clear the startup dialogs agents show in a fresh worktree
 # (trust prompts, mode notices, Codex hook review). Herdr does not flag all of them
 # as blocked, so this looks at the screen rather than the reported state.
 settle_dialogs() {
-  local name=$1 i txt status
+  local name=$1 quiet=${2:-} i txt status
   for i in 1 2 3 4 5 6; do
     txt=$(herdr agent read "$name" --source visible 2>/dev/null) || txt=""
     if grep -qE 'Yes, I (trust|accept)' <<<"$txt"; then
@@ -131,6 +142,7 @@ settle_dialogs() {
       log "$name: closing Codex transcript overlay (attempt $i)"
       herdr agent send-keys "$name" q >/dev/null
     else
+      [[ -n $quiet ]] && return 0 # nothing on screen we know; the caller keeps waiting
       status=$(agent_status "$name")
       case $status in
         idle | done) return 0 ;;
@@ -139,6 +151,7 @@ settle_dialogs() {
     fi
     sleep 3
   done
+  [[ -n $quiet ]] && return 0
   status=$(agent_status "$name")
   case $status in idle | done) return 0 ;; esac
   die "$name: still $status after startup; look at its pane"
@@ -147,9 +160,27 @@ settle_dialogs() {
 # set_color agent colour: Claude Code's /color tints the session's prompt line, which is how
 # the two Claude panes are told apart: the planner is purple, the builder cyan.
 set_color() {
-  if ! herdr agent prompt "$1" "/color $2" --wait --timeout 15000 >/dev/null 2>&1; then
+  # no --wait: /color finishes without a lifecycle change, which --wait would report as a stall
+  if ! herdr agent prompt "$1" "/color $2" >/dev/null 2>&1; then
     warn "$1: could not set the session colour"
   fi
+}
+
+# close_extra_panes workspace keep-pane: drop agent-less panes left by exited sessions
+close_extra_panes() {
+  local ws=$1 keep=$2 pane
+  while IFS= read -r pane; do
+    [[ -n $pane && $pane != "$keep" ]] || continue
+    herdr pane close "$pane" >/dev/null 2>&1 || warn "could not close leftover pane $pane"
+  done < <(herdr pane list --workspace "$ws" 2>/dev/null | jq -r '.result.panes[] | select(.agent == null) | .pane_id')
+}
+
+# live_agents workspace name... -> how many of the named agents are alive in that workspace
+live_agents() {
+  local ws=$1
+  shift
+  herdr agent list 2>/dev/null | jq -r --arg ws "$ws" --argjson names "$(printf '%s\n' "$@" | jq -R . | jq -s .)" \
+    '[.result.agents[] | select(.workspace_id == $ws and ((.name // "") as $n | $names | index($n)))] | length'
 }
 
 # start_agent name kind pane [agent args...]
@@ -181,7 +212,7 @@ start_agent() {
 ask() {
   local name=$1 text=$2 out status stalls=0
   while :; do
-    if out=$(herdr agent prompt "$name" "$text" --wait --timeout "$FACTORY_TURN_TIMEOUT_MS" 2>&1); then
+    if out=$(herdr agent prompt "$name" "$text" --wait --timeout 60000 2>&1); then
       break
     fi
     case $(herr_code "$out") in
@@ -191,13 +222,27 @@ ask() {
         settle_dialogs "$name"
         ;;
       agent_blocked)
-        attention "$name" "is waiting for your input"
-        wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" >/dev/null
+        unblock "$name"
+        ;;
+      timeout)
+        status=$(wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked)
+        [[ $status == blocked ]] && unblock "$name"
+        return 0
         ;;
       *) die "$name: $(jq -r '.error.message // .' <<<"$out")" ;;
     esac
   done
   status=$(jq -r '.result.agent.agent_status' <<<"$out")
+  [[ $status == blocked ]] && unblock "$name"
+  return 0
+}
+
+# unblock name: a blocked agent gets the dialog settler first; only an unknown dialog
+# goes to the human. Returns once the agent is idle or done.
+unblock() {
+  local name=$1 status
+  settle_dialogs "$name" quiet
+  status=$(agent_status "$name")
   while [[ $status == blocked ]]; do
     attention "$name" "is waiting for your input"
     status=$(wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done")
@@ -337,8 +382,13 @@ G
   chmod +x "$1/.factory/gate"
 }
 
+# guardrails_file worktree -> the repo's own .factory/guardrails.txt if present, else Factory's
+guardrails_file() {
+  if [[ -f $1/.factory/guardrails.txt ]]; then printf '%s' "$1/.factory/guardrails.txt"; else printf '%s' "$FACTORY_GUARDRAILS"; fi
+}
+
 protected_globs() { # repo -> one glob per line
-  printf '%s\n' .factory/gate .factory/protected
+  printf '%s\n' .factory/gate .factory/protected .factory/guardrails.txt
   [[ -f $1/.factory/protected ]] && grep -vE '^\s*(#|$)' "$1/.factory/protected"
   return 0
 }
@@ -382,14 +432,16 @@ guard_check() {
     done < <(git -C "$wt" diff --name-only "$base...HEAD" -- "${globs[@]}")
   fi
   local hits=0
+  local rules
+  rules=$(guardrails_file "$wt")
   while IFS= read -r f; do
     if git -C "$wt" diff -U0 "$base...HEAD" -- "$f" | grep -E '^\+[^+]' \
-      | grep -E -f <(grep -vE '^\s*(#|$)' "$FACTORY_GUARDRAILS") | sed "s|^+|$f: |"; then
+      | grep -E -f <(grep -vE '^\s*(#|$)' "$rules") | sed "s|^+|$f: |"; then
       hits=1
     fi
   done < <(git -C "$wt" diff --name-only "$base...HEAD" -- . ':(exclude).factory')
   if ((hits)); then
-    printf 'the lines above match a forbidden pattern (see %s)\n' "$FACTORY_GUARDRAILS"
+    printf 'the lines above match a forbidden pattern (see %s)\n' "$rules"
     bad=1
   fi
   return $bad
@@ -903,7 +955,11 @@ run_task() { # repo arg
   log "models: plan=$FACTORY_PLAN_MODEL build=$FACTORY_BUILD_MODEL review=$FACTORY_REVIEW_MODEL"
   log "gate: $GATE$([[ -n ${FACTORY_GATE:-} || -f $repo/.factory/gate ]] || printf ' (detected from the repo; add .factory/gate to make it explicit)') | base: $BASE | rounds: $FACTORY_ROUNDS | claude: $FACTORY_CLAUDE_PERMISSIONS"
 
-  bd -C "$repo" update "$TASK_ID" --claim >/dev/null
+  if ! bd -C "$repo" update "$TASK_ID" --claim >/dev/null 2>&1; then
+    local st
+    st=$(bd_field "$repo" "$TASK_ID" '.status')
+    die "cannot claim $TASK_ID (status: ${st:-unknown}); reopen it with: bd -C $repo reopen $TASK_ID"
+  fi
   open_workspace "$repo" "$BRANCH" "$TASK_ID $TASK_TITLE"
   mkdir -p "$WT/$RUN_DIR"
   local exclude
@@ -911,33 +967,44 @@ run_task() { # repo arg
   grep -qsxF '.factory/run/' "$exclude" || printf '.factory/run/\n' >>"$exclude"
   log "workspace $WS at $WT"
 
-  local plan_pane review_pane
-  plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.6 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
-  review_pane=$(h pane split --pane "$plan_pane" --direction down --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
-  h pane rename "$BUILD_PANE" build >/dev/null
-  h pane rename "$plan_pane" plan >/dev/null
-  h pane rename "$review_pane" review >/dev/null
-  sleep 1
-  # Give the agents the factory's PATH (bd, gate tools) via a short command; a long
-  # inline export trips line editors such as ble.sh into multiline mode.
-  local pane
-  printf "export PATH='%s'\n" "$PATH" >"$WT/$RUN_DIR/env.sh"
-  for pane in "$BUILD_PANE" "$plan_pane" "$review_pane"; do
-    h pane run "$pane" ". $RUN_DIR/env.sh && clear" >/dev/null
-  done
-  sleep 1
-
   local plan="$TASK_ID-plan" build="$TASK_ID-build" review="$TASK_ID-review"
-  local repo_root
-  repo_root=$(git -C "$repo" rev-parse --show-toplevel)
-  start_agent "$plan" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
-  start_agent "$build" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
-  set_color "$plan" purple
-  set_color "$build" cyan
-  start_agent "$review" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
-    -c "projects.\"$repo_root\".trust_level=\"trusted\"" \
-    -c "sandbox_workspace_write.writable_roots=[\"$repo_root/.beads\"]"
-  log "agents up: $plan $build $review"
+  local live
+  live=$(live_agents "$WS" "$plan" "$build" "$review")
+  if [[ $live == 3 ]]; then
+    log "reusing the live agents of $TASK_ID in workspace $WS"
+    settle_dialogs "$plan" quiet
+    settle_dialogs "$build" quiet
+    settle_dialogs "$review" quiet
+  elif [[ $live != 0 ]]; then
+    die "some agents of $TASK_ID are still alive in workspace $WS; run: fy clean $repo $TASK_ID --force"
+  else
+    close_extra_panes "$WS" "$BUILD_PANE"
+    local plan_pane review_pane
+    plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.6 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
+    review_pane=$(h pane split --pane "$plan_pane" --direction down --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
+    h pane rename "$BUILD_PANE" build >/dev/null
+    h pane rename "$plan_pane" plan >/dev/null
+    h pane rename "$review_pane" review >/dev/null
+    sleep 1
+    # Give the agents the factory's PATH (bd, gate tools) via a short command; a long
+    # inline export trips line editors such as ble.sh into multiline mode.
+    local pane
+    printf "export PATH='%s'\n" "$PATH" >"$WT/$RUN_DIR/env.sh"
+    for pane in "$BUILD_PANE" "$plan_pane" "$review_pane"; do
+      h pane run "$pane" ". $RUN_DIR/env.sh && clear" >/dev/null
+    done
+    sleep 1
+    local repo_root
+    repo_root=$(git -C "$repo" rev-parse --show-toplevel)
+    start_agent "$plan" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
+    start_agent "$build" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
+    set_color "$plan" purple
+    set_color "$build" cyan
+    start_agent "$review" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
+      -c "projects.\"$repo_root\".trust_level=\"trusted\"" \
+      -c "sandbox_workspace_write.writable_roots=[\"$repo_root/.beads\"]"
+    log "agents up: $plan $build $review"
+  fi
 
   log "planning"
   if ! plan_or_interview "$plan"; then

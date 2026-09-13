@@ -77,8 +77,9 @@ commit_all() {
   run protected_globs "$REPO"
   [ "${lines[0]}" = ".factory/gate" ]
   [ "${lines[1]}" = ".factory/protected" ]
-  [ "${lines[2]}" = "src/legacy/*" ]
-  [ "${#lines[@]}" -eq 3 ]
+  [ "${lines[2]}" = ".factory/guardrails.txt" ]
+  [ "${lines[3]}" = "src/legacy/*" ]
+  [ "${#lines[@]}" -eq 4 ]
 }
 
 @test "guard: clean committed change passes" {
@@ -536,10 +537,72 @@ JSON
   planner_kept_hands_off planner # files under .factory/ are fine
 }
 
-@test "set_color sends /color to the agent" {
+@test "set_color sends /color to the agent without waiting" {
   herdr() { printf '%s\n' "$*" >"$TMP/herdr.log"; }
   set_color plan purple
-  [[ $(cat "$TMP/herdr.log") == "agent prompt plan /color purple --wait"* ]]
+  [ "$(cat "$TMP/herdr.log")" = "agent prompt plan /color purple" ]
+}
+
+@test "close_extra_panes closes agent-less panes except the one to keep" {
+  herdr() {
+    case "$*" in
+      "pane list"*) printf '{"result":{"panes":[{"pane_id":"w1:p1","agent":null},{"pane_id":"w1:p2","agent":"claude"},{"pane_id":"w1:p3","agent":null}]}}' ;;
+      "pane close"*) printf '%s\n' "$*" >>"$TMP/closed" ;;
+    esac
+  }
+  close_extra_panes w1 w1:p1
+  [ "$(cat "$TMP/closed")" = "pane close w1:p3" ]
+}
+
+@test "wait_for: chunked waits print a heartbeat and return the final state" {
+  fake_task
+  toast() { :; }
+  : >"$TMP/waits"
+  herdr() { # agent wait times out five times, then the agent is idle
+    case "$*" in
+      "agent wait"*)
+        printf 'x' >>"$TMP/waits"
+        if (($(wc -c <"$TMP/waits") <= 5)); then
+          printf '{"error":{"code":"timeout","message":"t"}}'
+          return 1
+        fi
+        printf '{"result":{"agent":{"agent_status":"idle"}}}'
+        ;;
+      "agent get"*) printf '{"result":{"agent":{"agent_status":"working"}}}' ;;
+      "agent read"*) printf '' ;;
+    esac
+  }
+  run wait_for planner 3600000 idle "done"
+  [ "$status" -eq 0 ]
+  [[ $output == *"still waiting on planner (working, 5 min)"* ]]
+  [[ ${lines[-1]} == idle ]]
+  : >"$TMP/waits"
+  run wait_for planner 120000 idle "done"
+  [ "$status" -eq 1 ]
+  [[ $output == *"no idle done within 2 min"* ]]
+}
+
+@test "live_agents counts the named agents alive in a workspace" {
+  herdr() {
+    printf '{"result":{"agents":[{"name":"t-plan","workspace_id":"w1"},{"name":"t-build","workspace_id":"w1"},{"name":"t-review","workspace_id":"w9"},{"name":null,"workspace_id":"w1"}]}}'
+  }
+  [ "$(live_agents w1 t-plan t-build t-review)" = 2 ]
+  [ "$(live_agents w9 t-plan t-build t-review)" = 1 ]
+  [ "$(live_agents w2 t-plan)" = 0 ]
+}
+
+@test "guard: a repo's own .factory/guardrails.txt replaces the default list" {
+  make_repo
+  printf 'FORBIDDEN_WORD\n' >"$REPO/.factory/guardrails.txt"
+  commit_all "own rules"
+  local pipe='||'
+  printf 'run_thing %s true\nFORBIDDEN_WORD here\n' "$pipe" >"$REPO/run.sh"
+  commit_all bad
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"FORBIDDEN_WORD"* ]]
+  [[ $output != *"run_thing"* ]]
+  [[ $output == *".factory/guardrails.txt"* ]]
 }
 
 @test "help and unknown command" {

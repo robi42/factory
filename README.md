@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Runs on Herdr](https://img.shields.io/badge/runs%20on-Herdr-8b5cf6.svg)](https://herdr.dev)
 
-A simple software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
+A simple, lean software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
 
 The CLI is `factory`; `fy` is the alias used below.
 
@@ -46,6 +46,23 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
 7. **Done.** Memories stored, bead closed, toast sent. With `--pr` the branch is pushed, a
    pull request opened, and a GitHub Copilot review requested and acted on until it is
    clean. Merging stays yours; `fy clean` tidies up afterwards.
+
+## How it drives the agents
+
+There is no daemon and no protocol: one foreground Bash process per task talks to Herdr
+over its socket CLI. It creates the worktree workspace and panes, starts `claude` and
+`codex` in them, sends each prompt with `herdr agent prompt`, and waits on Herdr's agent
+lifecycle (`working`, `idle`, `blocked`) rather than parsing screens. Handoffs between
+roles are files in the worktree's `.factory/run/`: the plan, the reviews with a verdict
+line, the gate log. Factory never trusts an agent's word for "done": it checks the file
+exists, runs the gate itself, and inspects the diff.
+
+Because the state is the worktree plus Beads, the orchestrator is disposable. Kill it, fix
+something, run the same `fy run` again: it reopens the workspace, adopts the three agents
+still alive in it, and starts the pipeline over. Known startup dialogs (trust prompts,
+Codex's hook review and transcript overlay) are cleared from the screen automatically; a
+block it does not recognise becomes a toast, and long waits print a heartbeat every five
+minutes so a thirty-minute gate is visibly a wait, not a hang.
 
 ## Requirements
 
@@ -197,11 +214,13 @@ Checked by Factory on the branch, after the gate and before review:
 
 - No added lines matching `guardrails.txt`: suppressions such as `noqa`, `type: ignore`,
   `eslint-disable`, `shellcheck disable`; skipped tests; `|| true`. Adapted from
-  [AI Guardrails](https://github.com/florianbuetow/ai-guardrails); edit to taste.
+  [AI Guardrails](https://github.com/florianbuetow/ai-guardrails). A repo can ship its own
+  `.factory/guardrails.txt`, which replaces Factory's list for that repo and is protected
+  like the gate; copy the default as a starting point.
 - A change to code files must also touch a test file (`FACTORY_REQUIRE_TESTS=0` to relax).
 - No committed build artifacts, no uncommitted changes, at least one commit.
-- Protected paths untouched: `.factory/gate`, `.factory/protected`, and every glob listed
-  in `.factory/protected`. A task that legitimately must change them, such as adding the
+- Protected paths untouched: `.factory/gate`, `.factory/protected`, `.factory/guardrails.txt`,
+  and every glob listed in `.factory/protected`. A task that legitimately must change them, such as adding the
   gate, gets a one-task waiver from you at plan approval (`p`, or `--allow-protected`);
   the PR body records it.
 - The planner must leave the code untouched; a dirty tree after planning is sent back once.
@@ -287,7 +306,7 @@ detection more reliable. Factory handles the known startup dialogs either way.
 **Beads housekeeping.** `git config beads.role maintainer` in each repo silences a
 warning, and untracking `.beads/interactions.jsonl` keeps `git status` quiet.
 
-## Why so little
+## Why so lean
 
 Factory is about a thousand lines of Bash, and that is the point. Current models plan,
 build and review well when given a clear task, a real codebase and a hard definition of
