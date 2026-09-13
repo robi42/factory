@@ -140,8 +140,8 @@ goes to the planner, the plan comes back revised, and you are asked again. You c
 or talk to the planner in its pane first; the builder reads the file. `--auto` skips the
 step for unattended queues. If the run has no terminal it simply waits for the files.
 
-**Merge.** On approval the bead is closed and you get a toast; the `factory/<bead-id>`
-branch is yours to merge. Otherwise the bead stays in progress with a comment saying why,
+**Merge.** On approval the bead is closed and you get a toast; the branch, named
+`factory/<bead-id>-<title-slug>`, is yours to merge. Otherwise the bead stays in progress with a comment saying why,
 and the workspace stays open. Once merged (squash merges count when the PR shows as
 merged), `fy clean` removes the workspace, worktree and branch and closes the bead.
 

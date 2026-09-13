@@ -667,6 +667,25 @@ JSON
   git -C "$REPO" rebase --abort
 }
 
+@test "branch names: slug from the title, found again by bead id" {
+  [ "$(slugify 'Add a --farewell CLI flag!')" = "add-a-farewell-cli-flag" ]
+  local long
+  long=$(slugify 'Ünïcödé & spaces   everywhere, and a very long title that keeps going')
+  [[ $long =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]
+  [ "${#long}" -le 40 ]
+  [[ $long == *spaces-everywhere* ]]
+  [ "$(bead_of_branch factory/toy-abe-add-a-farewell-cli-flag)" = toy-abe ]
+  [ "$(bead_of_branch factory/toy-abe)" = toy-abe ]
+  make_repo
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" branch factory/toy-9-some-title
+  [ "$(branch_of "$REPO" toy-9)" = factory/toy-9-some-title ]
+  [ -z "$(branch_of "$REPO" toy-90)" ]
+  git -C "$REPO" worktree add -q "$TMP/wt-9" factory/toy-9-some-title
+  [ "$(worktree_of "$REPO" toy-9)" = "$TMP/wt-9" ]
+  [ -z "$(worktree_of "$REPO" toy-90)" ]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

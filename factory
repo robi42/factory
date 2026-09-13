@@ -266,6 +266,20 @@ bd_field() { # repo id jq-expr
 
 is_bead_id() { [[ $1 =~ ^[a-z][a-z0-9]*-[a-z0-9]+$ ]]; }
 
+# slugify text -> lowercase, dashes for anything else, at most 40 characters
+slugify() {
+  # C locale: only ASCII letters and digits survive, so branch names stay plain
+  printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40 | sed -E 's/-+$//'
+}
+
+# branch_of repo bead-id -> the task's existing branch (factory/<id> or factory/<id>-<slug>), or empty
+branch_of() {
+  git -C "$1" branch --list "factory/$2" "factory/$2-*" --format='%(refname:short)' | head -n1
+}
+
+# bead_of_branch branch -> the bead id in a factory branch name
+bead_of_branch() { sed -E 's#^factory/([a-z][a-z0-9]*-[a-z0-9]+).*#\1#' <<<"$1"; }
+
 # resolve_task repo arg -> TASK_ID TASK_TITLE TASK_DESC
 resolve_task() {
   local repo=$1 arg=$2
@@ -944,8 +958,8 @@ plan_or_interview() {
   done
 }
 
-worktree_of() { # repo bead-id -> checkout path of factory/<id>, empty if none
-  git -C "$1" worktree list --porcelain | awk -v b="refs/heads/factory/$2" '$1 == "worktree" {p = $2} $1 == "branch" && $2 == b {print p}'
+worktree_of() { # repo bead-id -> checkout path of the task's branch, empty if none
+  git -C "$1" worktree list --porcelain | awk -v b="^refs/heads/factory/$2(-|$)" '$1 == "worktree" {p = $2} $1 == "branch" && $2 ~ b {print p}'
 }
 
 plan_fix_prompt() {
@@ -1001,7 +1015,12 @@ run_task() { # repo arg
   resolve_task "$repo" "$arg"
   GATE=$(resolve_gate "$repo")
   BASE=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
-  BRANCH="factory/$TASK_ID"
+  BRANCH=$(branch_of "$repo" "$TASK_ID")
+  if [[ -z $BRANCH ]]; then
+    local slug
+    slug=$(slugify "$TASK_TITLE")
+    BRANCH="factory/$TASK_ID${slug:+-$slug}"
+  fi
   MEMORY=$(memory_block "$repo")
 
   log "task $TASK_ID: $TASK_TITLE"
@@ -1325,7 +1344,7 @@ cmd_queue() {
 cmd_approve() { # repo bead-id [--allow-protected]
   local wt
   wt=$(worktree_of "$1" "$2")
-  [[ -n $wt ]] || die "no worktree for factory/$2 in $1"
+  [[ -n $wt ]] || die "no worktree for task $2 in $1"
   if [[ ${3:-} == --allow-protected ]]; then
     : >"$wt/$RUN_DIR/allow-protected"
     log "protected-path check waived for $2"
@@ -1337,7 +1356,7 @@ cmd_approve() { # repo bead-id [--allow-protected]
 cmd_reject() { # repo bead-id note
   local wt
   wt=$(worktree_of "$1" "$2")
-  [[ -n $wt ]] || die "no worktree for factory/$2 in $1"
+  [[ -n $wt ]] || die "no worktree for task $2 in $1"
   printf '%s\n' "$3" >"$wt/$RUN_DIR/plan-reject.md"
   log "sent your note to the planner of $2"
 }
@@ -1345,7 +1364,7 @@ cmd_reject() { # repo bead-id note
 cmd_answer() { # repo bead-id [text | -]
   local wt text=${3:-}
   wt=$(worktree_of "$1" "$2")
-  [[ -n $wt ]] || die "no worktree for factory/$2 in $1"
+  [[ -n $wt ]] || die "no worktree for task $2 in $1"
   if [[ -z $text || $text == - ]]; then text=$(cat); fi
   [[ -n $text ]] || die "empty answer"
   printf '%s\n' "$text" >"$wt/$RUN_DIR/answers.md"
@@ -1356,11 +1375,11 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
   local repo url
   repo=$(cd "$1" && pwd)
   WT=$(worktree_of "$repo" "$2")
-  [[ -n $WT ]] || die "no worktree for factory/$2 in $repo"
+  [[ -n $WT ]] || die "no worktree for task $2 in $repo"
   TASK_ID=$2
   TASK_TITLE=$(bd_field "$repo" "$2" '.title')
   TASK_DESC=$(bd_field "$repo" "$2" '.description // ""')
-  BRANCH="factory/$2"
+  BRANCH=$(branch_of "$repo" "$2")
   BASE=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
   GATE=$(resolve_gate "$repo")
   [[ -z $(git -C "$WT" status --porcelain -- . ':(exclude).factory') ]] || die "$WT has uncommitted changes"
@@ -1405,7 +1424,7 @@ cmd_clean() {
   # every factory branch, with its Herdr workspace and checkout when there is one
   while IFS='|' read -r branch ws path; do
     [[ -n $branch ]] || continue
-    id=${branch#factory/}
+    id=$(bead_of_branch "$branch")
     [[ -z $only || $only == "$id" ]] || continue
     if ((force)) || merged_into "$repo" "$branch" "$base"; then
       if [[ -n $ws ]]; then
@@ -1437,7 +1456,7 @@ clean_targets() {
   local repo=$1 known
   known=$(herdr worktree list --cwd "$repo" 2>/dev/null | jq -r '.result.worktrees[]? | select((.branch // "") | startswith("factory/")) | "\(.branch)|\(.open_workspace_id // "")|\(.path)"') || known=""
   git -C "$repo" branch --list 'factory/*' --format='%(refname:short)' | while IFS= read -r branch; do
-    grep -m1 -F "$branch|" <<<"$known" || printf '%s||%s\n' "$branch" "$(worktree_of "$repo" "${branch#factory/}")"
+    grep -m1 -F "$branch|" <<<"$known" || printf '%s||%s\n' "$branch" "$(worktree_of "$repo" "$(bead_of_branch "$branch")")"
   done
 }
 
