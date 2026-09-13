@@ -8,8 +8,9 @@ A simple software factory on [Herdr](https://herdr.dev): one task in, one review
 
 The CLI is `factory`; `fy` is the alias used below.
 
-- **Claude Code** plans (Fable 5.1) and builds (Opus 5), each in its own Herdr pane. The
-  plan states the design in a few lines: what changes, responsibilities, interfaces.
+- **Claude Code** plans (Fable 5.1) and builds (Opus 5), each in its own Herdr pane, the
+  planner's prompt line purple and the builder's cyan. The plan states the design in a few
+  lines: what changes, responsibilities, interfaces.
 - **Codex** reviews (GPT 6 Astra, with web search) in a third pane. Models are defaults;
   three knobs change them.
 - **Reviews are dual.** The plan is checked by Codex and by the builder who has to
@@ -224,7 +225,6 @@ Checked by Factory on the branch, after the gate and before review:
 | `FACTORY_COPILOT_WAIT_S` | `900` per Copilot review |
 | `FACTORY_BD_PUSH` | `1`: push beads to their sync remote after tasks and adds |
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
-| `FACTORY_PLAN_THEME`, `FACTORY_BUILD_THEME` | unset: your Claude Code theme; set one, e.g. `dark-daltonized`, to tell the two Claude panes apart |
 
 `fy help` prints the current values.
 

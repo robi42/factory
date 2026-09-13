@@ -536,12 +536,10 @@ JSON
   planner_kept_hands_off planner # files under .factory/ are fine
 }
 
-@test "theme_args: nothing when unset, a --settings pair when set" {
-  run theme_args ""
-  [ -z "$output" ]
-  run theme_args dark-daltonized
-  [ "${lines[0]}" = "--settings" ]
-  [ "${lines[1]}" = '{"theme":"dark-daltonized"}' ]
+@test "set_color sends /color to the agent" {
+  herdr() { printf '%s\n' "$*" >"$TMP/herdr.log"; }
+  set_color plan purple
+  [[ $(cat "$TMP/herdr.log") == "agent prompt plan /color purple --wait"* ]]
 }
 
 @test "help and unknown command" {
