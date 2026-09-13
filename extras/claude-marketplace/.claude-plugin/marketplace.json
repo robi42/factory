@@ -1,0 +1,29 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "factory-extras",
+  "description": "Small Claude Code plugins that Factory users found missing from the official marketplace",
+  "owner": {
+    "name": "Robert Thurnher"
+  },
+  "plugins": [
+    {
+      "name": "metals-lsp",
+      "description": "Scala language server (Metals) for code intelligence",
+      "version": "1.0.0",
+      "source": "./plugins/metals-lsp",
+      "category": "development",
+      "strict": false,
+      "lspServers": {
+        "metals": {
+          "command": "metals",
+          "extensionToLanguage": {
+            ".scala": "scala",
+            ".sbt": "scala",
+            ".sc": "scala"
+          },
+          "startupTimeout": 180000
+        }
+      }
+    }
+  ]
+}

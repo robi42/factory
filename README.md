@@ -296,8 +296,10 @@ mise use -g 'npm:pyright' 'npm:typescript-language-server' 'npm:typescript' 'go:
 ```
 
 `jdtls` cannot start through a mise `java` shim; point `JAVA_HOME` at a real JDK in your
-login profile, e.g. `export JAVA_HOME="$(mise where java@21)"`. Codex has no language
-server support; the gate covers that side.
+login profile, e.g. `export JAVA_HOME="$(mise where java@21)"`. Scala has no official
+plugin; `extras/claude-marketplace` ships a `metals-lsp` one (`cs install metals`, then
+`claude plugin marketplace add <that dir>` and `claude plugin install metals-lsp@factory-extras`).
+Codex has no language server support; the gate covers that side.
 
 **GitHub for the Codex reviewer.** GitHub's remote MCP server, authenticated with a
 token in an environment variable (Herdr panes are non-login shells, so `.bashrc`):
