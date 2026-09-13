@@ -243,14 +243,14 @@ Checked by Factory on the branch, after the gate and before review:
 | `FACTORY_REVIEW_MODEL` | `gpt-6-astra` |
 | `FACTORY_ROUNDS` | `3` build / review rounds |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
-| `FACTORY_TURN_TIMEOUT_MS` | `3600000` per agent turn |
+| `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h) per agent turn |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
 | `FACTORY_REQUIRE_TESTS` | `1` |
 | `FACTORY_PLAN_APPROVAL` | `ask`; `auto` skips (`--auto`) |
 | `FACTORY_PR` | `0`; `1` opens a pull request (`--pr`) |
 | `FACTORY_COPILOT` | `1`; `0` skips the Copilot review loop (`--no-copilot`) |
 | `FACTORY_COPILOT_ROUNDS` | `3` |
-| `FACTORY_COPILOT_WAIT_S` | `900` per Copilot review |
+| `FACTORY_COPILOT_WAIT_S` | `900` (15 min) per Copilot review |
 | `FACTORY_BD_PUSH` | `1`: push beads to their sync remote after tasks and adds |
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
 
