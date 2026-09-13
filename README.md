@@ -224,6 +224,7 @@ Checked by Factory on the branch, after the gate and before review:
 | `FACTORY_COPILOT_WAIT_S` | `900` per Copilot review |
 | `FACTORY_BD_PUSH` | `1`: push beads to their sync remote after tasks and adds |
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
+| `FACTORY_PLAN_THEME`, `FACTORY_BUILD_THEME` | unset: your Claude Code theme; set one, e.g. `dark-daltonized`, to tell the two Claude panes apart |
 
 `fy help` prints the current values.
 

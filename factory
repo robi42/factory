@@ -22,6 +22,8 @@ FACTORY_VERSION=0.1.0
 : "${FACTORY_COPILOT_ROUNDS:=3}"
 : "${FACTORY_COPILOT_WAIT_S:=900}"
 : "${FACTORY_BD_PUSH:=1}"
+: "${FACTORY_PLAN_THEME:=}"
+: "${FACTORY_BUILD_THEME:=}"
 COPILOT_BOT='copilot-pull-request-reviewer[bot]'
 
 RUN_DIR=.factory/run
@@ -69,6 +71,8 @@ usage() {
   row "FACTORY_COPILOT=$FACTORY_COPILOT" '1: request a Copilot review on the PR and act on its comments'
   row "FACTORY_COPILOT_ROUNDS=$FACTORY_COPILOT_ROUNDS" 'Copilot review rounds before giving up'
   row "FACTORY_BD_PUSH=$FACTORY_BD_PUSH" '1: push beads to their sync remote after tasks and adds'
+  row "FACTORY_PLAN_THEME=${FACTORY_PLAN_THEME:-<yours>}" 'Claude Code theme for the planner pane, e.g. dark-daltonized'
+  row "FACTORY_BUILD_THEME=${FACTORY_BUILD_THEME:-<yours>}" 'Claude Code theme for the builder pane'
 }
 
 # ----------------------------------------------------------------- herdr ----
@@ -142,6 +146,13 @@ settle_dialogs() {
   status=$(agent_status "$name")
   case $status in idle | done) return 0 ;; esac
   die "$name: still $status after startup; look at its pane"
+}
+
+# theme_args theme: Claude Code arguments selecting a colour theme for one session, if any.
+# Themes: dark, light, dark-daltonized, light-daltonized, dark-ansi, light-ansi, custom:<name>.
+theme_args() {
+  [[ -n $1 ]] || return 0
+  printf -- '--settings\n{"theme":"%s"}\n' "$1"
 }
 
 # start_agent name kind pane [agent args...]
@@ -922,8 +933,11 @@ run_task() { # repo arg
   local plan="$TASK_ID-plan" build="$TASK_ID-build" review="$TASK_ID-review"
   local repo_root
   repo_root=$(git -C "$repo" rev-parse --show-toplevel)
-  start_agent "$plan" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
-  start_agent "$build" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
+  local plan_theme build_theme
+  mapfile -t plan_theme < <(theme_args "$FACTORY_PLAN_THEME")
+  mapfile -t build_theme < <(theme_args "$FACTORY_BUILD_THEME")
+  start_agent "$plan" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan "${plan_theme[@]}"
+  start_agent "$build" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build "${build_theme[@]}"
   start_agent "$review" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
     -c "projects.\"$repo_root\".trust_level=\"trusted\"" \
     -c "sandbox_workspace_write.writable_roots=[\"$repo_root/.beads\"]"

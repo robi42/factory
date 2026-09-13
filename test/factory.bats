@@ -536,6 +536,14 @@ JSON
   planner_kept_hands_off planner # files under .factory/ are fine
 }
 
+@test "theme_args: nothing when unset, a --settings pair when set" {
+  run theme_args ""
+  [ -z "$output" ]
+  run theme_args dark-daltonized
+  [ "${lines[0]}" = "--settings" ]
+  [ "${lines[1]}" = '{"theme":"dark-daltonized"}' ]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]
