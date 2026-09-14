@@ -186,8 +186,6 @@ again, up to `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit
 clean. Copilot never approves, it only comments, so "clean" is the finish line.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
 
-![The same layout with a pull request open: the builder is about to receive Copilot's comments, its status line showing the PR number, while the planner and the Codex reviewer write their reviews of the branch](assets/screenshot-pr.png)
-
 ### Run artifacts
 
 They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
