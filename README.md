@@ -87,7 +87,7 @@ Status: early. Built and used by one person on Arch Linux; expect rough edges el
    server is up, and log in to `claude`, `codex` and, for pull requests, `gh`.
 2. Clone and install the tools Factory manages:
    ```sh
-   git clone https://github.com/robi42/factory ~/Projects/factory
+   git clone https://github.com/robi42/factory ~/Projects/factory   # or wherever you keep repos
    cd ~/Projects/factory
    mise install                              # just, shfmt, shellcheck, bats, codespell, bd
    ln -s "$PWD/factory" ~/.local/bin/fy      # or any name you like
