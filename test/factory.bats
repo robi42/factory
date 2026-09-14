@@ -28,7 +28,7 @@ make_repo() {
   git -C "$REPO" checkout -qb work
 }
 
-# the globals approve_plan reads for its messages
+# the globals human_gate reads for its messages
 fake_task() {
   TASK_ID=toy-1
   TASK_TITLE=t
@@ -216,41 +216,41 @@ commit_all() {
   fake_task
   toast() { :; }
   printf 'the plan\n' >"$TMP/plan.md"
-  FACTORY_PLAN_APPROVAL=ask
-  approve_plan planner "$TMP/plan.md" <<<"a"
-  run approve_plan planner "$TMP/plan.md" <<<"b"
+  FACTORY_APPROVAL=ask
+  human_gate plan planner "$TMP" <<<"a"
+  run human_gate plan planner "$TMP" <<<"b"
   [ "$status" -eq 3 ]
-  FACTORY_PLAN_APPROVAL=auto
-  approve_plan planner "$TMP/plan.md" </dev/null
-  FACTORY_PLAN_APPROVAL=ask
+  FACTORY_APPROVAL=auto
+  human_gate plan planner "$TMP" </dev/null
+  FACTORY_APPROVAL=ask
   ask() { printf 'asked %s: %s\n' "$1" "$2"; }
-  run approve_plan planner "$TMP/plan.md" <<<$'r\nsplit the module\na'
+  run human_gate plan planner "$TMP" <<<$'r\nsplit the module\na'
   [ "$status" -eq 0 ]
   [[ $output == *"asked planner: The human reviewed"*"split the module"* ]]
 }
 
 @test "plan approval: files from factory approve / reject, no terminal" {
   fake_task
-  FACTORY_PLAN_APPROVAL=ask
+  FACTORY_APPROVAL=ask
   FACTORY_POLL_SECONDS=1
   toast() { :; }
   printf 'the plan\n' >"$TMP/plan.md"
   ask() {
     printf 'asked %s: %s\n' "$1" "$2"
-    : >"$TMP/plan.approved" # the human approves after the revision
+    : >"$TMP/approved" # the human approves after the revision
   }
   # the human's reject arrives while the factory is already waiting
   (
     sleep 2
-    printf 'too big, split it\n' >"$TMP/plan-reject.md"
+    printf 'too big, split it\n' >"$TMP/reject.md"
   ) &
-  run approve_plan planner "$TMP/plan.md" </dev/null
+  run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 0 ]
   [[ $output == *"no terminal"* ]]
   [[ $output == *"asked planner: "*"too big, split it"* ]]
   [[ $output == *"approved via file"* ]]
-  [ ! -e "$TMP/plan.approved" ]
+  [ ! -e "$TMP/approved" ]
 }
 
 @test "approve and reject subcommands find the task worktree" {
@@ -259,9 +259,9 @@ commit_all() {
   git -C "$REPO" worktree add -q -b factory/toy-9 "$TMP/wt-9"
   mkdir -p "$TMP/wt-9/.factory/run"
   cmd_approve "$REPO" toy-9
-  [ -e "$TMP/wt-9/.factory/run/plan.approved" ]
+  [ -e "$TMP/wt-9/.factory/run/approved" ]
   cmd_reject "$REPO" toy-9 "use argparse"
-  [ "$(cat "$TMP/wt-9/.factory/run/plan-reject.md")" = "use argparse" ]
+  [ "$(cat "$TMP/wt-9/.factory/run/reject.md")" = "use argparse" ]
   run cmd_approve "$REPO" toy-404
   [ "$status" -eq 1 ]
   [[ $output == *"no worktree"* ]]
@@ -359,13 +359,42 @@ IN
   mkdir -p "$TMP/wt-9/.factory/run"
   cmd_approve "$REPO" toy-9 --allow-protected
   [ -e "$TMP/wt-9/.factory/run/allow-protected" ]
-  [ -e "$TMP/wt-9/.factory/run/plan.approved" ]
+  [ -e "$TMP/wt-9/.factory/run/approved" ]
   fake_task
   toast() { :; }
   printf 'the plan\n' >"$TMP/plan.md"
-  FACTORY_PLAN_APPROVAL=ask
-  approve_plan planner "$TMP/plan.md" <<<"p"
+  FACTORY_APPROVAL=ask
+  human_gate plan planner "$TMP" <<<"p"
   [ -e "$TMP/allow-protected" ]
+}
+
+@test "build approval: a approves; r and the reject file hand the note back with 4" {
+  make_repo
+  printf 'echo more\n' >>"$REPO/run.sh"
+  commit_all change
+  fake_task
+  toast() { :; }
+  WT=$REPO BASE=main BRANCH=work
+  FACTORY_APPROVAL=ask
+  FACTORY_POLL_SECONDS=1
+  run human_gate build builder "$TMP" <<<"a"
+  [ "$status" -eq 0 ]
+  [[ $output == *"build for toy-1 on work"*"change"*"run.sh"* ]]
+  rc=0
+  human_gate build builder "$TMP" <<<$'r\nrename it' || rc=$?
+  [ "$rc" -eq 4 ]
+  [ "$HUMAN_NOTE" = "rename it" ]
+  (
+    sleep 2
+    printf 'use a table\n' >"$TMP/reject.md"
+  ) &
+  rc=0
+  human_gate build builder "$TMP" </dev/null || rc=$?
+  wait
+  [ "$rc" -eq 4 ]
+  [ "$HUMAN_NOTE" = "use a table" ]
+  run human_gate build builder "$TMP" <<<"b"
+  [ "$status" -eq 3 ]
 }
 
 @test "collect_answers: terminal lines until a dot, or answers.md from factory answer" {
@@ -403,10 +432,10 @@ IN
 
 @test "take_flags: --pr and --auto set knobs, the rest stay in order, unknown flags fail" {
   FACTORY_PR=0
-  FACTORY_PLAN_APPROVAL=ask
+  FACTORY_APPROVAL=ask
   take_flags --pr repo "a task" --auto
   [ "$FACTORY_PR" = 1 ]
-  [ "$FACTORY_PLAN_APPROVAL" = auto ]
+  [ "$FACTORY_APPROVAL" = auto ]
   [ "${#ARGS[@]}" -eq 2 ]
   [ "${ARGS[0]}" = repo ]
   [ "${ARGS[1]}" = "a task" ]

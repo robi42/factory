@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- A human gate on the build: once the gate, guardrails and both reviewers approve, Factory
+  shows the branch's commits and diff stat and waits for `a`, `r` with a note for one more
+  round, or `b`; `fy approve` and `fy reject` work there too.
+
+### Changed
+- `FACTORY_PLAN_APPROVAL` is now `FACTORY_APPROVAL`, since `--auto` skips both human gates.
+
 ## [0.1.2] - 2026-09-13
 
 ### Added

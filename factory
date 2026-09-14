@@ -15,7 +15,7 @@ FACTORY_VERSION=0.1.2
 : "${FACTORY_CLAUDE_PERMISSIONS:=auto}"
 : "${FACTORY_GUARDRAILS:=$FACTORY_HOME/guardrails.txt}"
 : "${FACTORY_REQUIRE_TESTS:=1}"
-: "${FACTORY_PLAN_APPROVAL:=ask}"
+: "${FACTORY_APPROVAL:=ask}"
 : "${FACTORY_POLL_SECONDS:=5}"
 : "${FACTORY_PR:=0}"
 : "${FACTORY_COPILOT:=1}"
@@ -49,13 +49,13 @@ usage() {
   row 'factory run     <repo> <bead-id | "task title">' 'plan, build, gate, review one task'
   row 'factory next    <repo>' 'claim the next ready bead and run it'
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
-  row '  flags: --pr, --auto, --no-copilot, --fresh' 'open a PR; skip plan approval; no Copilot review; do not resume'
+  row '  flags: --pr, --auto, --no-copilot, --fresh' 'open a PR; skip the human gates; no Copilot review; do not resume'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory tasks   <repo> [--all]' 'list open tasks (beads); --all includes closed'
   row 'factory sync    <repo>' 'pull, then push the beads database to its git remote'
   row 'factory init    <repo> [bd init args...]' 'lean bd init, detect the gate, AGENTS.md stub'
-  row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve a waiting plan from any terminal'
-  row 'factory reject  <repo> <bead-id> "note"' 'send the planner a note; the plan comes back revised'
+  row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the waiting plan or build from any terminal'
+  row 'factory reject  <repo> <bead-id> "note"' 'send a note back; the plan or build comes back revised'
   row 'factory answer  <repo> <bead-id> ["answers" | -]' 'answer the planner'"'"'s questions from any terminal'
   row 'factory pr      <repo> <bead-id>' 'push an existing task branch and open a pull request'
   row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
@@ -71,7 +71,7 @@ usage() {
   row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'max wait for one agent turn'
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
   row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" 'code changes must touch a test file'
-  row "FACTORY_PLAN_APPROVAL=$FACTORY_PLAN_APPROVAL" 'ask: you approve each plan; auto: skip'
+  row "FACTORY_APPROVAL=$FACTORY_APPROVAL" 'ask: you approve each plan and build; auto: skip'
   row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request'
   row "FACTORY_COPILOT=$FACTORY_COPILOT" '1: request a Copilot review on the PR and act on its comments'
   row "FACTORY_COPILOT_ROUNDS=$FACTORY_COPILOT_ROUNDS" 'Copilot review rounds before giving up'
@@ -891,38 +891,44 @@ Now write $RUN_DIR/plan.md as described before and reply with just PLAN READY. I
 P
 }
 
-human_note_prompt() { # note
+plan_note_prompt() { # note
   cat <<P
 The human reviewed $RUN_DIR/plan.md and says: $1
 Update the plan accordingly and reply with just PLAN READY.
 P
 }
 
-# approve_plan planner-agent plan-file: wait for the human. Answer in this terminal,
-# or from anywhere with `factory approve` / `factory reject`, which write files next to
-# the plan. Returns 0 on approval, 3 on abort.
-approve_plan() {
-  local plan_agent=$1 file=$2 dir answer note stdin_open=1 rc
-  dir=$(dirname "$file")
-  [[ $FACTORY_PLAN_APPROVAL == ask ]] || return 0
-  rm -f "$dir/plan.approved" "$dir/plan-reject.md"
+build_note_prompt() { # note
+  cat <<P
+The human reviewed the implementation on this branch and says: $1
+Address it. The gate must pass: $GATE
+Commit. Reply with just DONE.
+P
+}
+
+# human_gate plan|build agent dir: show the plan, or the branch's commits and diff stat,
+# and wait for the human: an answer in this terminal, or the files `factory approve` and
+# `factory reject` write into dir. A plan note goes to the planner and the plan is shown
+# again; a build note is left in HUMAN_NOTE and 4 is returned for another round. 3 aborts.
+human_gate() {
+  local kind=$1 agent=$2 dir=$3 answer note stdin_open=1 rc
+  [[ $FACTORY_APPROVAL == ask ]] || return 0
+  rm -f "$dir/approved" "$dir/reject.md"
   while :; do
-    toast "$TASK_ID plan ready" "$TASK_TITLE. Approve it in the Factory terminal or with: factory approve" request
-    printf '\n\033[34m[factory]\033[0m plan for %s (%s):\n\n' "$TASK_ID" "$file" >&2
-    sed 's/^/    /' "$file" >&2
-    printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' >&2
+    toast "$TASK_ID $kind ready" "$TASK_TITLE. Approve it in the Factory terminal or with: factory approve" request
+    show_for_approval "$kind" "$dir"
     answer=""
     while :; do
-      if [[ -s $dir/plan-reject.md ]]; then
-        note=$(<"$dir/plan-reject.md")
-        rm -f "$dir/plan-reject.md"
+      if [[ -s $dir/reject.md ]]; then
+        note=$(<"$dir/reject.md")
+        rm -f "$dir/reject.md"
         printf '\n' >&2
-        log "reject note received, sending it to the planner"
-        ask "$plan_agent" "$(human_note_prompt "$note")"
+        log "note received via file"
+        take_note "$kind" "$agent" "$note" || return $?
         continue 2
       fi
-      if [[ -e $dir/plan.approved ]]; then
-        rm -f "$dir/plan.approved"
+      if [[ -e $dir/approved ]]; then
+        rm -f "$dir/approved"
         printf '\n' >&2
         log "approved via file"
         return 0
@@ -943,19 +949,50 @@ approve_plan() {
     case $answer in
       a | A | y | Y) return 0 ;;
       p | P)
+        [[ $kind == plan ]] || continue
         : >"$dir/allow-protected"
         log "protected-path check waived for this task"
         return 0
         ;;
       r | R)
-        printf '\033[34m[factory]\033[0m note for the planner: ' >&2
+        printf '\033[34m[factory]\033[0m note for the %s: ' "$(role_of "$kind")" >&2
         read -r note || return 3
         [[ -n $note ]] || continue
-        ask "$plan_agent" "$(human_note_prompt "$note")"
+        take_note "$kind" "$agent" "$note" || return $?
         ;;
       b | B | n | N) return 3 ;;
     esac
   done
+}
+
+role_of() { case $1 in plan) printf planner ;; *) printf builder ;; esac }
+
+# take_note kind agent note: a plan note goes straight to the planner; a build note ends
+# the gate with 4 so the caller runs another round
+take_note() {
+  case $1 in
+    plan) ask "$2" "$(plan_note_prompt "$3")" ;;
+    build)
+      HUMAN_NOTE=$3
+      return 4
+      ;;
+  esac
+}
+
+show_for_approval() { # kind dir
+  printf '\n\033[34m[factory]\033[0m ' >&2
+  if [[ $1 == plan ]]; then
+    printf 'plan for %s (%s):\n\n' "$TASK_ID" "$2/plan.md" >&2
+    sed 's/^/    /' "$2/plan.md" >&2
+    printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' >&2
+  else
+    printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2
+    {
+      git -C "$WT" log --oneline "$BASE..HEAD"
+      git -C "$WT" diff --stat "$BASE..HEAD"
+    } 2>/dev/null | sed 's/^/    /' >&2 || warn "could not show the branch"
+    printf '\n\033[34m[factory]\033[0m [a]pprove (look at the worktree or talk to the builder first if you like), [r]evise with a note, a[b]ort? (a/r/b) ' >&2
+  fi
 }
 
 # collect_answers questions-file: show the planner's questions and wait for the human.
@@ -1206,15 +1243,16 @@ plan_phase() {
     ask "$PLAN_AGENT" "$(plan_fix_prompt)"
     planner_kept_hands_off "$PLAN_AGENT"
   fi
-  approve_plan "$PLAN_AGENT" "$WT/$RUN_DIR/plan.md" || stop_task "$1" "plan approval"
+  human_gate plan "$PLAN_AGENT" "$WT/$RUN_DIR" || stop_task "$1" "plan approval"
   mark planned
 }
 
-# build_phase: build, then gate, guardrails and dual review per round. Sets ROUND VERDICT GATE_LOG.
-build_phase() { # [resume]
-  local violations
+# build_phase repo [resume]: build, then gate, guardrails, dual review and the human's
+# approval per round. Sets ROUND VERDICT GATE_LOG.
+build_phase() {
+  local repo=$1 violations rc
   log "building"
-  if [[ ${1:-} == resume ]]; then
+  if [[ ${2:-} == resume ]]; then
     ask "$BUILD_AGENT" "$(build_prompt) Part of it may already be implemented or committed on this branch from an earlier run; check the branch and continue from there."
   else
     ask "$BUILD_AGENT" "$(build_prompt)"
@@ -1240,9 +1278,23 @@ build_phase() { # [resume]
     VERDICT=$(verdicts "$WT/$RUN_DIR/review-$ROUND.md" "$WT/$RUN_DIR/review-$ROUND-plan.md")
     log "verdicts: $VERDICT"
     if [[ $VERDICT == "APPROVE APPROVE" ]]; then
-      VERDICT=APPROVE
-      mark built "$ROUND"
-      return 0
+      rc=0
+      human_gate build "$BUILD_AGENT" "$WT/$RUN_DIR" || rc=$?
+      case $rc in
+        0)
+          VERDICT=APPROVE
+          mark built "$ROUND"
+          return 0
+          ;;
+        4)
+          VERDICT=REVISE
+          log "note for the builder; another round"
+          ask "$BUILD_AGENT" "$(build_note_prompt "$HUMAN_NOTE")"
+          ROUND=$((ROUND + 1))
+          continue
+          ;;
+        *) stop_task "$repo" "build approval" ;;
+      esac
     fi
     VERDICT=REVISE
     ask "$BUILD_AGENT" "$(revise_prompt "$ROUND")"
@@ -1311,13 +1363,13 @@ run_task() { # repo arg
       ;;
     planned)
       STEP=building
-      build_phase resume
+      build_phase "$repo" resume
       ;;
     *)
       STEP=planning
       plan_phase "$repo"
       STEP=building
-      build_phase
+      build_phase "$repo"
       ;;
   esac
   STEP=finishing
@@ -1521,15 +1573,15 @@ cmd_approve() { # repo bead-id [--allow-protected]
     : >"$dir/allow-protected"
     log "protected-path check waived for $2"
   fi
-  : >"$dir/plan.approved"
-  log "approved plan for $2"
+  : >"$dir/approved"
+  log "approved $2"
 }
 
 cmd_reject() { # repo bead-id note
   local dir
   dir=$(task_run_dir "$1" "$2") || return 1
-  printf '%s\n' "$3" >"$dir/plan-reject.md"
-  log "sent your note to the planner of $2"
+  printf '%s\n' "$3" >"$dir/reject.md"
+  log "sent your note to $2"
 }
 
 cmd_answer() { # repo bead-id [text | -]
@@ -1645,7 +1697,7 @@ take_flags() {
     case $a in
       --pr) FACTORY_PR=1 ;;
       --no-copilot) FACTORY_COPILOT=0 ;;
-      --auto) FACTORY_PLAN_APPROVAL=auto ;;
+      --auto) FACTORY_APPROVAL=auto ;;
       --fresh) FACTORY_FRESH=1 ;;
       --*) die "unknown flag: $a" ;;
       *) ARGS+=("$a") ;;

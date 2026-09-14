@@ -44,7 +44,9 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
 5. **Gate and guardrails.** Factory runs the gate itself and checks the branch.
 6. **Code review.** Codex and the planner each review the diff. Anything but two approvals
    sends it back to step 4, up to `FACTORY_ROUNDS` times.
-7. **Done.** Memories stored, bead closed, toast sent. With `--pr` the branch is rebased
+7. **Your approval.** Look at the branch; approve, send a note back for one more round, or
+   abort.
+8. **Done.** Memories stored, bead closed, toast sent. With `--pr` the branch is rebased
    onto the base (the builder resolves conflicts), pushed, a pull request opened, and a
    GitHub Copilot review requested and acted on until it is clean. Merging stays yours;
    `fy clean` tidies up afterwards.
@@ -116,7 +118,7 @@ fy tasks   ~/src/app                         # list open tasks; --all includes c
 fy next    ~/src/app                         # claim the next ready bead and run it
 fy run     ~/src/app "Fix flaky login test"  # a one-off, also filed as a bead
 fy queue   ~/src/app                         # work through everything that is ready
-fy next    --pr --auto ~/src/app             # open a PR when approved; skip plan approval
+fy next    --pr --auto ~/src/app             # open a PR when approved; skip the human gates
 fy run     --fresh ~/src/app app-k3x         # rerun from scratch instead of resuming
 
 # while a run waits for you (from any terminal)
@@ -138,7 +140,7 @@ fy status                                    # live Factory agents in Herdr
 Run several tasks at once by starting `fy next` (or `fy run`) in separate terminals or
 Herdr panes. Each task has its own worktree, workspace and agents; `fy next` claims its
 bead atomically, so two starts never pick the same one. `fy queue` itself is sequential
-on purpose: one plan approval prompt per terminal is enough. Watch for two things when
+on purpose: one approval prompt at a time per terminal is enough. Watch for two things when
 running in parallel: heavy gates compete for CPU, and branches that touch the same files
 get rebased when their pull request is opened, conflicts going to the builder, so the
 second one pays for the overlap.
@@ -154,8 +156,14 @@ three rounds, then the plan comes.
 `fy approve` (with `--allow-protected` for the `p` case) and `fy reject "note"`. A note
 goes to the planner, the plan comes back revised, and you are asked again. You can also
 edit `plan.md` or talk to the planner in its pane first; the builder reads the file.
-`--auto` skips the step for unattended queues. If the run has no terminal it simply waits
-for the files.
+`--auto` skips both approvals for unattended queues. If the run has no terminal it simply
+waits for the files.
+
+**Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
+the branch's commits and diff stat and waits the same way: `a` approve, `r` revise with a
+note, `b` abort, or `fy approve` and `fy reject "note"` from anywhere. A note goes to the
+builder and costs one more round of gate, guardrails and reviews before you are asked
+again. Look at the worktree or talk to the builder in its pane first if you like.
 
 **Merge.** On approval the bead is closed and you get a toast; the branch, named
 `factory/<bead-id>-<title-slug>` and checked out under Herdr's worktree directory as
@@ -279,7 +287,7 @@ after the gate passes and before review:
 | `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h) per agent turn |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
 | `FACTORY_REQUIRE_TESTS` | `1`: code changes must also touch a test file |
-| `FACTORY_PLAN_APPROVAL` | `ask`; `auto` skips (`--auto`) |
+| `FACTORY_APPROVAL` | `ask`; `auto` skips both human gates (`--auto`) |
 | `FACTORY_PR` | `0`; `1` opens a pull request (`--pr`) |
 | `FACTORY_COPILOT` | `1`; `0` skips the Copilot review loop (`--no-copilot`) |
 | `FACTORY_COPILOT_ROUNDS` | `3` Copilot review rounds |
@@ -390,8 +398,8 @@ a year ago assumed. So Factory bets on a few things:
 - **Your own tools over a toolbox.** The agents are plain `claude` and `codex` sessions;
   every skill, MCP server and hook you already use applies. Factory itself installs
   nothing.
-- **Humans at the two points that matter.** Approving the plan, and merging. Everything
-  in between runs on its own, and every stop becomes a toast.
+- **Humans at the points that matter.** Approving the plan, approving the build, and
+  merging. Everything in between runs on its own, and every stop becomes a toast.
 - **State in the repo's orbit.** Tasks and memories live in Beads beside the code and
   travel with the Git remote; run artifacts live in the worktree and disappear with it.
 
