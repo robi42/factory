@@ -26,7 +26,7 @@ The CLI is `factory`; `fy` is the alias used below.
 - **You stay in the loop** where it counts: the planner may ask you questions, you
   approve every plan, and you merge.
 
-![A Herdr workspace during the dual code review: the builder (Opus 5, left, cyan prompt line) shows its diff and is about to get GitHub Copilot's pull request comments; the planner (Fable 5.1, top right) and the Codex reviewer (GPT 6 Astra, bottom right) are each writing their review of the branch](assets/screenshot.png)
+![A Herdr workspace during the dual code review: the builder (Opus 5, left, cyan prompt line) has finished and shows its diff; the planner (Fable 5.1, top right) has checked the branch against its plan, Factory's prompt with the verdict-line contract visible above its answer; the Codex reviewer (GPT 6 Astra, bottom right) has written its review](assets/screenshot.png)
 
 Every task gets its own Git worktree and Herdr workspace, so you can watch or step in.
 The agents are your normal `claude` and `codex` sessions, so your skills, MCP servers,
@@ -185,6 +185,8 @@ gates, pushes, posts one summary comment and resolves the threads it addressed, 
 again, up to `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit is
 clean. Copilot never approves, it only comments, so "clean" is the finish line.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
+
+![The same layout with a pull request open: the builder is about to receive Copilot's comments, its status line showing the PR number, while the planner and the Codex reviewer write their reviews of the branch](assets/screenshot-pr.png)
 
 ### Run artifacts
 
