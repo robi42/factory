@@ -213,7 +213,7 @@ log exists for the approved round.
 Everything language-specific, and everything you would otherwise have to say in prose:
 
 - **Tests**, with a coverage threshold if you want coverage enforced. Factory does not
-  check coverage itself; a `--fail-under` in the gate does.
+  check coverage itself; for instance, a `--fail-under` in the gate does.
 - **Formatting and lint** as errors, not warnings, so a run cannot go green on a nit.
 - **Type checks and static analysis**, including security scanners.
 - **Custom rules** for the shortcuts you have seen agents take in this codebase:
