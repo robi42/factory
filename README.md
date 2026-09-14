@@ -93,8 +93,11 @@ Status: early. Built and used by one person on Arch Linux; expect rough edges el
    ln -s "$PWD/factory" ~/.local/bin/fy      # or any name you like
    ```
 3. Make `bd` resolve from a fresh login shell, because Claude Code runs its commands from
-   one: `mise use -g 'ubi:steveyegge/beads[exe=bd]@1.2.2'`. Anything your gate needs
-   (`just`, language toolchains) has the same requirement.
+   one:
+   ```sh
+   mise use -g 'ubi:steveyegge/beads[exe=bd]@1.2.2'
+   ```
+   Anything your gate needs (`just`, language toolchains) has the same requirement.
 4. Check: `fy doctor`. It reports each prerequisite, whether the Herdr server answers, and
    whether `bd` resolves from a login shell; fix what it marks MISSING and run it again.
 
