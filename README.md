@@ -26,7 +26,7 @@ The CLI is `factory`; `fy` is the alias used below.
 - **You stay in the loop** where it counts: the planner may ask you questions, you
   approve every plan, and you merge.
 
-![A Herdr workspace during the dual plan review: the planner (Fable 5.1, top right) has written the plan, its prompt carrying the repo's Beads memories; the builder (Opus 5, left, cyan prompt line) and the Codex reviewer (GPT 6 Astra, bottom right) are each writing their review of it](assets/screenshot.png)
+![A Herdr workspace during the dual code review: the builder (Opus 5, left, cyan prompt line) shows its diff and is about to get GitHub Copilot's pull request comments; the planner (Fable 5.1, top right) and the Codex reviewer (GPT 6 Astra, bottom right) are each writing their review of the branch](assets/screenshot.png)
 
 Every task gets its own Git worktree and Herdr workspace, so you can watch or step in.
 The agents are your normal `claude` and `codex` sessions, so your skills, MCP servers,
