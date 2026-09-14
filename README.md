@@ -377,7 +377,8 @@ a year ago assumed. So Factory bets on a few things:
   different mistakes, at the cost of one extra turn. Beyond two, returns diminish and
   dialogs multiply.
 - **Your own tools over a toolbox.** The agents are plain `claude` and `codex` sessions;
-  every skill, MCP server and hook you already use applies. Factory itself installs nothing.
+  every skill, MCP server and hook you already use applies. Factory itself installs
+  nothing.
 - **Humans at the two points that matter.** Approving the plan, and merging. Everything
   in between runs on its own, and every stop becomes a toast.
 - **State in the repo's orbit.** Tasks and memories live in Beads beside the code and
