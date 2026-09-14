@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-14
+
 ### Added
 - A human gate on the build: once the gate, guardrails and both reviewers approve, Factory
   shows the branch's commits and diff stat and waits for `a`, `r` with a note for one more
@@ -75,7 +77,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/robi42/factory/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/robi42/factory/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/robi42/factory/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/robi42/factory/releases/tag/v0.1.0
