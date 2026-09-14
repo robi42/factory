@@ -68,7 +68,7 @@ usage() {
   row "FACTORY_REVIEW_MODEL=$FACTORY_REVIEW_MODEL" 'reviewer (Codex)'
   row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up'
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
-  row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'max wait for one agent turn'
+  row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'a stalled turn fails after this; a working one toasts you and goes on'
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
   row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" 'code changes must touch a test file'
   row "FACTORY_APPROVAL=$FACTORY_APPROVAL" 'ask: you approve each plan and build; auto: skip'
@@ -106,7 +106,7 @@ agent_status() { h agent get "$1" | jq -r '.result.agent.agent_status'; }
 # Waits in one-minute chunks: every chunk re-checks the screen for a known dialog, every
 # five minutes prints a heartbeat, so a long gate run is visibly a wait and not a hang.
 wait_for() {
-  local name=$1 timeout=$2 out code status waited=0 chunk=60000
+  local name=$1 timeout=$2 out code status waited=0 chunk=60000 nagged=0
   shift 2
   local args=()
   local s
@@ -119,8 +119,15 @@ wait_for() {
     code=$(herr_code "$out")
     [[ $code == timeout ]] || die "$name: waiting for ${*}: $(herr_msg "$out")"
     waited=$((waited + chunk))
-    ((waited < timeout)) || die "$name: no ${*} within $((timeout / 60000)) min; look at its pane"
     status=$(agent_status "$name")
+    if ((waited >= timeout)); then
+      # a turn that is visibly working is a long build, not a stall: tell the human once and keep waiting
+      [[ $status == working ]] || die "$name: no ${*} within $((timeout / 60000)) min and it is $status; look at its pane"
+      if ((! nagged)); then
+        nagged=1
+        attention "$name" "is still working after $((timeout / 60000)) min; fine for a long build, Ctrl-C the run if it is stuck"
+      fi
+    fi
     [[ $status == idle || $status == "done" ]] || settle_dialogs "$name" quiet
     ((waited % 300000 == 0)) && log "still waiting on $name ($status, $((waited / 60000)) min)"
   done

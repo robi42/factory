@@ -71,6 +71,8 @@ Known startup dialogs (trust prompts, Codex's hook review and transcript overlay
 cleared from the screen automatically, and a pane whose shell swallowed the startup command
 gets a Ctrl-C and a retry; a block it does not recognise becomes a toast, and long waits
 print a heartbeat every five minutes so a thirty-minute gate is visibly a wait, not a hang.
+An agent still working when `FACTORY_TURN_TIMEOUT_MS` runs out gets you a toast and more
+time; only a turn that has stopped working by then fails the run.
 
 ## Requirements
 
@@ -284,7 +286,7 @@ after the gate passes and before review:
 | `FACTORY_REVIEW_MODEL` | `gpt-6-astra` |
 | `FACTORY_ROUNDS` | `3` build / review rounds |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
-| `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h) per agent turn |
+| `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h); a stalled turn fails then, a working one toasts you and goes on |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
 | `FACTORY_REQUIRE_TESTS` | `1`: code changes must also touch a test file |
 | `FACTORY_APPROVAL` | `ask`; `auto` skips both human gates (`--auto`) |

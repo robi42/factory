@@ -608,18 +608,27 @@ JSON
         fi
         printf '{"result":{"agent":{"agent_status":"idle"}}}'
         ;;
-      "agent get"*) printf '{"result":{"agent":{"agent_status":"working"}}}' ;;
+      "agent get"*) printf '{"result":{"agent":{"agent_status":"%s"}}}' "$(cat "$TMP/state")" ;;
       "agent read"*) printf '' ;;
     esac
   }
+  printf working >"$TMP/state"
   run wait_for planner 3600000 idle "done"
   [ "$status" -eq 0 ]
   [[ $output == *"still waiting on planner (working, 5 min)"* ]]
   [[ ${lines[-1]} == idle ]]
+  # past the timeout but still working: one toast, then it keeps waiting
   : >"$TMP/waits"
   run wait_for planner 120000 idle "done"
+  [ "$status" -eq 0 ]
+  [[ $output == *"planner is still working after 2 min"* ]]
+  [[ ${lines[-1]} == idle ]]
+  # past the timeout and not working: that is a stall
+  : >"$TMP/waits"
+  printf unknown >"$TMP/state"
+  run wait_for planner 120000 idle "done"
   [ "$status" -eq 1 ]
-  [[ $output == *"no idle done within 2 min"* ]]
+  [[ $output == *"no idle done within 2 min and it is unknown"* ]]
 }
 
 @test "live_agents counts the named agents alive in a workspace" {

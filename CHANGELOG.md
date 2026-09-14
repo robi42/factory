@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The turn timeout no longer kills a run whose agent is still working, as on a long
+  build; it toasts you once and keeps waiting. Only a turn that is not working when the
+  timeout runs out fails the run.
+
 ## [0.1.3] - 2026-09-14
 
 ### Added
