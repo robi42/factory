@@ -335,11 +335,11 @@ plugin, so `extras/claude-marketplace` in this repo ships `metals-lsp`: install 
 Codex has no language server support; the gate covers that side.
 
 **A code graph for large codebases.** [CodeGraph](https://github.com/colbymchenry/codegraph)
-indexes a checkout into a local symbol graph that all three agents query through one MCP tool,
-which saves many file-by-file reads on big repos; on small ones the language servers above
-already cover it. `codegraph install` wires it into both CLIs. Its index is per checkout
-and is not built on its own, so give each Factory worktree one, for instance from a
-Claude Code `SessionStart` hook or the first line of your gate:
+indexes a checkout into a local symbol graph that all three agents query through one MCP
+tool, which saves many file-by-file reads on big repos; on small ones the language servers
+above already cover it. `codegraph install` wires it into both CLIs. Its index is per
+checkout and is not built on its own, so give each Factory worktree one, for instance from
+a Claude Code `SessionStart` hook or the first line of your gate:
 
 ```sh
 [ -d .codegraph ] || codegraph init
