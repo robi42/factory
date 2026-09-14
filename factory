@@ -1510,7 +1510,7 @@ cmd_add() {
     TASK_TITLE=$1
     TASK_DESC=${2:-}
   fi
-  bd -C "$repo" create "$TASK_TITLE" -d "$TASK_DESC"
+  bd -C "$repo" create "$TASK_TITLE" -d "$TASK_DESC" -q # -q drops bd's tip about its own agent integration
   bd_push "$repo"
 }
 
