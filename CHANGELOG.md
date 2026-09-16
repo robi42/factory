@@ -19,6 +19,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   copy, whichever it forked from later.
 - A guard failure after a rebase or a Copilot round now prints the violations instead of
   only saying that the guardrails failed.
+- Copilot comments were matched on the commit GitHub currently attaches them to, which
+  moves along with the branch head while the commented line survives. So a comment the
+  builder had answered without changing the line was handed to it again in the next round,
+  and its thread was never resolved after the push. Comments are now matched on the commit
+  they were made on.
+- The script exits right after its main function, so a `factory` file rewritten in place
+  during a run (an editor, a repo update) can no longer make Bash execute a stray line from
+  the changed file once the run is done.
 
 ### Changed
 - The turn timeout no longer kills a run whose agent is still working, as on a long

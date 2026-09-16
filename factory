@@ -690,10 +690,12 @@ copilot_wait() { # pr-number sha
   done
 }
 
-# copilot_format: turn the REST comments JSON on stdin into "path:line: body" lines for one commit.
+# copilot_format sha: the REST comments JSON on stdin as "path:line: body" lines, for Copilot's
+# comments made on that commit. GitHub moves commit_id along with the head while a commented
+# line survives; original_commit_id stays.
 copilot_format() { # sha
   jq -r --arg sha "$1" \
-    '.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .commit_id == $sha) | "\(.path):\(.line // .original_line // "?"): \(.body | gsub("\r"; "") | gsub("\n"; "\n    "))"'
+    '.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .original_commit_id == $sha) | "\(.path):\(.line // .original_line // "?"): \(.body | gsub("\r"; "") | gsub("\n"; "\n    "))"'
 }
 
 # copilot_verdict_of: first line of Copilot's review body for one commit, from reviews JSON on stdin.
@@ -744,7 +746,7 @@ copilot_resolve() {
 query($owner: String!, $repo: String!, $pr: Int!) {
   repository(owner: $owner, name: $repo) { pullRequest(number: $pr) {
     reviewThreads(first: 100) { nodes { id isResolved
-      comments(first: 1) { nodes { author { login } commit { oid } } } } } } } }
+      comments(first: 1) { nodes { author { login } originalCommit { oid } } } } } } } }
 Q
   )
   mutation=$(
@@ -755,7 +757,7 @@ Q
   ids=$(cd "$WT" && gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr="$1" -f query="$query" \
     --jq ".data.repository.pullRequest.reviewThreads.nodes[]
       | select(.isResolved | not)
-      | select((.comments.nodes[0].author.login // \"\" | ascii_downcase | startswith(\"copilot\")) and .comments.nodes[0].commit.oid == \"$2\")
+      | select((.comments.nodes[0].author.login // \"\" | ascii_downcase | startswith(\"copilot\")) and .comments.nodes[0].originalCommit.oid == \"$2\")
       | .id") || {
     warn "could not list review threads"
     return 0
@@ -1836,4 +1838,5 @@ main() {
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
   main "$@"
+  exit # never read on past this: a run takes hours, and the file on disk may have changed
 fi

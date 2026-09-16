@@ -478,10 +478,10 @@ IN
 @test "copilot_format picks the bot's comments for one commit as file:line: body" {
   run copilot_format abc123 <<'JSON'
 [
-  {"user":{"login":"Copilot"},"commit_id":"abc123","path":"hello.py","line":7,"body":"Use f-strings\r\nhere."},
-  {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"old111","path":"hello.py","line":1,"body":"stale"},
-  {"user":{"login":"human"},"commit_id":"abc123","path":"hello.py","line":2,"body":"human"},
-  {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","path":"test_hello.py","line":null,"original_line":9,"body":"Missing case"}
+  {"user":{"login":"Copilot"},"commit_id":"abc123","original_commit_id":"abc123","path":"hello.py","line":7,"body":"Use f-strings\r\nhere."},
+  {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","original_commit_id":"old111","path":"hello.py","line":1,"body":"carried along from an earlier review"},
+  {"user":{"login":"human"},"commit_id":"abc123","original_commit_id":"abc123","path":"hello.py","line":2,"body":"human"},
+  {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","original_commit_id":"abc123","path":"test_hello.py","line":null,"original_line":9,"body":"Missing case"}
 ]
 JSON
   [ "$status" -eq 0 ]
