@@ -10,6 +10,16 @@ versions follow [Semantic Versioning](https://semver.org/).
   line. Parsed, never sourced; the environment and flags still win; the file is protected
   from the agents like the gate.
 
+### Fixed
+- The guardrails and the diffs shown to reviewers measured the branch against the local
+  base branch even after the pull request rebase had put it on origin's, so a stale local
+  `main` blamed the branch for what the upstream had added (a protected workflow file, in
+  practice): the run died right after the rebase, or a Copilot round stopped before pushing
+  the builder's fix. The branch is now measured against the local base branch or origin's
+  copy, whichever it forked from later.
+- A guard failure after a rebase or a Copilot round now prints the violations instead of
+  only saying that the guardrails failed.
+
 ### Changed
 - The turn timeout no longer kills a run whose agent is still working, as on a long
   build; it toasts you once and keeps waiting. Only a turn that is not working when the

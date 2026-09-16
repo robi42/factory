@@ -572,6 +572,21 @@ rebase_onto_base() {
   return 10
 }
 
+# base_ref: the rev the branch is measured against: the local base branch or origin's copy,
+# whichever the branch forked from later. Origin's after the pull request rebase, also once
+# origin has moved on again (a stale local base would blame the branch for what the upstream
+# added); the local one while it carries commits origin does not, or without an origin.
+base_ref() {
+  local origin="origin/$BASE" lo ro
+  if lo=$(git -C "$WT" merge-base "$BASE" HEAD 2>/dev/null) \
+    && ro=$(git -C "$WT" merge-base "$origin" HEAD 2>/dev/null) \
+    && git -C "$WT" merge-base --is-ancestor "$lo" "$ro"; then
+    printf '%s' "$origin"
+  else
+    printf '%s' "$BASE"
+  fi
+}
+
 # gate_then_guards builder-agent label: gate with one fix round, then guardrails. 1 on failure.
 gate_then_guards() {
   local agent=$1 gate_log="$WT/$RUN_DIR/gate-$2.log"
@@ -579,10 +594,12 @@ gate_then_guards() {
     ask "$agent" "$(gate_fix_prompt "$gate_log")"
     run_gate "$WT" "$GATE" "$gate_log" || return 1
   fi
-  guard_check "$WT" "$BASE" >/dev/null || {
-    warn "guardrails failed after $2"
+  local violations
+  if ! violations=$(guard_check "$WT" "$(base_ref)"); then
+    warn "guardrails failed after $2:"
+    printf '%s\n' "$violations" >&2
     return 1
-  }
+  fi
 }
 
 # regate builder-agent label: after a rebase, gate and guards must hold again.
@@ -859,7 +876,7 @@ P
 review_prompt() { # round
   cat <<P
 Review task $TASK_ID: $TASK_TITLE
-The plan is in $RUN_DIR/plan.md. The changes: git diff $BASE...HEAD
+The plan is in $RUN_DIR/plan.md. The changes: git diff $(base_ref)...HEAD
 Look for bugs, missed requirements, shortcuts (skipped tests, suppressed warnings, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.
 Write the review to $RUN_DIR/review-$1.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
 Reply with just DONE once the file is written.
@@ -997,8 +1014,8 @@ show_for_approval() { # kind dir
   else
     printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2
     {
-      git -C "$WT" log --oneline "$BASE..HEAD"
-      git -C "$WT" diff --stat "$BASE..HEAD"
+      git -C "$WT" log --oneline "$(base_ref)..HEAD"
+      git -C "$WT" diff --stat "$(base_ref)...HEAD"
     } 2>/dev/null | sed 's/^/    /' >&2 || warn "could not show the branch"
     printf '\n\033[34m[factory]\033[0m [a]pprove (look at the worktree or talk to the builder first if you like), [r]evise with a note, a[b]ort? (a/r/b) ' >&2
   fi
@@ -1086,7 +1103,7 @@ P
 
 plan_check_prompt() { # round
   cat <<P
-The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $BASE...HEAD
+The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(base_ref)...HEAD
 Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.
 Write your notes to $RUN_DIR/review-$1-plan.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
 Reply with just DONE once the file is written.
@@ -1275,7 +1292,7 @@ build_phase() {
       ROUND=$((ROUND + 1))
       continue
     fi
-    if ! violations=$(guard_check "$WT" "$BASE"); then
+    if ! violations=$(guard_check "$WT" "$(base_ref)"); then
       warn "guardrails: $violations"
       ask "$BUILD_AGENT" "$(guard_fix_prompt "$violations")"
       ROUND=$((ROUND + 1))
@@ -1316,7 +1333,7 @@ finish_task() {
   local repo=$1 pr="" next="merge $BRANCH" copilot=""
   local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}"
   ask "$BUILD_AGENT" "$(memory_prompt)"
-  if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_check "$WT" "$BASE" >/dev/null; then
+  if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_check "$WT" "$(base_ref)" >/dev/null; then
     bd -C "$repo" comment "$TASK_ID" "Factory: needs a human. $summary" >/dev/null
     toast "$TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
     warn "not approved after $FACTORY_ROUNDS rounds: $summary"

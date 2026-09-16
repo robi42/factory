@@ -34,6 +34,13 @@ fake_task() {
   TASK_TITLE=t
 }
 
+# the branch globals the gates and guards read, as task_context sets them
+on_work_branch() {
+  WT=$REPO
+  BASE=main
+  BRANCH=work
+}
+
 commit_all() {
   git -C "$REPO" add -A
   git -C "$REPO" commit -qm "$1"
@@ -398,7 +405,7 @@ IN
   commit_all change
   fake_task
   toast() { :; }
-  WT=$REPO BASE=main BRANCH=work
+  on_work_branch
   FACTORY_APPROVAL=ask
   FACTORY_POLL_SECONDS=1
   run human_gate build builder "$TMP" <<<"a"
@@ -693,9 +700,7 @@ JSON
 
 @test "rebase_onto_base: up to date, clean rebase, and conflicts handed to the builder" {
   make_repo
-  WT=$REPO
-  BASE=main
-  BRANCH=work
+  on_work_branch
   GATE=true
   # up to date: nothing to do
   rebase_onto_base builder
@@ -738,6 +743,75 @@ JSON
   [ "$status" -eq 1 ]
   [[ $output == *"still in progress"* ]]
   git -C "$REPO" rebase --abort
+}
+
+@test "base_ref after the pull request rebase: origin's main, not the stale local one" {
+  make_repo
+  on_work_branch
+  git clone -q --bare "$REPO" "$TMP/origin.git"
+  git -C "$REPO" remote add origin "$TMP/origin.git"
+  # upstream main touches a protected file; local main stays behind
+  git clone -q -b main "$TMP/origin.git" "$TMP/other"
+  git -C "$TMP/other" config user.email t@example.invalid
+  git -C "$TMP/other" config user.name t
+  printf '#!/bin/sh\nexit 0 # stricter\n' >"$TMP/other/.factory/gate"
+  git -C "$TMP/other" add -A
+  git -C "$TMP/other" commit -qm "upstream touches the gate"
+  git -C "$TMP/other" push -q origin main
+  printf 'mine\n' >"$REPO/mine.txt"
+  commit_all "work"
+  [ "$(base_ref)" = main ]
+  GATE=true
+  rc=0
+  rebase_onto_base builder || rc=$?
+  [ "$rc" -eq 10 ]
+  [ "$(base_ref)" = origin/main ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/gate"* ]]
+  run_gate() { :; }
+  gate_then_guards builder rebase-pr
+  # origin moves on again and is fetched (a sibling task does that) while local main stays stale
+  printf 'later\n' >"$TMP/other/later.txt"
+  git -C "$TMP/other" add -A
+  git -C "$TMP/other" commit -qm "upstream moves on"
+  git -C "$TMP/other" push -q origin main
+  git -C "$REPO" fetch -q origin main
+  [ "$(base_ref)" = origin/main ]
+  gate_then_guards builder copilot-1
+}
+
+@test "base_ref: the local main when it is newer than origin's, or when there is no origin" {
+  make_repo
+  on_work_branch
+  [ "$(base_ref)" = main ]
+  git clone -q --bare "$REPO" "$TMP/origin.git"
+  git -C "$REPO" remote add origin "$TMP/origin.git"
+  git -C "$REPO" fetch -q origin
+  # an unpushed commit on main touches the gate; a branch cut from it is not blamed for that
+  git -C "$REPO" checkout -q main
+  printf '#!/bin/sh\nexit 0 # local\n' >"$REPO/.factory/gate"
+  commit_all "unpushed gate change"
+  git -C "$REPO" checkout -q work
+  git -C "$REPO" rebase -q main
+  printf 'mine\n' >"$REPO/mine.txt"
+  commit_all "work"
+  [ "$(base_ref)" = main ]
+  guard_check "$REPO" "$(base_ref)"
+  run guard_check "$REPO" origin/main
+  [ "$status" -eq 1 ]
+}
+
+@test "gate_then_guards: a guard failure says why" {
+  make_repo
+  on_work_branch
+  GATE=true
+  run_gate() { :; }
+  printf 'wip\n' >"$REPO/wip.txt"
+  run gate_then_guards builder copilot-1
+  [ "$status" -eq 1 ]
+  [[ $output == *"guardrails failed after copilot-1:"* ]]
+  [[ $output == *"uncommitted changes in the worktree"* ]]
 }
 
 @test "branch names: slug from the title, found again by bead id" {
