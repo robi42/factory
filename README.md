@@ -186,6 +186,8 @@ again, up to `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit
 clean. Copilot never approves, it only comments, so "clean" is the finish line.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
 
+![The builder's pane during a Copilot round: Factory's prompt hands over the comments and asks for reasons instead of changes where the builder disagrees; the builder reruns clippy, finds both claims wrong, records the answer in a code comment so it is not raised again, and reports done](assets/screenshot-copilot.png)
+
 ### Run artifacts
 
 They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
