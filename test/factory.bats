@@ -78,8 +78,32 @@ commit_all() {
   [ "${lines[0]}" = ".factory/gate" ]
   [ "${lines[1]}" = ".factory/protected" ]
   [ "${lines[2]}" = ".factory/guardrails.txt" ]
-  [ "${lines[3]}" = "src/legacy/*" ]
-  [ "${#lines[@]}" -eq 4 ]
+  [ "${lines[3]}" = ".factory/env" ]
+  [ "${lines[4]}" = "src/legacy/*" ]
+  [ "${#lines[@]}" -eq 5 ]
+}
+
+@test "load_repo_env: .factory/env fills unset knobs, the environment wins, bad lines die" {
+  make_repo
+  printf '# repo defaults\n\nFACTORY_ROUNDS=5\nFACTORY_PR=1\nFACTORY_GATE=just test # verbatim\n' >"$REPO/.factory/env"
+  ENV_KNOBS=FACTORY_PR
+  FACTORY_ROUNDS=3
+  FACTORY_PR=0
+  unset FACTORY_GATE
+  load_repo_env "$REPO"
+  [ "$FACTORY_ROUNDS" = 5 ]
+  [ "$FACTORY_PR" = 0 ]
+  [ "$FACTORY_GATE" = "just test # verbatim" ]
+  run load_repo_env "$TMP/nowhere"
+  [ "$status" -eq 0 ]
+  printf 'export FACTORY_ROUNDS=5\n' >"$REPO/.factory/env"
+  run load_repo_env "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"expected FACTORY_NAME=value"* ]]
+  printf 'FACTORY_HOME=/elsewhere\n' >"$REPO/.factory/env"
+  run load_repo_env "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"not a knob"* ]]
 }
 
 @test "guard: clean committed change passes" {

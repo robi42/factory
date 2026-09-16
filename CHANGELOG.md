@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- A repo can commit its own knob defaults in `.factory/env`, one `FACTORY_NAME=value` per
+  line. Parsed, never sourced; the environment and flags still win; the file is protected
+  from the agents like the gate.
+
 ### Changed
 - The turn timeout no longer kills a run whose agent is still working, as on a long
   build; it toasts you once and keeps waiting. Only a turn that is not working when the

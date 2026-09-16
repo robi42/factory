@@ -272,9 +272,9 @@ after the gate passes and before review:
 - A change to code files must also touch a test file (`FACTORY_REQUIRE_TESTS=0` to relax).
 - No committed build artifacts, no uncommitted changes, at least one commit.
 - Protected paths untouched: `.factory/gate`, `.factory/protected`, `.factory/guardrails.txt`,
-  and every glob listed in `.factory/protected`. A task that legitimately must change
-  them, such as adding the gate, gets a one-task waiver from you at plan approval (`p`,
-  or `--allow-protected`); the pull request body records it.
+  `.factory/env`, and every glob listed in `.factory/protected`. A task that legitimately
+  must change them, such as adding the gate, gets a one-task waiver from you at plan
+  approval (`p`, or `--allow-protected`); the pull request body records it.
 - The planner must leave the code untouched; a dirty tree after planning is sent back once.
 
 ## Knobs
@@ -298,6 +298,11 @@ after the gate passes and before review:
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
 
 `fy help` prints the current values.
+
+A repo can commit its own defaults in `.factory/env`, one `FACTORY_NAME=value` per line,
+blank lines and `#` comments allowed. The file is parsed, never sourced: values are taken
+verbatim, with no quotes and no expansion. Precedence is flags, then the environment, then
+`.factory/env`, then the defaults above. Like the gate, the file is protected from the agents.
 
 ## Optional extras
 

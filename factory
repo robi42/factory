@@ -6,7 +6,9 @@ set -euo pipefail
 FACTORY_HOME=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 FACTORY_VERSION=0.1.3
 
-# Knobs. Every value is printed at the start of a run.
+# Knobs. Every value is printed at the start of a run. A repo's .factory/env fills in the
+# ones the environment left unset (load_repo_env); flags override both.
+ENV_KNOBS=$(compgen -A variable FACTORY_ || true)
 : "${FACTORY_PLAN_MODEL:=claude-fable-5-1}"
 : "${FACTORY_BUILD_MODEL:=claude-opus-5}"
 : "${FACTORY_REVIEW_MODEL:=gpt-6-astra}"
@@ -62,7 +64,7 @@ usage() {
   row 'factory check   <worktree> <base>' 'run gate + guardrails on a branch, no agents'
   row 'factory status' 'live factory agents in Herdr'
   row 'factory doctor' 'check prerequisites'
-  printf '\nknobs (env, current values):\n'
+  printf '\nknobs (env, or the repo'"'"'s .factory/env; current values):\n'
   row "FACTORY_PLAN_MODEL=$FACTORY_PLAN_MODEL" 'planner (Claude Code)'
   row "FACTORY_BUILD_MODEL=$FACTORY_BUILD_MODEL" 'builder (Claude Code)'
   row "FACTORY_REVIEW_MODEL=$FACTORY_REVIEW_MODEL" 'reviewer (Codex)'
@@ -440,7 +442,7 @@ guardrails_file() {
 }
 
 protected_globs() { # repo -> one glob per line
-  printf '%s\n' .factory/gate .factory/protected .factory/guardrails.txt
+  printf '%s\n' .factory/gate .factory/protected .factory/guardrails.txt .factory/env
   [[ -f $1/.factory/protected ]] && grep -vE '^\s*(#|$)' "$1/.factory/protected"
   return 0
 }
@@ -1696,6 +1698,25 @@ cmd_check() { # worktree base
   guard_check "$1" "$2" && log "guardrails passed"
 }
 
+# load_repo_env repo: FACTORY_NAME=value lines from repo/.factory/env set the knobs the
+# environment left unset. Parsed, never sourced: values are taken verbatim, no quotes, no
+# expansion; blank lines and # comments are skipped; anything else is an error.
+load_repo_env() {
+  local file=$1/.factory/env line name applied=()
+  [[ -f $file ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ $line =~ ^(FACTORY_[A-Z0-9_]+)=(.*)$ ]] || die "$file: expected FACTORY_NAME=value, got: $line"
+    name=${BASH_REMATCH[1]}
+    [[ $name == FACTORY_HOME || $name == FACTORY_VERSION ]] && die "$file: $name is not a knob"
+    grep -qxF "$name" <<<"$ENV_KNOBS" && continue
+    printf -v "$name" '%s' "${BASH_REMATCH[2]}"
+    applied+=("$name")
+  done <"$file"
+  ((${#applied[@]})) && log "knobs from $file: ${applied[*]}"
+  return 0
+}
+
 # take_flags args...: consume --pr (and --auto) anywhere in the args; the rest land in ARGS.
 take_flags() {
   ARGS=()
@@ -1713,8 +1734,14 @@ take_flags() {
 }
 
 main() {
-  local cmd=${1:-help}
+  local cmd=${1:-help} a
   if (($# > 0)); then shift; fi
+  for a in "$@"; do # the first non-flag argument names the repo
+    if [[ $a != --* ]]; then
+      load_repo_env "$a"
+      break
+    fi
+  done
   case $cmd in
     run)
       take_flags "$@"
