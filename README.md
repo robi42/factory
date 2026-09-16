@@ -176,6 +176,8 @@ branch and closes the bead.
 
 ### Pull requests and Copilot
 
+<img align="right" width="40%" src="assets/screenshot-copilot.png" alt="The builder's pane during a Copilot round: Factory's prompt hands over the comments and asks for reasons instead of changes where the builder disagrees; the builder reruns clippy, finds both claims wrong, records the answer in a code comment so it is not raised again, and reports done">
+
 With `--pr` (or `FACTORY_PR=1`) an approved branch is first rebased onto the base branch,
 the builder resolving any conflicts and the gate and guardrails running again if the
 rebase changed anything, then pushed and a pull request opened with `gh`: the task as
@@ -186,7 +188,7 @@ again, up to `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit
 clean. Copilot never approves, it only comments, so "clean" is the finish line.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
 
-![The builder's pane during a Copilot round: Factory's prompt hands over the comments and asks for reasons instead of changes where the builder disagrees; the builder reruns clippy, finds both claims wrong, records the answer in a code comment so it is not raised again, and reports done](assets/screenshot-copilot.png)
+<br clear="all">
 
 ### Run artifacts
 
