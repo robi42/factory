@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-18
+
 ### Added
 - With `glow` on the PATH, the plan and the planner's questions are rendered as Markdown at
   the approval prompts.
@@ -141,7 +143,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/robi42/factory/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/robi42/factory/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/robi42/factory/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/robi42/factory/compare/v0.1.1...v0.1.2
