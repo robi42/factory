@@ -70,6 +70,19 @@ commit_all() {
   git -C "$REPO" commit -qm "$1"
 }
 
+# resolve_task and task_context set globals; print them so tests can assert on output.
+# They sit above the tests: a global assigned in a test body and read further down the
+# file is a lost subshell change to shellcheck (SC2031).
+resolved() {
+  resolve_task "$@" 2>/dev/null
+  printf '%s: %s\n---\n%s' "$TASK_ID" "$TASK_TITLE" "$TASK_DESC"
+}
+
+context_of() {
+  task_context "$1"
+  printf '%s\n' "$GATE" "$BASE" "$BRANCH" "$PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
+}
+
 @test "bead ids look like prefix-hash" {
   is_bead_id toy-bx4
   is_bead_id bd-a3f8e9
@@ -477,6 +490,44 @@ IN
   [ ! -e "$TMP/answers.md" ]
 }
 
+@test "plan_or_interview: the human's answers reach the planner, whose plan ends the interview" {
+  fake_task
+  WT=$TMP
+  TASK_DESC="" GATE=true MEMORY=""
+  FACTORY_POLL_SECONDS=1
+  mkdir -p "$TMP/.factory/run"
+  ask() { # questions first, the plan once the answers arrive
+    printf 'asked %s: %s\n' "$1" "$2"
+    if [[ -e $TMP/asked ]]; then
+      printf 'the plan\n' >"$WT/.factory/run/plan.md"
+    else
+      printf '1. Which format?\n' >"$WT/.factory/run/questions.md"
+    fi
+    : >"$TMP/asked"
+  }
+  run plan_or_interview planner <<<$'1. CSV\n.'
+  [ "$status" -eq 0 ]
+  [[ $output == *"asked planner: Task toy-1"*"planner has questions (round 1)"*"1. Which format?"*"asked planner: Answers to your questions"*"1. CSV"* ]]
+  [ ! -e "$TMP/.factory/run/questions.md" ]
+}
+
+@test "plan_or_interview: one nudge when the planner wrote nothing; three question rounds at most" {
+  fake_task
+  WT=$TMP
+  TASK_DESC="" GATE=true MEMORY=""
+  FACTORY_POLL_SECONDS=1
+  mkdir -p "$TMP/.factory/run"
+  ask() { :; }
+  run plan_or_interview planner </dev/null
+  [ "$status" -eq 1 ]
+  [[ $output == *"wrote neither plan.md nor questions.md; asking again"*"planner never wrote"* ]]
+  ask() { printf '1. Still unclear?\n' >"$WT/.factory/run/questions.md"; }
+  run plan_or_interview planner <<<$'a\n.\nb\n.\nc\n.\nd\n.'
+  [ "$status" -eq 1 ]
+  [[ $output == *"(round 3)"*"still has questions after 3 rounds"* ]]
+  [[ $output != *"(round 4)"* ]]
+}
+
 @test "answer subcommand writes answers.md into the task worktree" {
   make_repo
   task_worktree
@@ -580,6 +631,76 @@ JSON
   [ -z "$output" ]
 }
 
+@test "bd_field: the field of a bead, whether bd show gives an array or an object" {
+  bd() {
+    case "$*" in
+      *"show toy-1 --json") printf '[{"id":"toy-1","title":"in an array"}]\n' ;;
+      *"show toy-2 --json") printf '{"id":"toy-2","title":"as an object"}\n' ;;
+    esac
+  }
+  [ "$(bd_field repo toy-1 .title)" = "in an array" ]
+  [ "$(bd_field repo toy-2 .title)" = "as an object" ]
+  [ "$(bd_field repo toy-2 '.description // "none"')" = none ]
+}
+
+@test "resolve_task: a known bead id fills the task from bd show, anything else files a new bead" {
+  mkdir "$TMP/.beads"
+  bd() {
+    case "$*" in
+      *"show toy-1 --json") printf '[{"id":"toy-1","title":"Add CSV export","description":"as a file"}]\n' ;;
+      *"show "*) return 1 ;;
+      *"create "*" --silent") printf 'toy-2\n' ;;
+    esac
+  }
+  run resolved "$TMP" toy-1
+  [ "$output" = $'toy-1: Add CSV export\n---\nas a file' ]
+  run resolved "$TMP" "Add a farewell flag"
+  [ "$output" = $'toy-2: Add a farewell flag\n---' ]
+  run resolve_task "$TMP" toy-404 # shaped like an id, but bd does not know it
+  [[ $output == *"filed toy-2: toy-404"* ]]
+  run resolve_task "$TMP/nowhere" toy-1
+  [ "$status" -eq 1 ]
+  [[ $output == *"no beads in"* ]]
+}
+
+@test "memory_block: nothing without memories, else the notes block for the prompts" {
+  bd() {
+    printf '%s\n' "$BD_MEM"
+    return "$BD_RC"
+  }
+  BD_MEM="" BD_RC=1 run memory_block repo
+  [ -z "$output" ]
+  BD_MEM="No memories stored for this repo." BD_RC=0 run memory_block repo
+  [ -z "$output" ]
+  BD_MEM=$'style: argparse, not click\nci: just ci' BD_RC=0 run memory_block repo
+  [[ $output == *"Notes from earlier work"*"bd recall"*$'style: argparse, not click\nci: just ci' ]]
+}
+
+@test "cmd_sync: pull then push; an empty remote is fine, any other pull error is not" {
+  mkdir "$TMP/.beads"
+  FACTORY_BD_PUSH=0 # sync pushes even when runs do not
+  bd() {
+    case "$*" in
+      *"dolt pull")
+        printf '%s\n' "$BD_PULL"
+        return "$BD_PULL_RC"
+        ;;
+      *"config get sync.remote") printf 'git+https://x/y.git\n' ;;
+      *"dolt push") printf 'pushed\n' ;;
+    esac
+  }
+  BD_PULL=$'Fetching from origin...\nEverything up-to-date' BD_PULL_RC=0 run cmd_sync "$TMP"
+  [ "$status" -eq 0 ]
+  [[ $output == *"beads: Everything up-to-date"*"beads pushed to git+https://x/y.git"* ]]
+  BD_PULL='error: no branches found on remote' BD_PULL_RC=1 run cmd_sync "$TMP"
+  [ "$status" -eq 0 ]
+  [[ $output == *"nothing to pull"*"beads pushed"* ]]
+  BD_PULL=$'error: remote not reachable\nnetwork is down' BD_PULL_RC=1 run cmd_sync "$TMP"
+  [ "$status" -eq 1 ]
+  [[ $output == *"beads pull failed: network is down"* ]]
+  [[ $output != *"beads pushed"* ]]
+}
+
 @test "clean: merged task branches go, unmerged stay unless forced" {
   make_repo
   git -C "$REPO" checkout -q main
@@ -628,6 +749,32 @@ JSON
   mkdir -p "$REPO/.factory/run" && printf 'plan\n' >"$REPO/.factory/run/plan.md"
   git -C "$REPO" checkout -q -- .
   planner_kept_hands_off planner # files under .factory/ are fine
+}
+
+@test "ask_for_file: asks once more when the file is missing, then gives up" {
+  ask() { # the agent writes the file only when asked again
+    printf 'asked %s: %s\n' "$1" "$2"
+    [[ -e $TMP/asked ]] && printf 'the plan\n' >"$TMP/plan.md"
+    : >"$TMP/asked"
+  }
+  run ask_for_file planner "write the plan" "$TMP/plan.md"
+  [ "$status" -eq 0 ]
+  [[ $output == *"asked planner: write the plan"*"missing; asking again"*"asked planner: You replied, but $TMP/plan.md does not exist"* ]]
+  [ "$(grep -c '^asked planner' <<<"$output")" -eq 2 ]
+  : >"$TMP/plan.md" # an empty file does not count either
+  ask() { :; }
+  run ask_for_file planner "write the plan" "$TMP/plan.md"
+  [ "$status" -eq 1 ]
+  [[ $output == *"planner never wrote $TMP/plan.md"* ]]
+}
+
+@test "herr_code and herr_msg read a herdr error; plain text is the message as is" {
+  local err='{"error":{"code":"timeout","message":"agent wait timed out"}}'
+  [ "$(herr_code "$err")" = timeout ]
+  [ "$(herr_msg "$err")" = "agent wait timed out" ]
+  [ -z "$(herr_code '{"error":{"message":"m"}}')" ]
+  [ -z "$(herr_code 'herdr: connection refused')" ]
+  [ "$(herr_msg 'herdr: connection refused')" = "herdr: connection refused" ]
 }
 
 @test "set_color sends /color to the agent without waiting" {
@@ -714,6 +861,22 @@ JSON
   run cmd_next "$TMP"
   [ "$status" -eq 3 ]
   grep -q 'ready --claim --json' "$TMP/bd.log"
+}
+
+@test "cmd_queue: runs tasks until none is ready, warns about a failed one, stops at max" {
+  cmd_next() { # one scripted status per call, from stdin
+    local rc
+    read -r rc || rc=3
+    printf 'next %s\n' "$1"
+    return "$rc"
+  }
+  run cmd_queue repo <<<$'0\n2\n3\n0'
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^next repo' <<<"$output")" -eq 3 ]
+  [[ $output == *"task stopped with status 2; continuing"*"queue finished after 2 task(s)"* ]]
+  run cmd_queue repo 2 <<<$'0\n0\n0'
+  [ "$(grep -c '^next repo' <<<"$output")" -eq 2 ]
+  [[ $output == *"queue finished after 2 task(s)"* ]]
 }
 
 @test "rebase_onto_base: up to date, clean rebase, and conflicts handed to the builder" {
@@ -847,6 +1010,21 @@ JSON
   git -C "$REPO" worktree add -q "$TMP/wt-9" factory/toy-9-some-title
   [ "$(worktree_of "$REPO" toy-9)" = "$TMP/wt-9" ]
   [ -z "$(worktree_of "$REPO" toy-90)" ]
+}
+
+@test "task_context: branch from the slugged title unless the task has one, base from the checkout" {
+  make_repo
+  fake_task
+  TASK_TITLE='Add CSV export!'
+  run context_of "$REPO"
+  [ "${lines[0]}" = "bash .factory/gate" ]
+  [ "${lines[1]}" = work ]
+  [ "${lines[2]}" = factory/toy-1-add-csv-export ]
+  [ "${lines[3]}" = "toy-1-plan toy-1-build toy-1-review" ]
+  # a rerun after the title changed stays on the branch it started on
+  git -C "$REPO" branch factory/toy-1-old-slug
+  run context_of "$REPO"
+  [ "${lines[2]}" = factory/toy-1-old-slug ]
 }
 
 @test "worktree_path: short directory under Herdr's worktree dir, from its config when set" {
