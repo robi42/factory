@@ -26,6 +26,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   failed to open, a pull request that failed to open) ended only that subshell and the run
   carried on with an empty value, because Bash ignores errexit under the queue's `||`.
   A `die` in a subshell now signals the main shell, which exits 1 as it does elsewhere.
+- A Copilot round the builder answered without changing anything requested another review
+  of the same commit and got the same comments back, round after round. The loop now posts
+  the answers, resolves the threads, and ends with a note.
 - `n` at an approval prompt aborted the run, a hidden alias for "no" next to `y` for
   "yes". Only the keys the prompt shows mean anything now; any other key, and an empty
   note, ask again in place instead of re-rendering the plan and toasting.

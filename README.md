@@ -187,8 +187,9 @@ rebase changed anything, then pushed and a pull request opened with `gh`: the ta
 summary, the checks as a list, the plan folded away. By default Factory then requests a
 GitHub Copilot code review, hands its comments to the builder,
 gates, pushes, posts one summary comment and resolves the threads it addressed, and asks
-again, up to `FACTORY_COPILOT_ROUNDS` times or until a review of the head commit is
-clean. Copilot never approves, it only comments, so "clean" is the finish line.
+again, up to `FACTORY_COPILOT_ROUNDS` times, until a review of the head commit is
+clean, or until the builder answers a round without changing anything. Copilot never
+approves, it only comments, so "clean" is the finish line.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
 
 <br clear="all">

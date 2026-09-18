@@ -912,6 +912,25 @@ JSON
   [[ $output != *continued* ]]
 }
 
+@test "copilot_loop: a round answered without a commit is replied to and ends the loop" {
+  make_repo
+  on_work_branch
+  mkdir -p "$REPO/.factory/run"
+  FACTORY_COPILOT_ROUNDS=3
+  copilot_request() { :; }
+  copilot_wait() { :; }
+  copilot_verdict() { printf 'Changes recommended'; }
+  copilot_comments() { printf 'run.sh:1: use set -e\n'; }
+  ask() { :; }
+  copilot_reply() { printf 'replied round %s on %s\n' "$2" "$3"; }
+  copilot_resolve() { printf 'resolved %s\n' "$2"; }
+  run copilot_loop builder https://example.invalid/pull/7
+  [ "$status" -eq 1 ]
+  sha=$(git -C "$REPO" rev-parse HEAD)
+  [[ $output == *"replied round 1 on $sha"*"resolved $sha"*"answered without changes"* ]]
+  [[ $output != *"round 2"* ]]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

@@ -837,6 +837,13 @@ copilot_loop() {
     printf '%s\n' "$comments" >"$WT/$RUN_DIR/copilot-$round.md"
     log "Copilot left $(grep -c '' "$WT/$RUN_DIR/copilot-$round.md") comment(s); asking the builder"
     ask "$agent" "$(copilot_fix_prompt "$round")"
+    if [[ $(git -C "$WT" rev-parse HEAD) == "$sha" ]] && ! tree_dirty "$WT"; then
+      copilot_reply "$n" "$round" "$sha" # the pushback alone; another review would say the same
+      copilot_resolve "$n" "$sha"
+      COPILOT_NOTE="Copilot's comments answered without changes"
+      warn "$COPILOT_NOTE; see $url"
+      return 1
+    fi
     gate_then_guards "$agent" "copilot-$round" || {
       COPILOT_NOTE="gate or guardrails failed while addressing Copilot's comments"
       return 1
