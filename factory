@@ -1115,7 +1115,7 @@ collect_answers() {
   toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal or with: factory answer" request
   printf '\n%s the planner asks (%s):\n\n' "$TAG" "$q" >&2
   show_md "$q"
-  printf '\n%s answer below, finish with a line containing only "."  (or: factory answer <repo> %s "...")\n' "$TAG" "$TASK_ID" >&2
+  printf '\n%s answer below; a line containing only "." or Ctrl-D ends it  (or: factory answer <repo> %s "...")\n' "$TAG" "$TASK_ID" >&2
   while :; do
     if [[ -s $dir/answers.md ]]; then
       answers=$(<"$dir/answers.md")
