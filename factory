@@ -871,7 +871,7 @@ $TASK_DESC
 
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
 Do not write the code itself and do not change any file outside $RUN_DIR/; the factory checks.
-If the task is ambiguous in a way that would change the design, do not plan yet: write your numbered questions to $RUN_DIR/questions.md and reply with just QUESTIONS. Prefer a plan with stated assumptions over questions when the ambiguity is minor.
+If the task is ambiguous in a way that would change the design, do not plan yet: write your numbered questions to $RUN_DIR/questions.md and reply with those questions. Prefer a plan with stated assumptions over questions when the ambiguity is minor.
 $MEMORY
 Reply with just PLAN READY once the file is written.
 P
@@ -949,7 +949,7 @@ Answers to your questions in $RUN_DIR/questions.md:
 
 $1
 
-Now write $RUN_DIR/plan.md as described before and reply with just PLAN READY. If something is still unclear, replace $RUN_DIR/questions.md with the remaining questions and reply QUESTIONS.
+Now write $RUN_DIR/plan.md as described before and reply with just PLAN READY. If something is still unclear, replace $RUN_DIR/questions.md with the remaining questions and reply with them.
 P
 }
 

@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The planner replies with its questions instead of QUESTIONS, so they read in its pane as
+  well as at the factory prompt.
+
 ## [0.1.6] - 2026-09-18
 
 ### Changed
