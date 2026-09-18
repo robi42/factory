@@ -993,13 +993,13 @@ P
 # `factory reject` write into dir. A plan note goes to the planner and the plan is shown
 # again; a build note is left in HUMAN_NOTE and 4 is returned for another round. 3 aborts.
 human_gate() {
-  local kind=$1 agent=$2 dir=$3 answer note stdin_open=1 rc
+  local kind=$1 agent=$2 dir=$3 answer note stdin_open=1 rc keys='a, p, r or b'
   [[ $FACTORY_APPROVAL == ask ]] || return 0
+  [[ $kind == plan ]] || keys='a, r or b'
   rm -f "$dir/approved" "$dir/reject.md"
   while :; do
     toast "$TASK_ID $kind ready" "$TASK_TITLE. Approve it in the Factory terminal or with: factory approve" request
     show_for_approval "$kind" "$dir"
-    answer=""
     while :; do
       if [[ -s $dir/reject.md ]]; then
         note=$(<"$dir/reject.md")
@@ -1018,8 +1018,28 @@ human_gate() {
       if ((stdin_open)); then
         rc=0
         read -r -t "$FACTORY_POLL_SECONDS" answer || rc=$?
-        ((rc == 0)) && break
-        if ((rc <= 128)); then
+        if ((rc == 0)); then
+          case $answer in
+            a | A) return 0 ;;
+            p | P)
+              if [[ $kind == plan ]]; then
+                : >"$dir/allow-protected"
+                log "protected-path check waived for this task"
+                return 0
+              fi
+              ;;
+            r | R)
+              printf '%s note for the %s: ' "$TAG" "$(role_of "$kind")" >&2
+              read -r note || return 3
+              if [[ -n $note ]]; then
+                take_note "$kind" "$agent" "$note" || return $?
+                continue 2
+              fi
+              ;;
+            b | B) return 3 ;;
+          esac
+          printf '%s %s? ' "$TAG" "$keys" >&2 # only the keys shown mean anything; ask again in place
+        elif ((rc <= 128)); then
           stdin_open=0
           printf '\n' >&2
           log "no terminal to answer from; waiting for: factory approve <repo> $TASK_ID  (or reject)"
@@ -1028,22 +1048,6 @@ human_gate() {
         sleep "$FACTORY_POLL_SECONDS"
       fi
     done
-    case $answer in
-      a | A | y | Y) return 0 ;;
-      p | P)
-        [[ $kind == plan ]] || continue
-        : >"$dir/allow-protected"
-        log "protected-path check waived for this task"
-        return 0
-        ;;
-      r | R)
-        printf '%s note for the %s: ' "$TAG" "$(role_of "$kind")" >&2
-        read -r note || return 3
-        [[ -n $note ]] || continue
-        take_note "$kind" "$agent" "$note" || return $?
-        ;;
-      b | B | n | N) return 3 ;;
-    esac
   done
 }
 

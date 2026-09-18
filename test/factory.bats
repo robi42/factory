@@ -279,6 +279,11 @@ commit_all() {
   run human_gate plan planner "$TMP" <<<$'r\nsplit the module\na'
   [ "$status" -eq 0 ]
   [[ $output == *"asked planner: The human reviewed"*"split the module"* ]]
+  # only the keys shown mean anything: y, n and an empty note ask again, without re-rendering
+  run human_gate plan planner "$TMP" <<<$'y\nn\nr\n\na'
+  [ "$status" -eq 0 ]
+  [[ $output == *"a, p, r or b?"*"a, p, r or b?"*"a, p, r or b?"* ]]
+  [ "$(grep -c 'plan for toy-1' <<<"$output")" -eq 1 ]
 }
 
 @test "plan approval: the planner's change note is shown once, below the revised plan" {
@@ -433,6 +438,9 @@ IN
   run human_gate build builder "$TMP" <<<"a"
   [ "$status" -eq 0 ]
   [[ $output == *"build for toy-1 on work"*"change"*"run.sh"* ]]
+  run human_gate build builder "$TMP" <<<$'p\na'
+  [ "$status" -eq 0 ]
+  [[ $output == *"a, r or b?"* ]]
   rc=0
   human_gate build builder "$TMP" <<<$'r\nrename it' || rc=$?
   [ "$rc" -eq 4 ]

@@ -22,6 +22,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   a note.
 - `factory add` with an empty task on stdin exited silently and left its temp file behind
   instead of saying "empty title, nothing filed".
+- `n` at an approval prompt aborted the run, a hidden alias for "no" next to `y` for
+  "yes". Only the keys the prompt shows mean anything now; any other key, and an empty
+  note, ask again in place instead of re-rendering the plan and toasting.
 
 ### Changed
 - `factory help` lists every knob, `FACTORY_GUARDRAILS`, `FACTORY_POLL_SECONDS`,

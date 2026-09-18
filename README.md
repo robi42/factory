@@ -155,7 +155,8 @@ three rounds; if the planner still has questions after that, the run stops and y
 to it in its pane.
 
 **Plan approval.** Factory prints the plan and waits. Answer in its terminal: `a` approve,
-`p` approve and allow protected paths, `r` revise with a note, `b` abort. Or from anywhere:
+`p` approve and allow protected paths, `r` revise with a note, `b` abort; any other key
+asks again. Or from anywhere:
 `fy approve` (with `--allow-protected` for the `p` case) and `fy reject "note"`. A note
 goes to the planner, the plan comes back revised with a short note on what changed and
 why, and you are asked again. You can also edit `plan.md` or talk to the planner in its
