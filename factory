@@ -1106,7 +1106,7 @@ show_for_approval() { # kind dir
 }
 
 # collect_answers questions-file: show the planner's questions and wait for the human.
-# Answers come from this terminal (lines until one containing only ".") or from
+# Answers come from this terminal (lines until one containing only ".", or Ctrl-D) or from
 # `factory answer`, which writes answers.md next to the questions. Prints the answers.
 collect_answers() {
   local q=$1 dir line stdin_open=1 rc answers=""

@@ -151,7 +151,7 @@ second one pays for the overlap.
 ### The human gates
 
 **Questions.** When the planner asks, Factory prints the questions in its terminal and
-waits: answer there (finish with a line containing only `.`) or with `fy answer`. Up to
+waits: answer there (finish with a line containing only `.`, or Ctrl-D) or with `fy answer`. Up to
 three rounds; if the planner still has questions after that, the run stops and you talk
 to it in its pane.
 
