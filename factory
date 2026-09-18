@@ -915,7 +915,7 @@ Review task $TASK_ID: $TASK_TITLE
 The plan is in $RUN_DIR/plan.md. The changes: git diff $(base_ref)...HEAD
 Look for bugs, missed requirements, shortcuts (skipped tests, suppressed warnings, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.
 Write the review to $RUN_DIR/review-$1.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
-Reply with just DONE once the file is written.
+Reply with just that verdict line once the file is written.
 P
 }
 
@@ -927,7 +927,7 @@ $TASK_DESC
 
 A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Point out real gaps only.
 Write your notes to $RUN_DIR/plan-review.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
-Reply with just DONE once the file is written.
+Reply with just that verdict line once the file is written.
 P
 }
 
@@ -939,7 +939,7 @@ $TASK_DESC
 
 You will implement $RUN_DIR/plan.md next. Read it against this repo first: is it concrete enough to build, is its design the simplest that fits this codebase, does it miss anything the task needs, or add anything it does not? Note real gaps only.
 Write your notes to $RUN_DIR/plan-review-build.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
-Reply with just DONE once the file is written.
+Reply with just that verdict line once the file is written.
 P
 }
 
@@ -980,7 +980,7 @@ plan_check_prompt() { # round
 The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(base_ref)...HEAD
 Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.
 Write your notes to $RUN_DIR/review-$1-plan.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
-Reply with just DONE once the file is written.
+Reply with just that verdict line once the file is written.
 P
 }
 
