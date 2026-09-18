@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- With `glow` on the PATH, the plan and the planner's questions are rendered as Markdown at
+  the approval prompts.
+
 ## [0.1.4] - 2026-09-17
 
 ### Added

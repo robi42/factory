@@ -1007,11 +1007,18 @@ take_note() {
   esac
 }
 
+# show_md file: Markdown for the human, rendered by glow when it is installed. glow reads
+# stdin instead of the file whenever stdin is not a terminal, and the human's answer may be
+# waiting there, so it gets none.
+show_md() {
+  if command -v glow >/dev/null 2>&1; then glow "$1" </dev/null >&2; else sed 's/^/    /' "$1" >&2; fi
+}
+
 show_for_approval() { # kind dir
   printf '\n\033[34m[factory]\033[0m ' >&2
   if [[ $1 == plan ]]; then
     printf 'plan for %s (%s):\n\n' "$TASK_ID" "$2/plan.md" >&2
-    sed 's/^/    /' "$2/plan.md" >&2
+    show_md "$2/plan.md"
     printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' >&2
   else
     printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2
@@ -1032,7 +1039,7 @@ collect_answers() {
   rm -f "$dir/answers.md"
   toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal or with: factory answer" request
   printf '\n\033[34m[factory]\033[0m the planner asks (%s):\n\n' "$q" >&2
-  sed 's/^/    /' "$q" >&2
+  show_md "$q"
   printf '\n\033[34m[factory]\033[0m answer below, finish with a line containing only "."  (or: factory answer <repo> %s "...")\n' "$TASK_ID" >&2
   while :; do
     if [[ -s $dir/answers.md ]]; then

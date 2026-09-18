@@ -389,6 +389,10 @@ detection more reliable. Factory handles the known startup dialogs either way.
 **Beads housekeeping.** `fy init` sets `beads.role` so Beads stops warning; untracking
 `.beads/interactions.jsonl` keeps `git status` quiet.
 
+**Rendered Markdown at the prompts.** With [glow](https://github.com/charmbracelet/glow) on
+your PATH, the plan and the planner's questions are rendered in the terminal instead of
+printed as-is.
+
 ## Why so lean
 
 Factory is a single Bash script of about fifteen hundred lines, and that is the point.

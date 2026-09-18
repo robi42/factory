@@ -878,6 +878,17 @@ JSON
   [ ! -e "$TMP/.factory/run/state" ]
 }
 
+@test "show_md: glow renders when present, plain indent otherwise" {
+  printf '# Plan\n' >"$TMP/plan.md"
+  glow() { printf 'GLOW %s stdin=%s\n' "$1" "$(cat)"; }
+  run show_md "$TMP/plan.md" <<<"the human's answer"
+  [ "$output" = "GLOW $TMP/plan.md stdin=" ]
+  unset -f glow
+  mkdir -p "$TMP/bin" && ln -s "$(command -v sed)" "$TMP/bin/sed"
+  PATH=$TMP/bin run show_md "$TMP/plan.md"
+  [ "$output" = "    # Plan" ]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]
