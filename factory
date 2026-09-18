@@ -4,7 +4,7 @@
 set -euo pipefail
 
 FACTORY_HOME=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
-FACTORY_VERSION=0.1.5
+FACTORY_VERSION=0.1.6
 
 # Knobs; factory help prints the current values. A repo's .factory/env fills in the
 # ones the environment left unset (load_repo_env); flags override both.
