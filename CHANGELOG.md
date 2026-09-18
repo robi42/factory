@@ -11,6 +11,18 @@ versions follow [Semantic Versioning](https://semver.org/).
 - After a note at plan approval, the planner writes what it changed and why to
   `plan-changes.md`, and the next prompt shows that below the revised plan.
 
+### Fixed
+- `factory check` exited 1 after a green gate and guardrails, and left its gate log in the
+  temp directory: the exit trap read a local variable that was gone by then.
+- A failed push in `factory pr` or at the end of a run was ignored: the open pull request
+  was reused and the task closed as done while the branch on GitHub still held the old
+  commits. The run now stops with an error.
+- A failed push of a Copilot round's fixes was ignored too, so the next round waited the
+  whole Copilot timeout for a review of a commit GitHub never saw. The loop now ends with
+  a note.
+- `factory add` with an empty task on stdin exited silently and left its temp file behind
+  instead of saying "empty title, nothing filed".
+
 ## [0.1.4] - 2026-09-17
 
 ### Added

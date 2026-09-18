@@ -656,7 +656,7 @@ raise_pr() { # builder-agent -> prints the PR url
   rebase_onto_base "$1" || rc=$?
   ((rc == 0 || rc == 10)) || exit "$rc"
   ((rc == 10)) && regate "$1" pr
-  git -C "$WT" push -q -u --force-with-lease origin "$BRANCH"
+  git -C "$WT" push -q -u --force-with-lease origin "$BRANCH" || die "could not push $BRANCH to origin"
   url=$(existing_pr)
   if [[ -n $url ]]; then
     log "pull request already open, reusing it" >&2
@@ -818,7 +818,11 @@ copilot_loop() {
       COPILOT_NOTE="gate or guardrails failed while addressing Copilot's comments"
       return 1
     }
-    git -C "$WT" push -q
+    git -C "$WT" push -q || {
+      COPILOT_NOTE="could not push the fixes for round $round"
+      warn "$COPILOT_NOTE"
+      return 1
+    }
     copilot_reply "$n" "$round" "$(git -C "$WT" rev-parse HEAD)"
     copilot_resolve "$n" "$sha"
     round=$((round + 1))
@@ -1533,7 +1537,7 @@ compose_task() {
     log "title on the first line, blank line, then the description; finish with Ctrl-D"
     cat >"$f"
   fi
-  body=$(grep -vE '^#' "$f")
+  body=$(grep -vE '^#' "$f") || body=""
   rm -f "$f"
   TASK_TITLE=$(sed -n '/[^[:space:]]/{p;q}' <<<"$body" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [[ -n $TASK_TITLE ]] || die "empty title, nothing filed"
@@ -1718,12 +1722,12 @@ clean_targets() {
 }
 
 cmd_check() { # worktree base
-  local gate log_file
+  local gate
   gate=$(resolve_gate "$1")
-  log_file=$(mktemp)
-  trap 'rm -f "$log_file"' EXIT
-  run_gate "$1" "$gate" "$log_file" || {
-    tail -n 40 "$log_file"
+  CHECK_LOG=$(mktemp)
+  trap 'rm -f "$CHECK_LOG"' EXIT
+  run_gate "$1" "$gate" "$CHECK_LOG" || {
+    tail -n 40 "$CHECK_LOG"
     return 1
   }
   guard_check "$1" "$2" && log "guardrails passed"
