@@ -8,6 +8,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 ### Changed
 - Reviewers reply with their verdict line instead of DONE, so each reviewing pane shows
   APPROVE or REVISE at a glance.
+- A run that stops at plan approval leaves a `reviewed` marker, so the rerun comes straight
+  back to the approval prompt with the reviewed plan instead of planning and reviewing
+  again.
 
 ## [0.1.5] - 2026-09-18
 

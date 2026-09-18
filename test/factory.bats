@@ -1058,11 +1058,13 @@ JSON
   grep -q "comment toy-1 Factory: interrupted during building" "$TMP/bd.log"
 }
 
-@test "resume markers: planned, built <round>, cleared by --fresh" {
+@test "resume markers: reviewed, planned, built <round>, cleared by --fresh" {
   WT=$TMP
   mkdir -p "$TMP/.factory/run"
   FACTORY_FRESH=0
   [ -z "$(resume_point)" ]
+  mark reviewed
+  [ "$(resume_point)" = reviewed ]
   mark planned
   [ "$(resume_point)" = planned ]
   mark built 2

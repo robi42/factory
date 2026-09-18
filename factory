@@ -1288,7 +1288,7 @@ start_or_adopt_agents() {
 # approved the plan, "built <round>" once the reviews approved the build). A rerun skips
 # what is done; --fresh starts over.
 mark() { printf '%s\n' "$*" >"$WT/$RUN_DIR/state"; }
-resume_point() { # -> planned | built <round> | (empty)
+resume_point() { # -> reviewed | planned | built <round> | (empty)
   if ((FACTORY_FRESH)); then
     rm -f "$WT/$RUN_DIR/state"
     return 0
@@ -1318,6 +1318,13 @@ plan_phase() {
     ask "$PLAN_AGENT" "$(plan_fix_prompt)"
     planner_kept_hands_off "$PLAN_AGENT"
   fi
+  mark reviewed
+  approve_plan "$1"
+}
+
+# approve_plan repo: your gate on the reviewed plan. An abort here leaves the reviewed
+# marker, so a rerun comes straight back to this prompt instead of planning again.
+approve_plan() {
   human_gate plan "$PLAN_AGENT" "$WT/$RUN_DIR" || stop_task "$1" "plan approval"
   mark planned
 }
@@ -1435,6 +1442,12 @@ run_task() { # repo arg
       VERDICT=APPROVE
       ROUND=${point#built }
       GATE_LOG="$WT/$RUN_DIR/gate-$ROUND.log"
+      ;;
+    reviewed)
+      STEP=planning
+      approve_plan "$repo"
+      STEP=building
+      build_phase "$repo"
       ;;
     planned)
       STEP=building
