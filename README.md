@@ -151,7 +151,8 @@ second one pays for the overlap.
 
 **Questions.** When the planner asks, Factory prints the questions in its terminal and
 waits: answer there (finish with a line containing only `.`) or with `fy answer`. Up to
-three rounds, then the plan comes.
+three rounds; if the planner still has questions after that, the run stops and you talk
+to it in its pane.
 
 **Plan approval.** Factory prints the plan and waits. Answer in its terminal: `a` approve,
 `p` approve and allow protected paths, `r` revise with a note, `b` abort. Or from anywhere:
@@ -196,7 +197,9 @@ clean. Copilot never approves, it only comments, so "clean" is the finish line.
 They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
 `questions.md` (only when asked), `plan-review.md` (Codex), `plan-review-build.md`
 (builder), `review-N.md` (Codex), `review-N-plan.md` (planner), `response-N.md`
-(builder's pushback), `copilot-N.md`, `gate-N.log`.
+(builder's pushback), `plan-changes.md` (what the planner changed after your note),
+`copilot-N.md` and `copilot-N-response.md` (Copilot's comments and the builder's
+pushback), `gate-N.log`.
 
 `fy init` writes a short `AGENTS.md` (with `CLAUDE.md` linking to it) only when a repo
 has neither. Keep it to what the code cannot tell a new engineer: how to verify, layout
@@ -295,12 +298,14 @@ after the gate passes and before review:
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
 | `FACTORY_REQUIRE_TESTS` | `1`: code changes must also touch a test file |
 | `FACTORY_APPROVAL` | `ask`; `auto` skips both human gates (`--auto`) |
+| `FACTORY_POLL_SECONDS` | `5` seconds between checks for the approve, reject and answer files |
 | `FACTORY_PR` | `0`; `1` opens a pull request (`--pr`) |
 | `FACTORY_COPILOT` | `1`; `0` skips the Copilot review loop (`--no-copilot`) |
 | `FACTORY_COPILOT_ROUNDS` | `3` Copilot review rounds |
 | `FACTORY_COPILOT_WAIT_S` | `900` (15 min) per Copilot review |
 | `FACTORY_BD_PUSH` | `1`: push the Beads database to its sync remote after tasks and adds |
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
+| `FACTORY_FRESH` | `0`; `1` starts over instead of resuming (`--fresh`) |
 
 `fy help` prints the current values.
 
@@ -396,7 +401,7 @@ printed as-is.
 
 ## Why so lean
 
-Factory is a single Bash script of about fifteen hundred lines, and that is the point.
+Factory is a single Bash script of under two thousand lines, and that is the point.
 Current models plan, build and review well when given a clear task, a real codebase and
 a hard definition of done; what they need from a harness is less than the frameworks of
 a year ago assumed. So Factory bets on a few things:

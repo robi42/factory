@@ -3,11 +3,15 @@ bats_require_minimum_version 1.5.0
 # Unit tests for the pure parts of factory: task ids, verdicts, gate discovery, guardrails.
 
 setup() {
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 # the fixtures' git ignores this machine's config
+  unset "${!FACTORY_@}"                                    # and the knobs the shell exported
   export FACTORY_GUARDRAILS="$BATS_TEST_DIRNAME/../guardrails.txt"
   # shellcheck source=../factory
   source "$BATS_TEST_DIRNAME/../factory"
   FACTORY_REQUIRE_TESTS=0 # the fixtures below change code without tests on purpose
   TMP=$(mktemp -d)
+  toast() { :; }       # no desktop notifications from the tests
+  glow() { cat "$1"; } # nor this machine's glow and its config
 }
 
 teardown() {
@@ -28,10 +32,30 @@ make_repo() {
   git -C "$REPO" checkout -qb work
 }
 
+# add_origin: a bare clone of REPO becomes its origin remote
+add_origin() {
+  git clone -q --bare "$REPO" "$TMP/origin.git"
+  git -C "$REPO" remote add origin "$TMP/origin.git"
+}
+
+# task_worktree: a factory/toy-9 checkout with its run dir, as a waiting run has it
+task_worktree() {
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" worktree add -q -b factory/toy-9 "$TMP/wt-9"
+  mkdir -p "$TMP/wt-9/.factory/run"
+}
+
 # the globals human_gate reads for its messages
 fake_task() {
   TASK_ID=toy-1
   TASK_TITLE=t
+}
+
+# plan_ready: a plan waiting for the human, as plan_phase hands it to human_gate
+plan_ready() {
+  fake_task
+  FACTORY_APPROVAL=ask
+  printf 'the plan\n' >"$TMP/plan.md"
 }
 
 # the branch globals the gates and guards read, as task_context sets them
@@ -244,10 +268,7 @@ commit_all() {
 }
 
 @test "plan approval: terminal answers" {
-  fake_task
-  toast() { :; }
-  printf 'the plan\n' >"$TMP/plan.md"
-  FACTORY_APPROVAL=ask
+  plan_ready
   human_gate plan planner "$TMP" <<<"a"
   run human_gate plan planner "$TMP" <<<"b"
   [ "$status" -eq 3 ]
@@ -273,11 +294,8 @@ commit_all() {
 }
 
 @test "plan approval: files from factory approve / reject, no terminal" {
-  fake_task
-  FACTORY_APPROVAL=ask
+  plan_ready
   FACTORY_POLL_SECONDS=1
-  toast() { :; }
-  printf 'the plan\n' >"$TMP/plan.md"
   ask() {
     printf 'asked %s: %s\n' "$1" "$2"
     : >"$TMP/approved" # the human approves after the revision
@@ -298,9 +316,7 @@ commit_all() {
 
 @test "approve and reject subcommands find the task worktree" {
   make_repo
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" worktree add -q -b factory/toy-9 "$TMP/wt-9"
-  mkdir -p "$TMP/wt-9/.factory/run"
+  task_worktree
   cmd_approve "$REPO" toy-9
   [ -e "$TMP/wt-9/.factory/run/approved" ]
   cmd_reject "$REPO" toy-9 "use argparse"
@@ -397,16 +413,11 @@ IN
 
 @test "approve --allow-protected and the p answer write the waiver" {
   make_repo
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" worktree add -q -b factory/toy-9 "$TMP/wt-9"
-  mkdir -p "$TMP/wt-9/.factory/run"
+  task_worktree
   cmd_approve "$REPO" toy-9 --allow-protected
   [ -e "$TMP/wt-9/.factory/run/allow-protected" ]
   [ -e "$TMP/wt-9/.factory/run/approved" ]
-  fake_task
-  toast() { :; }
-  printf 'the plan\n' >"$TMP/plan.md"
-  FACTORY_APPROVAL=ask
+  plan_ready
   human_gate plan planner "$TMP" <<<"p"
   [ -e "$TMP/allow-protected" ]
 }
@@ -416,7 +427,6 @@ IN
   printf 'echo more\n' >>"$REPO/run.sh"
   commit_all change
   fake_task
-  toast() { :; }
   on_work_branch
   FACTORY_APPROVAL=ask
   FACTORY_POLL_SECONDS=1
@@ -443,7 +453,6 @@ IN
 @test "collect_answers: terminal lines until a dot, or answers.md from factory answer" {
   fake_task
   FACTORY_POLL_SECONDS=1
-  toast() { :; }
   printf '1. Which format?\n2. Keep old API?\n' >"$TMP/questions.md"
   run collect_answers "$TMP/questions.md" <<<$'1. CSV\n2. yes\n.'
   [ "$status" -eq 0 ]
@@ -462,9 +471,7 @@ IN
 
 @test "answer subcommand writes answers.md into the task worktree" {
   make_repo
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" worktree add -q -b factory/toy-9 "$TMP/wt-9"
-  mkdir -p "$TMP/wt-9/.factory/run"
+  task_worktree
   cmd_answer "$REPO" toy-9 "1. CSV"
   [ "$(cat "$TMP/wt-9/.factory/run/answers.md")" = "1. CSV" ]
   cmd_answer "$REPO" toy-9 - <<<"from stdin"
@@ -473,12 +480,16 @@ IN
   [ "$status" -eq 1 ]
 }
 
-@test "take_flags: --pr and --auto set knobs, the rest stay in order, unknown flags fail" {
+@test "take_flags: the flags set their knobs, the rest stay in order, unknown flags fail" {
   FACTORY_PR=0
   FACTORY_APPROVAL=ask
-  take_flags --pr repo "a task" --auto
+  FACTORY_COPILOT=1
+  FACTORY_FRESH=0
+  take_flags --pr repo "a task" --auto --no-copilot --fresh
   [ "$FACTORY_PR" = 1 ]
   [ "$FACTORY_APPROVAL" = auto ]
+  [ "$FACTORY_COPILOT" = 0 ]
+  [ "$FACTORY_FRESH" = 1 ]
   [ "${#ARGS[@]}" -eq 2 ]
   [ "${ARGS[0]}" = repo ]
   [ "${ARGS[1]}" = "a task" ]
@@ -487,8 +498,8 @@ IN
   [[ $output == *"unknown flag: --nope"* ]]
 }
 
-@test "copilot_format picks the bot's comments for one commit as file:line: body" {
-  run copilot_format abc123 <<'JSON'
+@test "copilot_comments_of picks the bot's comments for one commit as file:line: body" {
+  run copilot_comments_of abc123 <<'JSON'
 [
   {"user":{"login":"Copilot"},"commit_id":"abc123","original_commit_id":"abc123","path":"hello.py","line":7,"body":"Use f-strings\r\nhere."},
   {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","original_commit_id":"old111","path":"hello.py","line":1,"body":"carried along from an earlier review"},
@@ -539,13 +550,6 @@ JSON
   [ "$output" = "" ]
 }
 
-@test "take_flags: --no-copilot" {
-  FACTORY_COPILOT=1
-  take_flags --no-copilot repo id
-  [ "$FACTORY_COPILOT" = 0 ]
-  [ "${#ARGS[@]}" -eq 2 ]
-}
-
 @test "bd_push: skips without a sync remote, pushes with one, warns on failure, off by knob" {
   FACTORY_BD_PUSH=1
   bd() { # stub: config get -> $BD_REMOTE; dolt push -> $BD_PUSH_RC
@@ -574,7 +578,7 @@ JSON
   git -C "$REPO" branch factory/toy-m
   git -C "$REPO" worktree add -q "$TMP/wt-m" factory/toy-m
   printf 'x\n' >"$TMP/wt-m/m.txt"
-  git -C "$TMP/wt-m" add -A && git -C "$TMP/wt-m" -c user.email=t@example.invalid -c user.name=t commit -qm m
+  git -C "$TMP/wt-m" add -A && git -C "$TMP/wt-m" commit -qm m
   git -C "$REPO" merge -q factory/toy-m
   git -C "$REPO" checkout -qb factory/toy-u
   printf 'u\n' >"$REPO/u.txt"
@@ -584,10 +588,9 @@ JSON
   bd() {
     case "$*" in
       *"config get"*) printf 'sync.remote (not set in config.yaml)\n' ;;
-      *) printf 'closed\n' ;;
+      *show*) printf '{"status":"closed"}\n' ;;
     esac
   }
-  bd_field() { printf 'closed\n'; }
   run cmd_clean "$REPO"
   [ "$status" -eq 0 ]
   [[ $output == *"cleaned factory/toy-m"* ]]
@@ -603,7 +606,6 @@ JSON
 @test "planner_kept_hands_off: clean tree passes, dirty tree gets one revert, then dies" {
   make_repo
   WT=$REPO
-  RUN_DIR=.factory/run
   planner_kept_hands_off planner
   printf 'sneaky\n' >"$REPO/run.sh"
   ask() { git -C "$REPO" checkout -q -- .; } # the planner reverts when told
@@ -639,7 +641,6 @@ JSON
 
 @test "wait_for: chunked waits print a heartbeat and return the final state" {
   fake_task
-  toast() { :; }
   : >"$TMP/waits"
   herdr() { # agent wait times out five times, then the agent is idle
     case "$*" in
@@ -694,13 +695,10 @@ JSON
   [ "$status" -eq 1 ]
   [[ $output == *"FORBIDDEN_WORD"* ]]
   [[ $output != *"run_thing"* ]]
-  [[ $output == *".factory/guardrails.txt"* ]]
+  [[ $output == *"(see $REPO/.factory/guardrails.txt)"* ]]
 }
 
 @test "next claims atomically through bd ready --claim" {
-  herdr() { :; }
-  claude() { :; }
-  codex() { :; }
   bd() {
     printf '%s\n' "$*" >>"$TMP/bd.log"
     printf '[]'
@@ -760,8 +758,7 @@ JSON
 @test "base_ref after the pull request rebase: origin's main, not the stale local one" {
   make_repo
   on_work_branch
-  git clone -q --bare "$REPO" "$TMP/origin.git"
-  git -C "$REPO" remote add origin "$TMP/origin.git"
+  add_origin
   # upstream main touches a protected file; local main stays behind
   git clone -q -b main "$TMP/origin.git" "$TMP/other"
   git -C "$TMP/other" config user.email t@example.invalid
@@ -797,8 +794,7 @@ JSON
   make_repo
   on_work_branch
   [ "$(base_ref)" = main ]
-  git clone -q --bare "$REPO" "$TMP/origin.git"
-  git -C "$REPO" remote add origin "$TMP/origin.git"
+  add_origin
   git -C "$REPO" fetch -q origin
   # an unpushed commit on main touches the gate; a branch cut from it is not blamed for that
   git -C "$REPO" checkout -q main

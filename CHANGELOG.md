@@ -23,6 +23,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `factory add` with an empty task on stdin exited silently and left its temp file behind
   instead of saying "empty title, nothing filed".
 
+### Changed
+- `factory help` lists every knob, `FACTORY_GUARDRAILS`, `FACTORY_POLL_SECONDS`,
+  `FACTORY_COPILOT_WAIT_S` and `FACTORY_FRESH` included; the usage lines of `run`, `next`
+  and `queue` name all four flags; the messages that point at `clean` say `factory`, not
+  the `fy` alias.
+
 ## [0.1.4] - 2026-09-17
 
 ### Added

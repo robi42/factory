@@ -6,9 +6,9 @@ set -euo pipefail
 FACTORY_HOME=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 FACTORY_VERSION=0.1.4
 
-# Knobs. Every value is printed at the start of a run. A repo's .factory/env fills in the
+# Knobs; factory help prints the current values. A repo's .factory/env fills in the
 # ones the environment left unset (load_repo_env); flags override both.
-ENV_KNOBS=$(compgen -A variable FACTORY_ || true)
+ENV_KNOBS=$(compgen -A variable FACTORY_)
 : "${FACTORY_PLAN_MODEL:=claude-fable-5-1}"
 : "${FACTORY_BUILD_MODEL:=claude-opus-5}"
 : "${FACTORY_REVIEW_MODEL:=gpt-6-astra}"
@@ -31,7 +31,8 @@ RUN_DIR=.factory/run
 TEST_PATH_RE='(^|/)(tests?|spec|specs|__tests__|bats)/|(^|/)test_[^/]*\.py$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|scala|cs|swift)$|_spec\.rb$|\.bats$'
 
 # ---------------------------------------------------------------- output ----
-log() { printf '\033[34m[factory]\033[0m %s\n' "$*" >&2; }
+TAG=$'\033[34m[factory]\033[0m' # log's prefix, shared with the prompts that must not end the line
+log() { printf '%s %s\n' "$TAG" "$*" >&2; }
 warn() { printf '\033[33m[factory]\033[0m %s\n' "$*" >&2; }
 die() {
   printf '\033[31m[factory] error:\033[0m %s\n' "$*" >&2
@@ -74,10 +75,14 @@ usage() {
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
   row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" 'code changes must touch a test file'
   row "FACTORY_APPROVAL=$FACTORY_APPROVAL" 'ask: you approve each plan and build; auto: skip'
+  row "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS" 'seconds between checks for the approve, reject and answer files'
   row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request'
   row "FACTORY_COPILOT=$FACTORY_COPILOT" '1: request a Copilot review on the PR and act on its comments'
   row "FACTORY_COPILOT_ROUNDS=$FACTORY_COPILOT_ROUNDS" 'Copilot review rounds before giving up'
+  row "FACTORY_COPILOT_WAIT_S=$FACTORY_COPILOT_WAIT_S" 'seconds to wait for each Copilot review'
   row "FACTORY_BD_PUSH=$FACTORY_BD_PUSH" '1: push beads to their sync remote after tasks and adds'
+  row "FACTORY_GUARDRAILS=$FACTORY_GUARDRAILS" 'forbidden-pattern list; a repo'"'"'s .factory/guardrails.txt replaces it'
+  row "FACTORY_FRESH=$FACTORY_FRESH" '1: start the task over instead of resuming (--fresh)'
 }
 
 # ----------------------------------------------------------------- herdr ----
@@ -304,6 +309,12 @@ bd_field() { # repo id jq-expr
   bd -C "$1" show "$2" --json 2>/dev/null | jq -r "if type == \"array\" then .[0] else . end | $3"
 }
 
+# need_beads repo: the commands that touch tasks want a bd init first
+need_beads() { [[ -d $1/.beads ]] || die "no beads in $1; run: factory init $1"; }
+
+# bd_note repo id text: a comment on the bead, tagged so it reads as the factory's in bd show
+bd_note() { bd -C "$1" comment "$2" "Factory: $3" >/dev/null; }
+
 is_bead_id() { [[ $1 =~ ^[a-z][a-z0-9]*-[a-z0-9]+$ ]]; }
 
 # slugify text -> lowercase, dashes for anything else, at most 40 characters
@@ -323,7 +334,7 @@ bead_of_branch() { sed -E 's#^factory/([a-z][a-z0-9]*-[a-z0-9]+).*#\1#' <<<"$1";
 # resolve_task repo arg -> TASK_ID TASK_TITLE TASK_DESC
 resolve_task() {
   local repo=$1 arg=$2
-  [[ -d $repo/.beads ]] || die "no beads in $repo; run: factory init $repo"
+  need_beads "$repo"
   if is_bead_id "$arg" && bd -C "$repo" show "$arg" --json >/dev/null 2>&1; then
     TASK_ID=$arg
     TASK_TITLE=$(bd_field "$repo" "$arg" '.title')
@@ -467,10 +478,15 @@ run_gate() { # worktree gate logfile
   return 1
 }
 
+# tree_dirty worktree: 0 when files outside .factory/ changed or appeared
+tree_dirty() {
+  [[ -n $(git -C "$1" status --porcelain --untracked-files=all -- . ':(exclude).factory') ]]
+}
+
 # guard_check worktree base: mechanical guardrails on the branch. Prints violations.
 guard_check() {
   local wt=$1 base=$2 bad=0 f globs
-  if [[ -n $(git -C "$wt" status --porcelain --untracked-files=all -- . ':(exclude).factory') ]]; then
+  if tree_dirty "$wt"; then
     printf 'uncommitted changes in the worktree; commit your work (ignore build artifacts, do not commit them)\n'
     bad=1
   fi
@@ -644,9 +660,12 @@ $(cat "$WT/$RUN_DIR/plan.md" 2>/dev/null || printf 'no plan file')
 B
 }
 
+# gh_wt gh-args...: gh in the worktree, so {owner}/{repo} and the branch resolve from its origin.
+gh_wt() { (cd "$WT" && gh "$@"); }
+
 # existing_pr -> url of the branch's open pull request, empty if none
 existing_pr() {
-  (cd "$WT" && gh pr view "$BRANCH" --json url,state -q 'select(.state == "OPEN") | .url' 2>/dev/null) || printf ''
+  gh_wt pr view "$BRANCH" --json url,state -q 'select(.state == "OPEN") | .url' 2>/dev/null || printf ''
 }
 
 raise_pr() { # builder-agent -> prints the PR url
@@ -654,16 +673,15 @@ raise_pr() { # builder-agent -> prints the PR url
   git -C "$WT" remote get-url origin >/dev/null 2>&1 || die "$WT has no origin remote"
   local rc=0 url
   rebase_onto_base "$1" || rc=$?
-  ((rc == 0 || rc == 10)) || exit "$rc"
   ((rc == 10)) && regate "$1" pr
   git -C "$WT" push -q -u --force-with-lease origin "$BRANCH" || die "could not push $BRANCH to origin"
   url=$(existing_pr)
   if [[ -n $url ]]; then
-    log "pull request already open, reusing it" >&2
+    log "pull request already open, reusing it"
     printf '%s\n' "$url"
     return 0
   fi
-  (cd "$WT" && gh pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)")
+  gh_wt pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)"
 }
 
 # ------------------------------------------------------------- copilot ----
@@ -671,12 +689,12 @@ raise_pr() { # builder-agent -> prints the PR url
 # line such as "### 🟢 Approval recommended", and its inline comments are posted by the user
 # "Copilot". Done means: the review of the head commit recommends approval, or has no comments.
 copilot_request() { # pr-number
-  (cd "$WT" && gh api -X POST "repos/{owner}/{repo}/pulls/$1/requested_reviewers" -f "reviewers[]=$COPILOT_BOT" >/dev/null)
+  gh_wt api -X POST "repos/{owner}/{repo}/pulls/$1/requested_reviewers" -f "reviewers[]=$COPILOT_BOT" >/dev/null
 }
 
 copilot_reviewed() { # pr-number sha -> 0 once Copilot reviewed that commit
   local n
-  n=$(cd "$WT" && gh api "repos/{owner}/{repo}/pulls/$1/reviews" \
+  n=$(gh_wt api "repos/{owner}/{repo}/pulls/$1/reviews" \
     --jq "[.[] | select((.user.login | ascii_downcase | startswith(\"copilot\")) and .commit_id == \"$2\")] | length")
   [[ ${n:-0} -gt 0 ]]
 }
@@ -690,10 +708,10 @@ copilot_wait() { # pr-number sha
   done
 }
 
-# copilot_format sha: the REST comments JSON on stdin as "path:line: body" lines, for Copilot's
+# copilot_comments_of sha: the REST comments JSON on stdin as "path:line: body" lines, for Copilot's
 # comments made on that commit. GitHub moves commit_id along with the head while a commented
 # line survives; original_commit_id stays.
-copilot_format() { # sha
+copilot_comments_of() { # sha
   jq -r --arg sha "$1" \
     '.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .original_commit_id == $sha) | "\(.path):\(.line // .original_line // "?"): \(.body | gsub("\r"; "") | gsub("\n"; "\n    "))"'
 }
@@ -705,7 +723,7 @@ copilot_verdict_of() { # sha
 }
 
 copilot_verdict() { # pr-number sha
-  (cd "$WT" && gh api "repos/{owner}/{repo}/pulls/$1/reviews") | copilot_verdict_of "$2"
+  gh_wt api "repos/{owner}/{repo}/pulls/$1/reviews" | copilot_verdict_of "$2"
 }
 
 # copilot_summary_of: the sentence under Copilot's verdict line, from reviews JSON on stdin.
@@ -715,11 +733,11 @@ copilot_summary_of() { # sha
 }
 
 copilot_summary() { # pr-number sha
-  (cd "$WT" && gh api "repos/{owner}/{repo}/pulls/$1/reviews") | copilot_summary_of "$2"
+  gh_wt api "repos/{owner}/{repo}/pulls/$1/reviews" | copilot_summary_of "$2"
 }
 
 copilot_comments() { # pr-number sha
-  (cd "$WT" && gh api --paginate "repos/{owner}/{repo}/pulls/$1/comments") | copilot_format "$2"
+  gh_wt api --paginate "repos/{owner}/{repo}/pulls/$1/comments" | copilot_comments_of "$2"
 }
 
 # copilot_reply_body round sha comments-file [response-file] -> one PR comment for the round
@@ -735,7 +753,7 @@ copilot_reply_body() {
 copilot_reply() { # pr-number round sha
   local body
   body=$(copilot_reply_body "$2" "$3" "$WT/$RUN_DIR/copilot-$2.md" "$WT/$RUN_DIR/copilot-$2-response.md")
-  (cd "$WT" && gh pr comment "$1" --body "$body" >/dev/null) || warn "could not comment on the PR"
+  gh_wt pr comment "$1" --body "$body" >/dev/null || warn "could not comment on the PR"
 }
 
 # copilot_resolve pr-number sha: resolve Copilot's review threads that start on that commit.
@@ -754,7 +772,7 @@ Q
 mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }
 Q
   )
-  ids=$(cd "$WT" && gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr="$1" -f query="$query" \
+  ids=$(gh_wt api graphql -F owner='{owner}' -F repo='{repo}' -F pr="$1" -f query="$query" \
     --jq ".data.repository.pullRequest.reviewThreads.nodes[]
       | select(.isResolved | not)
       | select((.comments.nodes[0].author.login // \"\" | ascii_downcase | startswith(\"copilot\")) and .comments.nodes[0].originalCommit.oid == \"$2\")
@@ -763,7 +781,7 @@ Q
     return 0
   }
   for id in $ids; do
-    (cd "$WT" && gh api graphql -f query="$mutation" -F id="$id" >/dev/null) || warn "could not resolve thread $id"
+    gh_wt api graphql -f query="$mutation" -F id="$id" >/dev/null || warn "could not resolve thread $id"
   done
   [[ -n $ids ]] && log "resolved $(grep -c '' <<<"$ids") Copilot thread(s)"
   return 0
@@ -938,6 +956,38 @@ Commit. Reply with just DONE.
 P
 }
 
+plan_fix_prompt() {
+  cat <<P
+Reviewers left notes on your plan in $RUN_DIR/plan-review.md and $RUN_DIR/plan-review-build.md. Update $RUN_DIR/plan.md where they are right; ignore what is not.
+Reply with just PLAN READY when done.
+P
+}
+
+plan_check_prompt() { # round
+  cat <<P
+The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(base_ref)...HEAD
+Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.
+Write your notes to $RUN_DIR/review-$1-plan.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
+Reply with just DONE once the file is written.
+P
+}
+
+revise_prompt() { # round
+  cat <<P
+Reviewers asked for changes in $RUN_DIR/review-$1.md and $RUN_DIR/review-$1-plan.md. Fix real issues; if a point is wrong, say why in $RUN_DIR/response-$1.md instead.
+The gate must pass: $GATE
+Commit. Reply with just DONE.
+P
+}
+
+memory_prompt() {
+  cat <<P
+Last thing: anything a future agent on this repo should know (gotchas, conventions, how to run things)? Store each as: bd remember "..."
+Skip what is obvious from the code. Reply with just DONE.
+P
+}
+
+# ----------------------------------------------------------- human gates ----
 # human_gate plan|build agent dir: show the plan, or the branch's commits and diff stat,
 # and wait for the human: an answer in this terminal, or the files `factory approve` and
 # `factory reject` write into dir. A plan note goes to the planner and the plan is shown
@@ -987,7 +1037,7 @@ human_gate() {
         return 0
         ;;
       r | R)
-        printf '\033[34m[factory]\033[0m note for the %s: ' "$(role_of "$kind")" >&2
+        printf '%s note for the %s: ' "$TAG" "$(role_of "$kind")" >&2
         read -r note || return 3
         [[ -n $note ]] || continue
         take_note "$kind" "$agent" "$note" || return $?
@@ -1019,23 +1069,23 @@ show_md() {
 }
 
 show_for_approval() { # kind dir
-  printf '\n\033[34m[factory]\033[0m ' >&2
+  printf '\n%s ' "$TAG" >&2
   if [[ $1 == plan ]]; then
     printf 'plan for %s (%s):\n\n' "$TASK_ID" "$2/plan.md" >&2
     show_md "$2/plan.md"
     if [[ -s $2/plan-changes.md ]]; then # written by the planner after a note; shown once
-      printf '\n\033[34m[factory]\033[0m what the planner changed after your note (%s):\n\n' "$2/plan-changes.md" >&2
+      printf '\n%s what the planner changed after your note (%s):\n\n' "$TAG" "$2/plan-changes.md" >&2
       show_md "$2/plan-changes.md"
       rm -f "$2/plan-changes.md"
     fi
-    printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' >&2
+    printf '\n%s [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' "$TAG" >&2
   else
     printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2
     {
       git -C "$WT" log --oneline "$(base_ref)..HEAD"
       git -C "$WT" diff --stat "$(base_ref)...HEAD"
     } 2>/dev/null | sed 's/^/    /' >&2 || warn "could not show the branch"
-    printf '\n\033[34m[factory]\033[0m [a]pprove (look at the worktree or talk to the builder first if you like), [r]evise with a note, a[b]ort? (a/r/b) ' >&2
+    printf '\n%s [a]pprove (look at the worktree or talk to the builder first if you like), [r]evise with a note, a[b]ort? (a/r/b) ' "$TAG" >&2
   fi
 }
 
@@ -1047,9 +1097,9 @@ collect_answers() {
   dir=$(dirname "$q")
   rm -f "$dir/answers.md"
   toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal or with: factory answer" request
-  printf '\n\033[34m[factory]\033[0m the planner asks (%s):\n\n' "$q" >&2
+  printf '\n%s the planner asks (%s):\n\n' "$TAG" "$q" >&2
   show_md "$q"
-  printf '\n\033[34m[factory]\033[0m answer below, finish with a line containing only "."  (or: factory answer <repo> %s "...")\n' "$TASK_ID" >&2
+  printf '\n%s answer below, finish with a line containing only "."  (or: factory answer <repo> %s "...")\n' "$TAG" "$TASK_ID" >&2
   while :; do
     if [[ -s $dir/answers.md ]]; then
       answers=$(<"$dir/answers.md")
@@ -1075,11 +1125,6 @@ collect_answers() {
   done
   [[ -n $answers ]] || return 3
   printf '%s' "$answers"
-}
-
-# tree_dirty worktree: 0 when files outside .factory/ changed or appeared
-tree_dirty() {
-  [[ -n $(git -C "$1" status --porcelain --untracked-files=all -- . ':(exclude).factory') ]]
 }
 
 # planner_kept_hands_off planner-agent: the planner must not change code; give it one chance to revert.
@@ -1110,37 +1155,6 @@ plan_or_interview() {
       [[ -s $file || -s $q ]] || die "$plan_agent never wrote $RUN_DIR/plan.md"
     fi
   done
-}
-
-plan_fix_prompt() {
-  cat <<P
-Reviewers left notes on your plan in $RUN_DIR/plan-review.md and $RUN_DIR/plan-review-build.md. Update $RUN_DIR/plan.md where they are right; ignore what is not.
-Reply with just PLAN READY when done.
-P
-}
-
-plan_check_prompt() { # round
-  cat <<P
-The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(base_ref)...HEAD
-Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.
-Write your notes to $RUN_DIR/review-$1-plan.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
-Reply with just DONE once the file is written.
-P
-}
-
-revise_prompt() { # round
-  cat <<P
-Reviewers asked for changes in $RUN_DIR/review-$1.md and $RUN_DIR/review-$1-plan.md. Fix real issues; if a point is wrong, say why in $RUN_DIR/response-$1.md instead.
-The gate must pass: $GATE
-Commit. Reply with just DONE.
-P
-}
-
-memory_prompt() {
-  cat <<P
-Last thing: anything a future agent on this repo should know (gotchas, conventions, how to run things)? Store each as: bd remember "..."
-Skip what is obvious from the code. Reply with just DONE.
-P
 }
 
 # ------------------------------------------------------------ workspace ----
@@ -1174,9 +1188,10 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
 }
 
 # ------------------------------------------------------------- pipeline ----
-# Shared task state, set by setup_task and read by the phases below:
-#   TASK_ID TASK_TITLE TASK_DESC  GATE BASE BRANCH MEMORY  WS WT BUILD_PANE
-#   PLAN_AGENT BUILD_AGENT REVIEW_AGENT  ROUND VERDICT GATE_LOG
+# Shared task state: setup_task sets TASK_ID TASK_TITLE TASK_DESC GATE BASE BRANCH MEMORY and
+#   PLAN_AGENT BUILD_AGENT REVIEW_AGENT; open_task_workspace sets WS WT BUILD_PANE; build_phase
+#   (run_task on resume) sets ROUND VERDICT GATE_LOG; HUMAN_NOTE, COPILOT_NOTE and STEP pass
+#   between the human gates, the Copilot loop and on_interrupt.
 
 # task_context repo: from TASK_ID and TASK_TITLE, derive GATE BASE BRANCH and the agent names.
 task_context() {
@@ -1227,7 +1242,7 @@ start_or_adopt_agents() {
     settle_dialogs "$REVIEW_AGENT" quiet
     return 0
   fi
-  [[ $live == 0 ]] || die "some agents of $TASK_ID are still alive in workspace $WS; run: fy clean $repo $TASK_ID --force"
+  [[ $live == 0 ]] || die "some agents of $TASK_ID are still alive in workspace $WS; run: factory clean $repo $TASK_ID --force"
   close_extra_panes "$WS" "$BUILD_PANE"
   # builder left, planner over reviewer right; equal columns, the planner a little taller
   plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.5 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
@@ -1267,7 +1282,7 @@ resume_point() { # -> planned | built <round> | (empty)
 
 # stop_task repo what: a human gate ended the run; leave the workspace for them.
 stop_task() {
-  bd -C "$1" comment "$TASK_ID" "Factory: stopped at $2. workspace $WS, worktree $WT" >/dev/null
+  bd_note "$1" "$TASK_ID" "stopped at $2. workspace $WS, worktree $WT"
   die "stopped at $2 for $TASK_ID; the workspace stays open"
 }
 
@@ -1352,7 +1367,7 @@ finish_task() {
   local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}"
   ask "$BUILD_AGENT" "$(memory_prompt)"
   if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_check "$WT" "$(base_ref)" >/dev/null; then
-    bd -C "$repo" comment "$TASK_ID" "Factory: needs a human. $summary" >/dev/null
+    bd_note "$repo" "$TASK_ID" "needs a human. $summary"
     toast "$TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
     warn "not approved after $FACTORY_ROUNDS rounds: $summary"
     bd_push "$repo"
@@ -1368,7 +1383,7 @@ finish_task() {
       copilot=", $COPILOT_NOTE"
     fi
   fi
-  bd -C "$repo" comment "$TASK_ID" "Factory: approved. $summary${pr:+, pr $pr}$copilot" >/dev/null
+  bd_note "$repo" "$TASK_ID" "approved. $summary${pr:+, pr $pr}$copilot"
   bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null
   toast "$TASK_ID done" "$TASK_TITLE. ${next^}." "done"
   log "done: $summary${pr:+, pr $pr}"
@@ -1382,7 +1397,7 @@ on_interrupt() {
   trap - INT TERM
   printf '\n' >&2
   warn "interrupted during $STEP; workspace ${WS:-?} stays open, rerun the same command to continue"
-  [[ -n ${TASK_ID:-} ]] && bd -C "$1" comment "$TASK_ID" "Factory: interrupted during $STEP. workspace ${WS:-?}, worktree ${WT:-?}; rerun the same command" >/dev/null 2>&1
+  [[ -n ${TASK_ID:-} ]] && bd_note "$1" "$TASK_ID" "interrupted during $STEP. workspace ${WS:-?}, worktree ${WT:-?}; rerun the same command" 2>/dev/null
   exit 130
 }
 
@@ -1547,7 +1562,7 @@ compose_task() {
 cmd_add() {
   local repo=$1
   shift
-  [[ -d $repo/.beads ]] || die "no beads in $repo; run: factory init $repo"
+  need_beads "$repo"
   if (($# == 0)); then
     compose_task
   else
@@ -1560,7 +1575,7 @@ cmd_add() {
 
 cmd_sync() { # repo: pull (when the remote has beads data), then push
   local repo=$1 out
-  [[ -d $repo/.beads ]] || die "no beads in $repo; run: factory init $repo"
+  need_beads "$repo"
   if out=$(bd -C "$repo" dolt pull 2>&1); then
     log "beads: $(tail -n1 <<<"$out")"
   elif [[ $out == *"no branches found"* ]]; then
@@ -1574,7 +1589,7 @@ cmd_sync() { # repo: pull (when the remote has beads data), then push
 cmd_tasks() { # repo [bd list args...]
   local repo=$1
   shift
-  [[ -d $repo/.beads ]] || die "no beads in $repo; run: factory init $repo"
+  need_beads "$repo"
   bd -C "$repo" list "$@"
 }
 
@@ -1655,7 +1670,7 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
     copilot_loop "$BUILD_AGENT" "$url" || warn "Copilot loop ended without a clean review: $COPILOT_NOTE"
     note=", $COPILOT_NOTE"
   fi
-  bd -C "$repo" comment "$2" "Factory: pull request opened by hand: $url$note" >/dev/null
+  bd_note "$repo" "$2" "pull request opened by hand: $url$note"
   bd_push "$repo"
   printf '%s\n' "$url"
 }
@@ -1704,7 +1719,7 @@ cmd_clean() {
       log "cleaned $branch${ws:+ (workspace $ws)}"
       n=$((n + 1))
     else
-      log "keeping $branch: not merged into $base (fy clean $repo $id --force to drop it)"
+      log "keeping $branch: not merged into $base (factory clean $repo $id --force to drop it)"
     fi
   done < <(clean_targets "$repo")
   git -C "$repo" worktree prune # stale entries from anywhere, not only ours
@@ -1752,7 +1767,7 @@ load_repo_env() {
   return 0
 }
 
-# take_flags args...: consume --pr (and --auto) anywhere in the args; the rest land in ARGS.
+# take_flags args...: consume --pr, --auto, --no-copilot and --fresh anywhere in the args; the rest land in ARGS.
 take_flags() {
   ARGS=()
   local a
@@ -1780,19 +1795,19 @@ main() {
   case $cmd in
     run)
       take_flags "$@"
-      ((${#ARGS[@]} == 2)) || die "usage: factory run [--pr] [--auto] <repo> <bead-id | task>"
+      ((${#ARGS[@]} == 2)) || die "usage: factory run [--pr] [--auto] [--no-copilot] [--fresh] <repo> <bead-id | task>"
       need_all "${RUN_TOOLS[@]}"
       run_task "${ARGS[0]}" "${ARGS[1]}"
       ;;
     next)
       take_flags "$@"
-      ((${#ARGS[@]} == 1)) || die "usage: factory next [--pr] [--auto] <repo>"
+      ((${#ARGS[@]} == 1)) || die "usage: factory next [--pr] [--auto] [--no-copilot] [--fresh] <repo>"
       need_all "${RUN_TOOLS[@]}"
       cmd_next "${ARGS[0]}"
       ;;
     queue)
       take_flags "$@"
-      ((${#ARGS[@]} >= 1)) || die "usage: factory queue [--pr] [--auto] <repo> [max]"
+      ((${#ARGS[@]} >= 1)) || die "usage: factory queue [--pr] [--auto] [--no-copilot] [--fresh] <repo> [max]"
       need_all "${RUN_TOOLS[@]}"
       cmd_queue "${ARGS[@]}"
       ;;
@@ -1821,7 +1836,7 @@ main() {
       cmd_approve "$@"
       ;;
     reject)
-      (($# == 3)) || die "usage: factory reject <repo> <bead-id> \"note for the planner\""
+      (($# == 3)) || die "usage: factory reject <repo> <bead-id> \"note\""
       cmd_reject "$1" "$2" "$3"
       ;;
     answer)
