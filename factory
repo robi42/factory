@@ -1017,14 +1017,13 @@ show_md() {
 show_for_approval() { # kind dir
   printf '\n\033[34m[factory]\033[0m ' >&2
   if [[ $1 == plan ]]; then
-    if [[ -s $2/plan-changes.md ]]; then # written by the planner after a note; shown once
-      printf 'what the planner changed after your note (%s):\n\n' "$2/plan-changes.md" >&2
-      show_md "$2/plan-changes.md"
-      rm -f "$2/plan-changes.md"
-      printf '\n\033[34m[factory]\033[0m ' >&2
-    fi
     printf 'plan for %s (%s):\n\n' "$TASK_ID" "$2/plan.md" >&2
     show_md "$2/plan.md"
+    if [[ -s $2/plan-changes.md ]]; then # written by the planner after a note; shown once
+      printf '\n\033[34m[factory]\033[0m what the planner changed after your note (%s):\n\n' "$2/plan-changes.md" >&2
+      show_md "$2/plan-changes.md"
+      rm -f "$2/plan-changes.md"
+    fi
     printf '\n\033[34m[factory]\033[0m [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' >&2
   else
     printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2

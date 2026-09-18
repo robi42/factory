@@ -9,7 +9,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 - With `glow` on the PATH, the plan and the planner's questions are rendered as Markdown at
   the approval prompts.
 - After a note at plan approval, the planner writes what it changed and why to
-  `plan-changes.md`, and the next prompt shows that above the revised plan.
+  `plan-changes.md`, and the next prompt shows that below the revised plan.
 
 ## [0.1.4] - 2026-09-17
 
