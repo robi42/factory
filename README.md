@@ -398,7 +398,8 @@ detection more reliable. Factory handles the known startup dialogs either way.
 
 **Rendered Markdown at the prompts.** With [glow](https://github.com/charmbracelet/glow) on
 your PATH, the plan and the planner's questions are rendered in the terminal instead of
-printed as-is.
+printed as-is. The look is glow's own: its config (`glow config`) picks the style, a
+built-in one or a JSON of your own, for example a Nord one to match your terminal theme.
 
 ## Why so lean
 
