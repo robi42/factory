@@ -36,6 +36,8 @@ log() { printf '%s %s\n' "$TAG" "$*" >&2; }
 warn() { printf '\033[33m[factory]\033[0m %s\n' "$*" >&2; }
 die() {
   printf '\033[31m[factory] error:\033[0m %s\n' "$*" >&2
+  # inside $(...) exit ends only the subshell, and a caller in a || list would carry on
+  [[ -z ${FACTORY_PID:-} || $BASHPID == "$FACTORY_PID" ]] || kill -s USR1 "$FACTORY_PID"
   exit 1
 }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
@@ -373,16 +375,19 @@ memory_block() { # repo -> text to append to prompts, empty if no memories
 }
 
 # ------------------------------------------------------- gate and guards ----
-resolve_gate() { # repo
+# find_gate repo: the gate command, or 1 when the repo has none.
+find_gate() {
   if [[ -n ${FACTORY_GATE:-} ]]; then
     printf '%s' "$FACTORY_GATE"
   elif [[ -f $1/.factory/gate ]]; then
     printf 'bash .factory/gate'
-  elif detect_gate "$1"; then
-    return 0
   else
-    die "no gate for $1: set FACTORY_GATE, or add .factory/gate (factory init writes one when it can)"
+    detect_gate "$1"
   fi
+}
+
+resolve_gate() { # repo
+  find_gate "$1" || die "no gate for $1: set FACTORY_GATE, or add .factory/gate (factory init writes one when it can)"
 }
 
 # detect_gate repo -> the command a repo's own convention suggests, empty if none.
@@ -1520,7 +1525,7 @@ cmd_init() {
 
 write_agents_stub() { # repo
   local gate
-  gate=$(resolve_gate "$1" 2>/dev/null) || gate="<your gate command>"
+  gate=$(find_gate "$1") || gate="<your gate command>"
   cat >"$1/AGENTS.md" <<STUB
 # $(basename "$1")
 
@@ -1872,6 +1877,8 @@ main() {
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  FACTORY_PID=$$
+  trap 'exit 1' USR1 # a die in a subshell, see die
   main "$@"
   exit # never read on past this: a run takes hours, and the file on disk may have changed
 fi

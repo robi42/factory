@@ -905,6 +905,13 @@ JSON
   [ "$output" = "    # Plan" ]
 }
 
+@test "die inside a command substitution stops the main shell, not just the subshell" {
+  run bash -c 'source "$1"; FACTORY_PID=$$; trap "exit 7" USR1; x=$(die boom) || true; echo continued' _ "$BATS_TEST_DIRNAME/../factory"
+  [ "$status" -eq 7 ]
+  [[ $output == *"error:"*"boom"* ]]
+  [[ $output != *continued* ]]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]

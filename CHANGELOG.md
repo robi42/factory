@@ -22,6 +22,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   a note.
 - `factory add` with an empty task on stdin exited silently and left its temp file behind
   instead of saying "empty title, nothing filed".
+- In `factory queue`, an error inside a command substitution (no gate found, a pane that
+  failed to open, a pull request that failed to open) ended only that subshell and the run
+  carried on with an empty value, because Bash ignores errexit under the queue's `||`.
+  A `die` in a subshell now signals the main shell, which exits 1 as it does elsewhere.
 - `n` at an approval prompt aborted the run, a hidden alias for "no" next to `y` for
   "yes". Only the keys the prompt shows mean anything now; any other key, and an empty
   note, ask again in place instead of re-rendering the plan and toasting.
