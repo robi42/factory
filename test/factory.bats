@@ -260,6 +260,18 @@ commit_all() {
   [[ $output == *"asked planner: The human reviewed"*"split the module"* ]]
 }
 
+@test "plan approval: the planner's change note is shown once, above the revised plan" {
+  fake_task
+  [[ $(plan_note_prompt "split it") == *"says: split it"*"plan-changes.md"* ]]
+  printf 'the plan\n' >"$TMP/plan.md"
+  printf 'split the module in two\n' >"$TMP/plan-changes.md"
+  run show_for_approval plan "$TMP"
+  [[ $output == *"changed after your note"*"split the module in two"*"plan for toy-1"*"the plan"* ]]
+  [ ! -e "$TMP/plan-changes.md" ]
+  run show_for_approval plan "$TMP"
+  [[ $output != *"changed after your note"* ]]
+}
+
 @test "plan approval: files from factory approve / reject, no terminal" {
   fake_task
   FACTORY_APPROVAL=ask

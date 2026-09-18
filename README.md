@@ -156,8 +156,9 @@ three rounds, then the plan comes.
 **Plan approval.** Factory prints the plan and waits. Answer in its terminal: `a` approve,
 `p` approve and allow protected paths, `r` revise with a note, `b` abort. Or from anywhere:
 `fy approve` (with `--allow-protected` for the `p` case) and `fy reject "note"`. A note
-goes to the planner, the plan comes back revised, and you are asked again. You can also
-edit `plan.md` or talk to the planner in its pane first; the builder reads the file.
+goes to the planner, the plan comes back revised with a short note on what changed and
+why, and you are asked again. You can also edit `plan.md` or talk to the planner in its
+pane first; the builder reads the file.
 `--auto` skips both approvals for unattended queues. If the run has no terminal it simply
 waits for the files.
 
