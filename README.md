@@ -8,7 +8,7 @@ A simple, lean software factory on [Herdr](https://herdr.dev): one task in, one 
 
 The CLI is `factory`; `fy` is the alias used below.
 
-- **Claude Code** plans (Fable 5.1) and builds (Opus 5), each in its own Herdr pane, the
+- **Claude Code** plans (Fable 5.1) and builds (Opus 5.5), each in its own Herdr pane, the
   planner's prompt line purple and the builder's cyan. The plan states the design in a few
   lines: what changes, responsibilities, interfaces.
 - **Codex** reviews (GPT 6 Astra, with web search) in a third pane. Models are defaults;
@@ -293,7 +293,7 @@ after the gate passes and before review:
 | env | default |
 |---|---|
 | `FACTORY_PLAN_MODEL` | `claude-fable-5-1` |
-| `FACTORY_BUILD_MODEL` | `claude-opus-5` |
+| `FACTORY_BUILD_MODEL` | `claude-opus-5-5` |
 | `FACTORY_REVIEW_MODEL` | `gpt-6-astra` |
 | `FACTORY_ROUNDS` | `3` build / review rounds |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |

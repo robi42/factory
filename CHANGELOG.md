@@ -8,6 +8,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 ### Changed
 - The planner replies with its questions instead of QUESTIONS, so they read in its pane as
   well as at the factory prompt.
+- The builder defaults to Opus 5.5 (`claude-opus-5-5`); `FACTORY_BUILD_MODEL` still
+  overrides it.
 
 ## [0.1.6] - 2026-09-18
 

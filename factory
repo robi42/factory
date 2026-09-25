@@ -10,7 +10,7 @@ FACTORY_VERSION=0.1.6
 # ones the environment left unset (load_repo_env); flags override both.
 ENV_KNOBS=$(compgen -A variable FACTORY_)
 : "${FACTORY_PLAN_MODEL:=claude-fable-5-1}"
-: "${FACTORY_BUILD_MODEL:=claude-opus-5}"
+: "${FACTORY_BUILD_MODEL:=claude-opus-5-5}"
 : "${FACTORY_REVIEW_MODEL:=gpt-6-astra}"
 : "${FACTORY_ROUNDS:=3}"
 : "${FACTORY_TURN_TIMEOUT_MS:=3600000}"
