@@ -8,13 +8,31 @@ versions follow [Semantic Versioning](https://semver.org/).
 ### Added
 - Effort knobs `FACTORY_PLAN_EFFORT`, `FACTORY_BUILD_EFFORT` and `FACTORY_REVIEW_EFFORT`,
   all `xhigh` by default. They override the effort in your Claude Code and Codex settings;
-  a Codex without one ran GPT 6 Astra at its default of `low`.
+  a Codex config without one ran GPT 6 Astra at its default of `low`.
 
 ### Changed
 - The planner replies with its questions instead of QUESTIONS, so they read in its pane as
-  well as at the factory prompt.
+  well as in Factory's terminal.
 - The builder defaults to Opus 5.5 (`claude-opus-5-5`); `FACTORY_BUILD_MODEL` still
   overrides it.
+
+### Fixed
+- After an interrupt, Factory names the command that resumes: `factory run` with the bead
+  id. Rerunning `next` or `queue` claims another bead, and rerunning with the title files
+  a new one.
+- A run that used up its rounds reported one round more than it had, and a run approved
+  but handed over because the gate log or guardrails failed at the end said "not
+  approved". Both now say the run needs a human, with the right round count.
+- `factory answer` refuses more than one answer argument instead of sending only the first
+  word of an unquoted answer, and `factory approve` refuses a third argument other than
+  `--allow-protected` instead of approving without the waiver.
+- `factory pr` checks for Herdr and `factory status` for jq up front, and a repo's
+  `.factory/env` can no longer set `FACTORY_PID`.
+- Prompts: the answers prompt no longer points at `questions.md` after Factory removed it,
+  the retry for a missing review file asks for the verdict line instead of DONE, and the
+  builder hears that only `.factory/run/` is ignored by git, not all of `.factory/`.
+- A review from a deleted account on the pull request no longer hides Copilot's review, so
+  the wait for it no longer runs out after Copilot has reviewed.
 
 ## [0.1.6] - 2026-09-18
 

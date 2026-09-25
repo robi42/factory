@@ -67,7 +67,7 @@ usage() {
   row 'factory run     <repo> <bead-id | "task title">' 'plan, build, gate, review one task'
   row 'factory next    <repo>' 'claim the next ready bead and run it'
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
-  row '  flags: --pr, --auto, --no-copilot, --fresh' 'open a PR; skip the human gates; no Copilot review; do not resume'
+  row '  flags: --pr, --auto, --no-copilot, --fresh' 'open a PR; skip both approvals; no Copilot review; do not resume'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory tasks   <repo> [--all]' 'list open tasks (beads); --all includes closed'
   row 'factory sync    <repo>' 'pull, then push the beads database to its git remote'
@@ -75,7 +75,7 @@ usage() {
   row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the waiting plan or build from any terminal'
   row 'factory reject  <repo> <bead-id> "note"' 'send a note back; the plan or build comes back revised'
   row 'factory answer  <repo> <bead-id> ["answers" | -]' 'answer the planner'"'"'s questions from any terminal'
-  row 'factory pr      <repo> <bead-id>' 'push an existing task branch and open a pull request'
+  row 'factory pr      <repo> <bead-id> [--no-copilot]' 'push an existing task branch and open a pull request'
   row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
   row 'factory check   <worktree> <base>' 'run gate + guardrails on a branch, no agents'
   row 'factory status' 'live factory agents in Herdr'
@@ -91,7 +91,7 @@ usage() {
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
   row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'a stalled turn fails after this; a working one toasts you and goes on'
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
-  row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" 'code changes must touch a test file'
+  row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" '1: code changes must touch a test file'
   row "FACTORY_APPROVAL=$FACTORY_APPROVAL" 'ask: you approve each plan and build; auto: skip'
   row "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS" 'seconds between checks for the approve, reject and answer files'
   row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request'
@@ -158,9 +158,10 @@ wait_for() {
   done
 }
 
-# settle_dialogs name: clear the startup dialogs agents show in a fresh worktree
+# settle_dialogs name [quiet]: clear the startup dialogs agents show in a fresh worktree
 # (trust prompts, mode notices, Codex hook review). Herdr does not flag all of them
-# as blocked, so this looks at the screen rather than the reported state.
+# as blocked, so this looks at the screen rather than the reported state. With quiet it
+# returns as soon as none is on screen, and never dies.
 settle_dialogs() {
   local name=$1 quiet=${2:-} i txt status
   for i in 1 2 3 4 5 6; do
@@ -186,7 +187,7 @@ settle_dialogs() {
       status=$(agent_status "$name")
       case $status in
         idle | done) return 0 ;;
-        blocked) attention "$name" "is blocked on a dialog I do not recognize; answer it in its pane" ;;
+        blocked) attention "$name" "is blocked on a dialog I do not recognise; answer it in its pane" ;;
       esac
     fi
     sleep 3
@@ -318,7 +319,7 @@ ask_for_file() {
   ask "$name" "$text"
   [[ -s $file ]] && return 0
   warn "$name replied but $file is missing; asking again"
-  ask "$name" "You replied, but $file does not exist. Write it now and reply DONE."
+  ask "$name" "You replied, but $file does not exist. Write it now and reply as asked."
   [[ -s $file ]] || die "$name never wrote $file"
 }
 
@@ -556,6 +557,7 @@ tests_changed_with_source() {
   tests=$(grep -E "$TEST_PATH_RE" <<<"$files") || tests=""
   [[ -z $src || -n $tests ]]
 }
+
 verdict_of() { # review file -> APPROVE | REVISE | (empty)
   grep -oE '^VERDICT:\s*(APPROVE|REVISE)' "$1" 2>/dev/null | tail -n1 | grep -oE 'APPROVE|REVISE'
 }
@@ -569,7 +571,7 @@ verdicts() { # files... -> one word per file, NONE when missing
   printf '%s' "$out"
 }
 
-# ------------------------------------------------------------------- pr ----
+# -------------------------------------------------------------------- pr ----
 rebase_fix_prompt() { # upstream files
   cat <<P
 Rebasing this branch onto $1 stopped on conflicts in:
@@ -705,7 +707,7 @@ raise_pr() { # builder-agent -> prints the PR url
   gh_wt pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)"
 }
 
-# ------------------------------------------------------------- copilot ----
+# --------------------------------------------------------------- copilot ----
 # GitHub Copilot code review never approves formally; its review body starts with a verdict
 # line such as "### 🟢 Approval recommended", and its inline comments are posted by the user
 # "Copilot". Done means: the review of the head commit recommends approval, or has no comments.
@@ -716,7 +718,7 @@ copilot_request() { # pr-number
 copilot_reviewed() { # pr-number sha -> 0 once Copilot reviewed that commit
   local n
   n=$(gh_wt api "repos/{owner}/{repo}/pulls/$1/reviews" \
-    --jq "[.[] | select((.user.login | ascii_downcase | startswith(\"copilot\")) and .commit_id == \"$2\")] | length")
+    --jq "[.[] | select(((.user.login // \"\") | ascii_downcase | startswith(\"copilot\")) and .commit_id == \"$2\")] | length")
   [[ ${n:-0} -gt 0 ]]
 }
 
@@ -898,7 +900,7 @@ build_prompt() {
 Task $TASK_ID: $TASK_TITLE
 
 Re-read $RUN_DIR/plan.md now; it is final and may have changed since you checked it. Implement it on this branch ($BRANCH) in this worktree. Run the gate until it passes: $GATE
-Commit when done; do not push. The factory tracks and closes bead $TASK_ID itself. Files under .factory/ are ignored by git. Do not change: $(protected_globs "$WT" | tr '\n' ' ')
+Commit when done; do not push. The factory tracks and closes bead $TASK_ID itself. Files under $RUN_DIR/ are ignored by git. Do not change: $(protected_globs "$WT" | tr '\n' ' ')
 No skipped tests, suppressed warnings, or swallowed errors; fix things properly.
 $MEMORY
 Reply with just DONE when finished.
@@ -961,11 +963,11 @@ P
 
 answers_prompt() { # answers
   cat <<P
-Answers to your questions in $RUN_DIR/questions.md:
+Answers to your questions:
 
 $1
 
-Now write $RUN_DIR/plan.md as described before and reply with just PLAN READY. If something is still unclear, replace $RUN_DIR/questions.md with the remaining questions and reply with them.
+Now write $RUN_DIR/plan.md as described before and reply with just PLAN READY. If something is still unclear, write the remaining questions to $RUN_DIR/questions.md and reply with them.
 P
 }
 
@@ -1189,7 +1191,7 @@ plan_or_interview() {
   done
 }
 
-# ------------------------------------------------------------ workspace ----
+# ------------------------------------------------------------- workspace ----
 # worktrees_dir -> Herdr's worktree directory ([worktrees] directory in its config, else its default)
 worktrees_dir() {
   local d
@@ -1219,7 +1221,7 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
   [[ -n $WS && -n $WT && -n $BUILD_PANE ]] || die "unexpected worktree response: $out"
 }
 
-# ------------------------------------------------------------- pipeline ----
+# -------------------------------------------------------------- pipeline ----
 # Shared task state: setup_task sets TASK_ID TASK_TITLE TASK_DESC GATE BASE BRANCH MEMORY and
 #   PLAN_AGENT BUILD_AGENT REVIEW_AGENT; open_task_workspace sets WS WT BUILD_PANE; build_phase
 #   (run_task on resume) sets ROUND VERDICT GATE_LOG; HUMAN_NOTE, COPILOT_NOTE and STEP pass
@@ -1259,7 +1261,7 @@ open_task_workspace() { # repo
   open_workspace "$1" "$BRANCH" "$TASK_ID $TASK_TITLE"
   mkdir -p "$WT/$RUN_DIR"
   exclude="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
-  grep -qsxF '.factory/run/' "$exclude" || printf '.factory/run/\n' >>"$exclude"
+  grep -qsxF "$RUN_DIR/" "$exclude" || printf '%s/\n' "$RUN_DIR" >>"$exclude"
   log "workspace $WS at $WT"
 }
 
@@ -1301,9 +1303,9 @@ start_or_adopt_agents() {
   log "agents up: $PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
 }
 
-# Resume: the run directory records the last completed milestone ("planned" once the human
-# approved the plan, "built <round>" once the reviews approved the build). A rerun skips
-# what is done; --fresh starts over.
+# Resume: the run directory records the last completed milestone ("reviewed" once the plan
+# was reviewed, "planned" once the human approved the plan, "built <round>" once the reviews
+# and the human approved the build). A rerun skips what is done; --fresh starts over.
 mark() { printf '%s\n' "$*" >"$WT/$RUN_DIR/state"; }
 resume_point() { # -> reviewed | planned | built <round> | (empty)
   if ((FACTORY_FRESH)); then
@@ -1399,6 +1401,7 @@ build_phase() {
     ask "$BUILD_AGENT" "$(revise_prompt "$ROUND")"
     ROUND=$((ROUND + 1))
   done
+  ROUND=$FACTORY_ROUNDS # the loop ends one past the last round
 }
 
 # finish_task repo: memories, then close the bead (with PR and Copilot review) or hand over.
@@ -1409,7 +1412,7 @@ finish_task() {
   if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_check "$WT" "$(base_ref)" >/dev/null; then
     bd_note "$repo" "$TASK_ID" "needs a human. $summary"
     toast "$TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
-    warn "not approved after $FACTORY_ROUNDS rounds: $summary"
+    warn "needs a human: $summary"
     bd_push "$repo"
     return 2
   fi
@@ -1432,12 +1435,12 @@ finish_task() {
 }
 
 # on_interrupt repo: the run was killed or Ctrl-C'd; leave a note on the bead, the state
-# lives in the worktree and the agents, and the same command resumes.
+# lives in the worktree and the agents, and factory run with the bead id resumes.
 on_interrupt() {
   trap - INT TERM
   printf '\n' >&2
-  warn "interrupted during $STEP; workspace ${WS:-?} stays open, rerun the same command to continue"
-  [[ -n ${TASK_ID:-} ]] && bd_note "$1" "$TASK_ID" "interrupted during $STEP. workspace ${WS:-?}, worktree ${WT:-?}; rerun the same command" 2>/dev/null
+  warn "interrupted during $STEP; workspace ${WS:-?} stays open, continue with: factory run [flags] $1 ${TASK_ID:-<bead-id>}"
+  [[ -n ${TASK_ID:-} ]] && bd_note "$1" "$TASK_ID" "interrupted during $STEP. workspace ${WS:-?}, worktree ${WT:-?}; continue with: factory run [flags] $1 $TASK_ID" 2>/dev/null
   exit 130
 }
 
@@ -1446,6 +1449,7 @@ run_task() { # repo arg
   repo=$(cd "$1" && pwd)
   git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$repo is not a git repo"
   STEP=setup
+  TASK_ID="" WS="" WT="" # a queue runs its tasks in one shell; on_interrupt must not see the last one's
   trap 'on_interrupt "$repo"' INT TERM
   setup_task "$repo" "$2"
   open_task_workspace "$repo"
@@ -1482,7 +1486,7 @@ run_task() { # repo arg
   trap - INT TERM
 }
 
-# --------------------------------------------------------------- commands ----
+# -------------------------------------------------------------- commands ----
 cmd_doctor() {
   local ok=0 t
   for t in "${RUN_TOOLS[@]}"; do
@@ -1542,7 +1546,7 @@ cmd_init() {
   [[ -d $repo/.git ]] || die "$repo is not a git repo"
   git -C "$repo" config beads.role >/dev/null 2>&1 || git -C "$repo" config beads.role maintainer
   if [[ -d $repo/.beads ]]; then log "beads already set up in $repo"; else
-    # No generated AGENTS.md/CLAUDE.md, hooks, or editor files: the prompts carry what agents need.
+    # No bd-generated AGENTS.md/CLAUDE.md, hooks, or editor files: the prompts carry what agents need.
     (cd "$repo" && BD_NON_INTERACTIVE=1 bd init --non-interactive --skip-agents --skip-hooks "$@")
   fi
   local gate
@@ -1586,7 +1590,7 @@ STUB
 }
 
 # compose_task: title on the first line, blank line, description. Uses $VISUAL/$EDITOR
-# when there is a terminal, otherwise reads the same format from stdin (until Ctrl-D).
+# when set and there is a terminal, otherwise reads the same format from stdin (until Ctrl-D).
 # Sets TASK_TITLE and TASK_DESC; fails on an empty title.
 compose_task() {
   local editor=${VISUAL:-${EDITOR:-}} f body
@@ -1641,7 +1645,7 @@ cmd_tasks() { # repo [bd list args...]
 
 cmd_next() {
   local repo=$1 id
-  # --claim is atomic, so several fy next in parallel never pick the same bead
+  # --claim is atomic, so several factory next in parallel never pick the same bead
   id=$(bd -C "$repo" ready --claim --json 2>/dev/null | jq -r 'if type == "array" then .[0].id // empty else .id // empty end') || id=""
   [[ -n $id ]] || {
     log "nothing ready in $repo"
@@ -1804,7 +1808,7 @@ load_repo_env() {
     [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
     [[ $line =~ ^(FACTORY_[A-Z0-9_]+)=(.*)$ ]] || die "$file: expected FACTORY_NAME=value, got: $line"
     name=${BASH_REMATCH[1]}
-    [[ $name == FACTORY_HOME || $name == FACTORY_VERSION ]] && die "$file: $name is not a knob"
+    [[ $name == FACTORY_HOME || $name == FACTORY_VERSION || $name == FACTORY_PID ]] && die "$file: $name is not a knob"
     grep -qxF "$name" <<<"$ENV_KNOBS" && continue
     printf -v "$name" '%s' "${BASH_REMATCH[2]}"
     applied+=("$name")
@@ -1841,7 +1845,7 @@ main() {
   case $cmd in
     run)
       take_flags "$@"
-      ((${#ARGS[@]} == 2)) || die "usage: factory run [--pr] [--auto] [--no-copilot] [--fresh] <repo> <bead-id | task>"
+      ((${#ARGS[@]} == 2)) || die "usage: factory run [--pr] [--auto] [--no-copilot] [--fresh] <repo> <bead-id | \"task title\">"
       need_all "${RUN_TOOLS[@]}"
       check_efforts
       run_task "${ARGS[0]}" "${ARGS[1]}"
@@ -1881,7 +1885,7 @@ main() {
       cmd_init "$@"
       ;;
     approve)
-      (($# == 2 || $# == 3)) || die "usage: factory approve <repo> <bead-id> [--allow-protected]"
+      [[ $# == 2 || ($# == 3 && $3 == --allow-protected) ]] || die "usage: factory approve <repo> <bead-id> [--allow-protected]"
       cmd_approve "$@"
       ;;
     reject)
@@ -1889,13 +1893,13 @@ main() {
       cmd_reject "$1" "$2" "$3"
       ;;
     answer)
-      (($# >= 2)) || die "usage: factory answer <repo> <bead-id> [\"answers\" | -]  (stdin when omitted or -)"
+      (($# == 2 || $# == 3)) || die "usage: factory answer <repo> <bead-id> [\"answers\" | -]  (stdin when omitted or -)"
       cmd_answer "$@"
       ;;
     pr)
       take_flags "$@"
       ((${#ARGS[@]} == 2)) || die "usage: factory pr [--no-copilot] <repo> <bead-id>"
-      need_all gh bd jq git
+      need_all herdr gh bd jq git
       cmd_pr "${ARGS[0]}" "${ARGS[1]}"
       ;;
     clean)
@@ -1908,7 +1912,7 @@ main() {
       need git
       cmd_check "$1" "$2"
       ;;
-    status) need herdr && cmd_status ;;
+    status) need_all herdr jq && cmd_status ;;
     doctor) cmd_doctor ;;
     -h | --help | help) usage ;;
     -V | --version) printf 'factory %s\n' "$FACTORY_VERSION" ;;

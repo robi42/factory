@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 bats_require_minimum_version 1.5.0
-# Unit tests for the pure parts of factory: task ids, verdicts, gate discovery, guardrails.
+# Unit tests for factory's functions; Herdr, Beads, gh and the agents are stubbed.
 
 setup() {
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 # the fixtures' git ignores this machine's config
@@ -58,7 +58,7 @@ plan_ready() {
   printf 'the plan\n' >"$TMP/plan.md"
 }
 
-# the branch globals the gates and guards read, as task_context sets them
+# the branch globals the gates and guards read, as task_context and open_workspace set them
 on_work_branch() {
   WT=$REPO
   BASE=main
@@ -260,7 +260,7 @@ context_of() {
   [[ $output == *"build artifact committed: __pycache__/m.cpython-314.pyc"* ]]
 }
 
-@test "agents stub: written once, links CLAUDE.md, names the gate" {
+@test "agents stub: short, links CLAUDE.md, names the gate" {
   make_repo
   write_agents_stub "$REPO"
   [ -L "$REPO/CLAUDE.md" ]
@@ -1067,7 +1067,7 @@ JSON
   bd() { printf '%s\n' "$*" >"$TMP/bd.log"; }
   run on_interrupt "$TMP"
   [ "$status" -eq 130 ]
-  [[ $output == *"interrupted during building"* ]]
+  [[ $output == *"interrupted during building"*"continue with: factory run [flags] $TMP toy-1"* ]]
   grep -q "comment toy-1 Factory: interrupted during building" "$TMP/bd.log"
 }
 
