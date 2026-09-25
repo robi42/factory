@@ -24,7 +24,7 @@ The CLI is `factory`; `fy` is the alias used below.
   Factory's own checks on the branch: no suppressions, skipped tests or swallowed errors
   added, no code change without a test, no build artifacts, no protected files touched.
 - **You stay in the loop** where it counts: the planner may ask you questions, you
-  approve every plan, and you merge.
+  approve every plan and every build, and you merge.
 
 ![A Herdr workspace during the dual code review: the builder (Opus 5, left, cyan prompt line) has finished and shows its diff; the planner (Fable 5.1, top right) has checked the branch against its plan, Factory's prompt with the verdict-line contract visible above its answer; the Codex reviewer (GPT 6 Astra, bottom right) has written its review](assets/screenshot.png)
 
@@ -48,8 +48,8 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
    abort.
 8. **Done.** Memories stored, bead closed, toast sent. With `--pr` the branch is rebased
    onto the base (the builder resolves conflicts), pushed, a pull request opened, and a
-   GitHub Copilot review requested and acted on until it is clean. Merging stays yours;
-   `fy clean` tidies up afterwards.
+   GitHub Copilot review requested and acted on until it is clean or recommends approval.
+   Merging stays yours; `fy clean` tidies up afterwards.
 
 ## How it drives the agents
 
@@ -63,10 +63,10 @@ exists, runs the gate itself, and inspects the diff.
 
 Because the state is the worktree plus Beads, the orchestrator is disposable. Kill it or
 Ctrl-C it: the agents, worktree and workspace stay, the bead gets a note saying at which
-step it was interrupted, and the same `fy run` resumes: it reopens the workspace, adopts
-the three agents still alive in it, and picks up after the last completed milestone: a
-reviewed plan waiting for your approval, an approved plan, or an approved build, reusing
-an open pull request. `--fresh` starts over.
+step it was interrupted, and `fy run` with the bead id resumes: it reopens the workspace,
+adopts the three agents still alive in it, and picks up after the last completed
+milestone: a reviewed plan waiting for your approval, an approved plan, or an approved
+build, reusing an open pull request. `--fresh` starts over.
 
 Known startup dialogs (trust prompts, Codex's hook review and transcript overlay) are
 cleared from the screen automatically, and a pane whose shell swallowed the startup command
@@ -78,7 +78,7 @@ time; only a turn that has stopped working by then fails the run.
 ## Requirements
 
 - Linux with Bash 4 or newer (macOS with a newer Bash and GNU coreutils is untested).
-- [Herdr](https://herdr.dev), [Claude Code](https://docs.claude.com/en/docs/claude-code)
+- [Herdr](https://herdr.dev), [Claude Code](https://code.claude.com/docs)
   and [Codex](https://github.com/openai/codex).
 - [mise](https://mise.jdx.dev), which installs the dev tools and
   [Beads](https://github.com/steveyegge/beads) (`bd`) from `mise.toml`; `jq` and `git`;
@@ -121,7 +121,7 @@ fy tasks   ~/src/app                         # list open tasks; --all includes c
 fy next    ~/src/app                         # claim the next ready bead and run it
 fy run     ~/src/app "Fix flaky login test"  # a one-off, also filed as a bead
 fy queue   ~/src/app                         # work through everything that is ready
-fy next    --pr --auto ~/src/app             # open a PR when approved; skip the human gates
+fy next    --pr --auto ~/src/app             # open a PR when approved; skip both approvals
 fy run     --fresh ~/src/app app-k3x         # rerun from scratch instead of resuming
 
 # while a run waits for you (from any terminal)
@@ -189,8 +189,8 @@ summary, the checks as a list, the plan folded away. By default Factory then req
 GitHub Copilot code review, hands its comments to the builder,
 gates, pushes, posts one summary comment and resolves the threads it addressed, and asks
 again, up to `FACTORY_COPILOT_ROUNDS` times, until a review of the head commit is
-clean, or until the builder answers a round without changing anything. Copilot never
-approves, it only comments, so "clean" is the finish line.
+clean or recommends approval (its nits left open), or until the builder answers a round
+without changing anything. Copilot never approves formally, only in its review text.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
 
 <br clear="all">
@@ -388,10 +388,10 @@ The builder side gets the same through `claude plugin install github@claude-plug
 
 **Copilot code review** needs a Copilot subscription on the GitHub account.
 
-**Desktop notifications.** Factory's toasts (plan ready, questions, blocked, done) are
-Herdr notifications, so where they appear is Herdr's `[ui.toast] delivery` setting:
-`herdr` shows them inside Herdr only, `system` hands them to the desktop's notification
-service so an approval request reaches you on another workspace. Set it in
+**Desktop notifications.** Factory's toasts (plan or build ready, questions, blocked,
+done) are Herdr notifications, so where they appear is Herdr's `[ui.toast] delivery`
+setting: `herdr` shows them inside Herdr only, `system` hands them to the desktop's
+notification service so an approval request reaches you on another workspace. Set it in
 `~/.config/herdr/config.toml` and apply with `herdr server reload-config`.
 
 **Herdr agent integrations.** `herdr integration install claude` and `codex` switch
@@ -438,7 +438,7 @@ check and the tests-required rule each earned their place on a real task first.
 
 Factory borrows deliberately, and leaves out even more deliberately.
 
-- [Oh My OpenAgent](https://github.com/code-yeongyu/oh-my-opencode) showed the value of
+- [Oh My OpenAgent](https://github.com/code-yeongyu/oh-my-openagent) showed the value of
   distinct roles on distinct models: a planner that interviews, an executor, a plan critic
   and a plan consultant before anything is built, and a loop that does not stop until the
   work is done. Factory keeps the roles, the interview, the dual plan review and the loop,

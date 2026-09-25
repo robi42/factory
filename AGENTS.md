@@ -16,7 +16,7 @@ Code and Codex sessions in Herdr panes, with Beads for tasks and mechanical guar
 - `factory`: the whole CLI, sectioned by comment banners; read `run_task` and the phases
   above it first.
 - `guardrails.txt`: forbidden-pattern list applied to task branches, and to this repo.
-- `test/factory.bats`: unit tests for the pure functions; Herdr and Beads are stubbed.
+- `test/factory.bats`: unit tests for the functions and flows; Herdr and Beads are stubbed.
 - `extras/`: things useful next to Factory but not part of it.
 
 ## Rules that the code cannot tell you

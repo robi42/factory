@@ -16,7 +16,7 @@ help:
     @printf "  %-12s %s\n" "guard" "Apply guardrails.txt to our own source"
     @printf "  %-12s %s\n" "spell" "codespell"
     @printf "  %-12s %s\n" "test" "Bats tests"
-    @printf "  %-12s %s\n" "ci" "All of the above, fail fast"
+    @printf "  %-12s %s\n" "ci" "Every check above, fail fast"
     @echo ""
 
 fmt:
@@ -46,7 +46,7 @@ guard:
 
 spell:
     @echo ""
-    codespell factory guardrails.txt justfile README.md AGENTS.md CHANGELOG.md test
+    codespell factory guardrails.txt justfile README.md AGENTS.md CHANGELOG.md test extras
     @printf "\033[32m✓ spell\033[0m\n"
 
 test:
