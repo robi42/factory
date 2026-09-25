@@ -12,6 +12,9 @@ ENV_KNOBS=$(compgen -A variable FACTORY_)
 : "${FACTORY_PLAN_MODEL:=claude-fable-5-1}"
 : "${FACTORY_BUILD_MODEL:=claude-opus-5-5}"
 : "${FACTORY_REVIEW_MODEL:=gpt-6-astra}"
+: "${FACTORY_PLAN_EFFORT:=xhigh}"
+: "${FACTORY_BUILD_EFFORT:=xhigh}"
+: "${FACTORY_REVIEW_EFFORT:=xhigh}"
 : "${FACTORY_ROUNDS:=3}"
 : "${FACTORY_TURN_TIMEOUT_MS:=3600000}"
 : "${FACTORY_CLAUDE_PERMISSIONS:=auto}"
@@ -47,6 +50,16 @@ need_all() {
 }
 RUN_TOOLS=(herdr claude codex bd jq git)
 
+# check_efforts: Claude Code ignores an unknown effort with a warning in its pane and Codex
+# fails the reviewer's first turn on one, so a typo stops here, before a bead is claimed.
+check_efforts() {
+  local k levels='low|medium|high|xhigh|max'
+  for k in FACTORY_PLAN_EFFORT FACTORY_BUILD_EFFORT FACTORY_REVIEW_EFFORT; do
+    [[ $k == FACTORY_REVIEW_EFFORT ]] && levels+='|ultra' # Codex's own level
+    [[ ${!k} =~ ^($levels)$ ]] || die "$k=${!k}: not an effort level (${levels//|/, })"
+  done
+}
+
 row() { printf '  %-54s %s\n' "$1" "$2"; }
 
 usage() {
@@ -71,6 +84,9 @@ usage() {
   row "FACTORY_PLAN_MODEL=$FACTORY_PLAN_MODEL" 'planner (Claude Code)'
   row "FACTORY_BUILD_MODEL=$FACTORY_BUILD_MODEL" 'builder (Claude Code)'
   row "FACTORY_REVIEW_MODEL=$FACTORY_REVIEW_MODEL" 'reviewer (Codex)'
+  row "FACTORY_PLAN_EFFORT=$FACTORY_PLAN_EFFORT" 'planner effort: low, medium, high, xhigh, max'
+  row "FACTORY_BUILD_EFFORT=$FACTORY_BUILD_EFFORT" 'builder effort: low, medium, high, xhigh, max'
+  row "FACTORY_REVIEW_EFFORT=$FACTORY_REVIEW_EFFORT" 'reviewer effort: the same, and ultra'
   row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up'
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
   row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'a stalled turn fails after this; a working one toasts you and goes on'
@@ -1230,7 +1246,7 @@ setup_task() { # repo arg
   task_context "$repo"
   MEMORY=$(memory_block "$repo")
   log "task $TASK_ID: $TASK_TITLE"
-  log "models: plan=$FACTORY_PLAN_MODEL build=$FACTORY_BUILD_MODEL review=$FACTORY_REVIEW_MODEL"
+  log "models: plan=$FACTORY_PLAN_MODEL ($FACTORY_PLAN_EFFORT) build=$FACTORY_BUILD_MODEL ($FACTORY_BUILD_EFFORT) review=$FACTORY_REVIEW_MODEL ($FACTORY_REVIEW_EFFORT)"
   log "gate: $GATE$([[ -n ${FACTORY_GATE:-} || -f $repo/.factory/gate ]] || printf ' (detected from the repo; add .factory/gate to make it explicit)') | base: $BASE | rounds: $FACTORY_ROUNDS | claude: $FACTORY_CLAUDE_PERMISSIONS"
   if ! bd -C "$repo" update "$TASK_ID" --claim >/dev/null 2>&1; then
     st=$(bd_field "$repo" "$TASK_ID" '.status')
@@ -1274,11 +1290,12 @@ start_or_adopt_agents() {
     prime_shell "$pane"
   done
   repo_root=$(git -C "$repo" rev-parse --show-toplevel)
-  start_agent "$PLAN_AGENT" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
-  start_agent "$BUILD_AGENT" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
+  start_agent "$PLAN_AGENT" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --effort "$FACTORY_PLAN_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
+  start_agent "$BUILD_AGENT" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --effort "$FACTORY_BUILD_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
   set_color "$PLAN_AGENT" purple
   set_color "$BUILD_AGENT" cyan
   start_agent "$REVIEW_AGENT" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
+    -c "model_reasoning_effort=\"$FACTORY_REVIEW_EFFORT\"" \
     -c "projects.\"$repo_root\".trust_level=\"trusted\"" \
     -c "sandbox_workspace_write.writable_roots=[\"$repo_root/.beads\"]"
   log "agents up: $PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
@@ -1826,18 +1843,21 @@ main() {
       take_flags "$@"
       ((${#ARGS[@]} == 2)) || die "usage: factory run [--pr] [--auto] [--no-copilot] [--fresh] <repo> <bead-id | task>"
       need_all "${RUN_TOOLS[@]}"
+      check_efforts
       run_task "${ARGS[0]}" "${ARGS[1]}"
       ;;
     next)
       take_flags "$@"
       ((${#ARGS[@]} == 1)) || die "usage: factory next [--pr] [--auto] [--no-copilot] [--fresh] <repo>"
       need_all "${RUN_TOOLS[@]}"
+      check_efforts
       cmd_next "${ARGS[0]}"
       ;;
     queue)
       take_flags "$@"
       ((${#ARGS[@]} >= 1)) || die "usage: factory queue [--pr] [--auto] [--no-copilot] [--fresh] <repo> [max]"
       need_all "${RUN_TOOLS[@]}"
+      check_efforts
       cmd_queue "${ARGS[@]}"
       ;;
     sync)

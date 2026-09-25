@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Effort knobs `FACTORY_PLAN_EFFORT`, `FACTORY_BUILD_EFFORT` and `FACTORY_REVIEW_EFFORT`,
+  all `xhigh` by default. They override the effort in your Claude Code and Codex settings;
+  a Codex without one ran GPT 6 Astra at its default of `low`.
+
 ### Changed
 - The planner replies with its questions instead of QUESTIONS, so they read in its pane as
   well as at the factory prompt.

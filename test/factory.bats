@@ -150,6 +150,19 @@ context_of() {
   [[ $output == *"not a knob"* ]]
 }
 
+@test "check_efforts: the defaults pass, ultra only for the reviewer, a typo dies" {
+  run check_efforts
+  [ "$status" -eq 0 ]
+  FACTORY_PLAN_EFFORT=max FACTORY_BUILD_EFFORT=low FACTORY_REVIEW_EFFORT=ultra run check_efforts
+  [ "$status" -eq 0 ]
+  FACTORY_BUILD_EFFORT=ultra run check_efforts
+  [ "$status" -eq 1 ]
+  [[ $output == *"FACTORY_BUILD_EFFORT=ultra: not an effort level (low, medium, high, xhigh, max)"* ]]
+  FACTORY_REVIEW_EFFORT='high xhigh' run check_efforts
+  [ "$status" -eq 1 ]
+  [[ $output == *"(low, medium, high, xhigh, max, ultra)"* ]]
+}
+
 @test "guard: clean committed change passes" {
   make_repo
   printf 'echo hello\n' >"$REPO/run.sh"
@@ -1115,6 +1128,7 @@ JSON
   run main help
   [ "$status" -eq 0 ]
   [[ $output == *"factory run"* ]]
+  [[ $output == *"FACTORY_BUILD_EFFORT=xhigh"*"FACTORY_REVIEW_EFFORT=xhigh"* ]]
   run main bogus
   [ "$status" -eq 1 ]
   [[ $output == *"unknown command"* ]]
