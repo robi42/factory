@@ -5,6 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Seven of the twenty default guardrail patterns were never applied: they begin with `#`,
+  and the list's comment filter dropped them. `noqa`, `type: ignore`, `nosec`,
+  `shellcheck disable`, `pragma: no cover` and Rust's `#[allow(` and `#[ignore]` on added
+  lines now fail the branch as the README says. The list now writes their leading hash as
+  `[#]`. A copy of the old list, as a repo's `.factory/guardrails.txt` or a file set in
+  `FACTORY_GUARDRAILS`, still skips them until it gets the same edit, on the lines that
+  `grep -n '^#[^[:space:]]'` prints.
+
 ## [0.1.7] - 2026-09-25
 
 ### Added

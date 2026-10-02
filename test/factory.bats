@@ -230,6 +230,32 @@ context_of() {
   [[ $output == *"forbidden pattern"* ]]
 }
 
+@test "guard: patterns that begin with a hash are applied, not read as comments" {
+  make_repo
+  # Build the bad strings at runtime so this file passes its own guard check.
+  local hash='#'
+  printf 'a = 1  %s noqa\nb = f()  %s type: ignore\nc = g()  %s nosec\nif d:  %s pragma: no cover\n' \
+    "$hash" "$hash" "$hash" "$hash" >"$REPO/tool.py"
+  printf '%s shellcheck disable=SC2086\necho hi\n' "$hash" >"$REPO/tool.sh"
+  printf '%s[allow(dead_code)]\nfn unused() {}\n%s[ignore]\nfn later() {}\n' "$hash" "$hash" >"$REPO/lib.rs"
+  commit_all suppressed
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"tool.py: a = 1  $hash noqa"* ]]
+  [[ $output == *"tool.py: b = f()  $hash type: ignore"* ]]
+  [[ $output == *"tool.py: c = g()  $hash nosec"* ]]
+  [[ $output == *"tool.py: if d:  $hash pragma: no cover"* ]]
+  [[ $output == *"tool.sh: $hash shellcheck disable=SC2086"* ]]
+  [[ $output == *"lib.rs: ${hash}[allow(dead_code)]"* ]]
+  [[ $output == *"lib.rs: ${hash}[ignore]"* ]]
+}
+
+@test "guardrails.txt: no line that reads as a pattern is commented out" {
+  # The loader drops every line whose first non-blank is a hash, so a comment is a hash
+  # and a space, and a pattern never starts with one: [#] stands for a literal hash.
+  run -1 grep -nE '^[[:space:]]*#[^[:space:]]' "$FACTORY_GUARDRAILS"
+}
+
 @test "guard: removing a forbidden line is fine" {
   make_repo
   local pipe='||'
