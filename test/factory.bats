@@ -429,6 +429,23 @@ IN
   [[ $output == *"empty title"* ]]
 }
 
+@test "compose_task: a title on the first line keeps the whole description" {
+  VISUAL="" EDITOR=""
+  run composed <<'IN'
+Add CSV export
+
+Users want to download the table.
+Keep the delimiter configurable.
+IN
+  [ "$status" -eq 0 ]
+  [ "$output" = $'Add CSV export\n---\nUsers want to download the table.\nKeep the delimiter configurable.' ]
+  run composed <<'IN'
+Add CSV export
+Users want to download the table.
+IN
+  [ "$output" = $'Add CSV export\n---\nUsers want to download the table.' ]
+}
+
 @test "pr_body carries task, plan and whatever checks exist" {
   make_repo
   fake_task

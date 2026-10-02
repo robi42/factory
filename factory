@@ -1606,7 +1606,8 @@ compose_task() {
   rm -f "$f"
   TASK_TITLE=$(sed -n '/[^[:space:]]/{p;q}' <<<"$body" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [[ -n $TASK_TITLE ]] || die "empty title, nothing filed"
-  TASK_DESC=$(sed '1,/[^[:space:]]/d' <<<"$body" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' | sed '/./,$!d')
+  # not 1,/re/d: with the title on line one, its range also takes the next non-blank line
+  TASK_DESC=$(sed -n '/[^[:space:]]/,$p' <<<"$body" | sed '1d' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' | sed '/./,$!d')
 }
 
 cmd_add() {

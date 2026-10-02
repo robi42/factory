@@ -13,6 +13,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   `[#]`. A copy of the old list, as a repo's `.factory/guardrails.txt` or a file set in
   `FACTORY_GUARDRAILS`, still skips them until it gets the same edit, on the lines that
   `grep -n '^#[^[:space:]]'` prints.
+- `factory add` without a title lost the first description line whenever the title was
+  on the first line, which is what its editor template and its stdin prompt ask for.
 
 ## [0.1.7] - 2026-09-25
 
