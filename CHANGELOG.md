@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-03
+
 ### Changed
 - `factory tasks` lists the open tasks in the order `factory next` takes them: a task
   after the ones that block it, else in progress first, then by priority, the newest
@@ -217,7 +219,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/robi42/factory/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/robi42/factory/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/robi42/factory/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/robi42/factory/compare/v0.1.4...v0.1.5
