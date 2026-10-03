@@ -69,7 +69,7 @@ usage() {
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
   row '  flags: --pr, --auto, --no-copilot, --fresh' 'open a PR; skip both approvals; no Copilot review; do not resume'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
-  row 'factory tasks   <repo> [--all]' 'list open tasks (beads); --all includes closed'
+  row 'factory tasks   <repo> [--all]' 'open tasks in the order next takes them; args (--all) go to bd list'
   row 'factory sync    <repo>' 'pull, then push the beads database to its git remote'
   row 'factory init    <repo> [bd init args...]' 'lean bd init, detect the gate, AGENTS.md stub'
   row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the waiting plan or build from any terminal'
@@ -1643,11 +1643,38 @@ cmd_sync() { # repo: pull (when the remote has beads data), then push
   FACTORY_BD_PUSH=1 bd_push "$repo"
 }
 
-cmd_tasks() { # repo [bd list args...]
-  local repo=$1
+# task_order [color]: bd list --json on stdin -> one line per task, in the order next takes
+# them: a task after the open ones that block it, else in progress first, then priority
+# and age. A dependency cycle leaves the rest by priority and age. Colours are bd's own.
+task_order() {
+  jq -r --argjson color "${1:-0}" '
+    def paint($c): if $color == 1 and $c != "" then "\u001b[\($c)m\(.)\u001b[m" else . end;
+    (. // []) as $all
+    | [$all[].id] as $ids
+    | (reduce $all[] as $t ({}; .[$t.id] = [($t.dependencies // [])[] | select(.type == "blocks") | .depends_on_id | select(IN($ids[]))])) as $deps
+    | {left: $all, done: []}
+    | until(.left == [];
+        [.done[].id] as $done
+        | ([.left[] | select(all($deps[.id][]; IN($done[])))]
+          | sort_by([(if .status == "in_progress" then 0 else 1 end), .priority, .created_at]) | first) as $next
+        | if $next then .done += [$next] | .left |= map(select(.id != $next.id))
+          else .done += (.left | sort_by([.priority, .created_at])) | .left = [] end)
+    | .done[]
+    | (if .status == "in_progress" then "38;2;255;180;84" else "" end) as $sc
+    | ({"0": "1;38;2;240;113;120", "1": "38;2;255;143;64", "2": "38;2;230;180;80"}[.priority | tostring] // "") as $pc
+    | "\({open: "○", in_progress: "◐", blocked: "●", deferred: "❄", closed: "✓"}[.status] // "?" | paint($sc)) \(.id) \("● P\(.priority)" | paint($pc)) \(.title)"'
+}
+
+cmd_tasks() { # repo [bd list args...]: without args, the open tasks in the order next takes them
+  local repo=$1 color=0
   shift
   need_beads "$repo"
-  bd -C "$repo" list "$@"
+  if (($#)); then
+    bd -C "$repo" list "$@"
+    return
+  fi
+  [[ -t 1 ]] && color=1
+  bd -C "$repo" list --json -n 0 | task_order "$color"
 }
 
 cmd_next() {

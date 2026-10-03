@@ -115,7 +115,7 @@ fy init    ~/src/app                         # lean bd init, gate detection, AGE
 # tasks
 fy add     ~/src/app "Add CSV export" "..."  # file work as a bead
 fy add     ~/src/app                         # ...or compose title and description in $EDITOR
-fy tasks   ~/src/app                         # list open tasks; --all includes closed
+fy tasks   ~/src/app                         # open tasks in the order next takes them
 
 # runs
 fy next    ~/src/app                         # claim the next ready bead and run it

@@ -965,6 +965,40 @@ JSON
   [[ $output == *"(see $REPO/.factory/guardrails.txt)"* ]]
 }
 
+@test "task_order: blockers first, then in progress, priority and age; a cycle ends the walk" {
+  run task_order <<'JSON'
+[{"id":"t-c","title":"c","status":"open","priority":2,"created_at":"2026-10-01T00:00:03Z","dependencies":[{"depends_on_id":"t-b","type":"blocks"}]},
+ {"id":"t-b","title":"b","status":"open","priority":2,"created_at":"2026-10-01T00:00:02Z","dependencies":[{"depends_on_id":"t-a","type":"blocks"},{"depends_on_id":"t-closed","type":"blocks"}]},
+ {"id":"t-a","title":"a","status":"open","priority":2,"created_at":"2026-10-01T00:00:09Z"},
+ {"id":"t-p","title":"p","status":"open","priority":1,"created_at":"2026-10-01T00:00:08Z"},
+ {"id":"t-w","title":"w","status":"in_progress","priority":3,"created_at":"2026-10-01T00:00:07Z"},
+ {"id":"t-r","title":"r","status":"open","priority":2,"created_at":"2026-10-01T00:00:01Z","dependencies":[{"depends_on_id":"t-c","type":"related"}]}]
+JSON
+  [ "$status" -eq 0 ]
+  [ "$output" = $'◐ t-w ● P3 w\n○ t-p ● P1 p\n○ t-r ● P2 r\n○ t-a ● P2 a\n○ t-b ● P2 b\n○ t-c ● P2 c' ]
+  run task_order <<'JSON'
+[{"id":"t-x","title":"x","status":"open","priority":2,"created_at":"2","dependencies":[{"depends_on_id":"t-y","type":"blocks"}]},
+ {"id":"t-y","title":"y","status":"open","priority":2,"created_at":"1","dependencies":[{"depends_on_id":"t-x","type":"blocks"}]},
+ {"id":"t-z","title":"z","status":"open","priority":2,"created_at":"3"}]
+JSON
+  [ "$output" = $'○ t-z ● P2 z\n○ t-y ● P2 y\n○ t-x ● P2 x' ]
+  run task_order 1 <<<'[{"id":"t-1","title":"one","status":"in_progress","priority":0,"created_at":"1"}]'
+  [ "$output" = $'\e[38;2;255;180;84m◐\e[m t-1 \e[1;38;2;240;113;120m● P0\e[m one' ]
+}
+
+@test "cmd_tasks: the open tasks in order without arguments, bd list as it is with them" {
+  mkdir -p "$TMP/.beads"
+  bd() {
+    printf '%s\n' "$*" >>"$TMP/bd.log"
+    printf '[{"id":"t-2","title":"two","status":"open","priority":2,"created_at":"2","dependencies":[{"depends_on_id":"t-1","type":"blocks"}]},{"id":"t-1","title":"one","status":"open","priority":2,"created_at":"1"}]'
+  }
+  run cmd_tasks "$TMP"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'○ t-1 ● P2 one\n○ t-2 ● P2 two' ]
+  run cmd_tasks "$TMP" --all
+  [ "$(cat "$TMP/bd.log")" = "-C $TMP list --json -n 0"$'\n'"-C $TMP list --all" ]
+}
+
 @test "next claims atomically through bd ready --claim" {
   bd() {
     printf '%s\n' "$*" >>"$TMP/bd.log"
