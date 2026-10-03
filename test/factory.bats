@@ -665,6 +665,14 @@ JSON
   [ "$output" = "" ]
 }
 
+@test "copilot_verdict_of and copilot_summary_of skip the overview header a review opens with" {
+  local overview_json='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","body":"<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n### 🟢 Approval recommended\n\nThe change does what the task asks.\n\n**Review effort:** Balanced  \n**Findings:** None\n\n<details>\n<summary>What changed</summary>\nmore\n</details>"}]'
+  run copilot_verdict_of abc123 <<<"$overview_json"
+  [ "$output" = "🟢 Approval recommended" ]
+  run copilot_summary_of abc123 <<<"$overview_json"
+  [ "$output" = "The change does what the task asks." ]
+}
+
 @test "bd_push: skips without a sync remote, pushes with one, warns on failure, off by knob" {
   FACTORY_BD_PUSH=1
   bd() { # stub: config get -> $BD_REMOTE; dolt push -> $BD_PUSH_RC

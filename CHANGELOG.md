@@ -15,6 +15,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   `grep -n '^#[^[:space:]]'` prints.
 - `factory add` without a title lost the first description line whenever the title was
   on the first line, which is what its editor template and its stdin prompt ask for.
+- The Copilot loop never saw an approval. Copilot's review now opens with an overview
+  header above its `###` verdict, and Factory took the first line as the verdict, so a
+  review that recommended approval with nits went back to the builder for another pushed
+  round, up to `FACTORY_COPILOT_ROUNDS`, and the bead noted the header. Factory now takes
+  the first `###` heading as the verdict and the sentence under it as the summary.
 
 ## [0.1.7] - 2026-09-25
 

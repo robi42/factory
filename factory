@@ -739,20 +739,21 @@ copilot_comments_of() { # sha
     '.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .original_commit_id == $sha) | "\(.path):\(.line // .original_line // "?"): \(.body | gsub("\r"; "") | gsub("\n"; "\n    "))"'
 }
 
-# copilot_verdict_of: first line of Copilot's review body for one commit, from reviews JSON on stdin.
+# copilot_verdict_of: the first `### ` heading of Copilot's review body for one commit, from
+# reviews JSON on stdin. The body may open with an overview header above it.
 copilot_verdict_of() { # sha
   jq -r --arg sha "$1" \
-    '[.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .commit_id == $sha)] | last | (.body // "") | split("\n") | (.[0] // "") | ltrimstr("### ")'
+    '[.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .commit_id == $sha)] | last | (.body // "") | split("\n") | map(select(startswith("### "))) | (.[0] // "") | ltrimstr("### ")'
 }
 
 copilot_verdict() { # pr-number sha
   gh_wt api "repos/{owner}/{repo}/pulls/$1/reviews" | copilot_verdict_of "$2"
 }
 
-# copilot_summary_of: the sentence under Copilot's verdict line, from reviews JSON on stdin.
+# copilot_summary_of: the sentence under Copilot's verdict heading, from reviews JSON on stdin.
 copilot_summary_of() { # sha
   jq -r --arg sha "$1" \
-    '[.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .commit_id == $sha)] | last | (.body // "") | split("\n") | map(select(length > 0)) | (.[1] // "") | select(startswith("<") | not)'
+    '[.[] | select(((.user.login // "") | ascii_downcase | startswith("copilot")) and .commit_id == $sha)] | last | (.body // "") | split("\n") | (map(startswith("### ")) | index(true)) as $i | if $i == null then "" else (.[$i + 1:] | map(select(length > 0)) | (.[0] // "")) end | select(startswith("<") | not)'
 }
 
 copilot_summary() { # pr-number sha
