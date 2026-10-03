@@ -13,6 +13,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   several words (AllesBuien `ab`), else a word's first and last letter (Blik `bk`).
   `--prefix` still picks another. Under a directory with its own `.beads`, such as a Gas
   Town, a repo used to inherit its prefix (`hq`); `bd rename-prefix` changes one.
+- The planner's effort defaults to `max`, up from `xhigh`: it runs once per task, and its
+  plan steers every round after it. `FACTORY_PLAN_EFFORT` still overrides it; the builder
+  and the reviewer stay at `xhigh`.
 
 ### Fixed
 - Seven of the twenty default guardrail patterns were never applied: they begin with `#`,

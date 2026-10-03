@@ -1280,7 +1280,7 @@ JSON
   run main help
   [ "$status" -eq 0 ]
   [[ $output == *"factory run"* ]]
-  [[ $output == *"FACTORY_BUILD_EFFORT=xhigh"*"FACTORY_REVIEW_EFFORT=xhigh"* ]]
+  [[ $output == *"FACTORY_PLAN_EFFORT=max"*"FACTORY_BUILD_EFFORT=xhigh"*"FACTORY_REVIEW_EFFORT=xhigh"* ]]
   run main bogus
   [ "$status" -eq 1 ]
   [[ $output == *"unknown command"* ]]
