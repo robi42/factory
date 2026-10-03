@@ -9,6 +9,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `factory tasks` lists the open tasks in the order `factory next` takes them: a task
   after the ones that block it, else in progress first, then by priority and age. With
   arguments such as `--all` it is `bd list` as before.
+- `factory init` gives the beads a short prefix from the repo's name: the initials of
+  several words (AllesBuien `ab`), else a word's first and last letter (Blik `bk`).
+  `--prefix` still picks another. Under a directory with its own `.beads`, such as a Gas
+  Town, a repo used to inherit its prefix (`hq`); `bd rename-prefix` changes one.
 
 ### Fixed
 - Seven of the twenty default guardrail patterns were never applied: they begin with `#`,

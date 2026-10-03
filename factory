@@ -71,7 +71,7 @@ usage() {
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory tasks   <repo> [--all]' 'open tasks in the order next takes them; args (--all) go to bd list'
   row 'factory sync    <repo>' 'pull, then push the beads database to its git remote'
-  row 'factory init    <repo> [bd init args...]' 'lean bd init, detect the gate, AGENTS.md stub'
+  row 'factory init    <repo> [bd init args...]' 'lean bd init with a short prefix, detect the gate, AGENTS.md stub'
   row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the waiting plan or build from any terminal'
   row 'factory reject  <repo> <bead-id> "note"' 'send a note back; the plan or build comes back revised'
   row 'factory answer  <repo> <bead-id> ["answers" | -]' 'answer the planner'"'"'s questions from any terminal'
@@ -345,6 +345,23 @@ is_bead_id() { [[ $1 =~ ^[a-z][a-z0-9]*-[a-z0-9]+$ ]]; }
 slugify() {
   # C locale: only ASCII letters and digits survive, so branch names stay plain
   printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40 | sed -E 's/-+$//'
+}
+
+# repo_prefix name -> a short bead prefix: the initials of a name of several words
+# (AllesBuien ab, phoenix_live_demo pld), else a word's first and last letter (Blik bk);
+# empty when that would not start with a letter
+repo_prefix() {
+  local w word p=""
+  # words split at camel case (HTTPServer: http server) and at anything not a letter or digit
+  read -ra w <<<"$(printf '%s' "$1" | LC_ALL=C sed -E 's/([A-Z]+)([A-Z][a-z])/\1 \2/g; s/([a-z0-9])([A-Z])/\1 \2/g; s/[^A-Za-z0-9]+/ /g' | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  if ((${#w[@]} > 1)); then
+    for word in "${w[@]}"; do p+=${word:0:1}; done
+  elif ((${#w[@]} == 1)); then
+    p=${w[0]}
+    ((${#p} <= 2)) || p=${p:0:1}${p: -1}
+  fi
+  [[ $p == [a-z]* ]] && printf '%s' "$p"
+  return 0
 }
 
 # branch_of repo bead-id -> the task's existing branch (factory/<id> or factory/<id>-<slug>), or empty
@@ -1547,13 +1564,16 @@ cmd_status() {
 }
 
 cmd_init() {
-  local repo=$1
+  local repo=$1 prefix
   shift
   [[ -d $repo/.git ]] || die "$repo is not a git repo"
   git -C "$repo" config beads.role >/dev/null 2>&1 || git -C "$repo" config beads.role maintainer
   if [[ -d $repo/.beads ]]; then log "beads already set up in $repo"; else
     # No bd-generated AGENTS.md/CLAUDE.md, hooks, or editor files: the prompts carry what agents need.
-    (cd "$repo" && BD_NON_INTERACTIVE=1 bd init --non-interactive --skip-agents --skip-hooks "$@")
+    # bd names the prefix after the directory, or inherits it from a .beads above (a Gas Town's
+    # hq); a short one from the repo's name instead, and a --prefix among the args still wins.
+    prefix=$(repo_prefix "$(basename "$(cd "$repo" && pwd)")")
+    (cd "$repo" && BD_NON_INTERACTIVE=1 bd init --non-interactive --skip-agents --skip-hooks ${prefix:+--prefix "$prefix"} "$@")
   fi
   local gate
   if [[ -f $repo/.factory/gate ]]; then

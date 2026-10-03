@@ -110,7 +110,7 @@ Status: early. Built and used by one person on Arch Linux; expect rough edges el
 
 ```sh
 # once per repo
-fy init    ~/src/app                         # lean bd init, gate detection, AGENTS.md stub
+fy init    ~/src/app                         # lean bd init, short prefix, gate, AGENTS.md stub
 
 # tasks
 fy add     ~/src/app "Add CSV export" "..."  # file work as a bead
@@ -400,7 +400,11 @@ detection more reliable. Factory handles the known startup dialogs either way, a
 one it does not know to you, waiting for your answer.
 
 **Beads housekeeping.** `fy init` sets `beads.role` so Beads stops warning; untracking
-`.beads/interactions.jsonl` keeps `git status` quiet.
+`.beads/interactions.jsonl` keeps `git status` quiet. It also gives the beads a short
+prefix from the repo's name: the initials of several words (AllesBuien `ab-…`), else a
+word's first and last letter (Blik `bk-…`); `--prefix` picks another. Left to itself, bd
+inherits the prefix of a `.beads` in a directory above, such as a Gas Town's `hq`, and
+`bd rename-prefix` renames an existing one.
 
 **Rendered Markdown at the prompts.** With [glow](https://github.com/charmbracelet/glow) on
 your PATH, the plan and the planner's questions are rendered in the terminal instead of

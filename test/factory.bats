@@ -1139,6 +1139,25 @@ JSON
   [[ $output == *"uncommitted changes in the worktree"* ]]
 }
 
+@test "repo_prefix: the initials of several words, else a word's first and last letter" {
+  [ "$(repo_prefix AllesBuien)" = ab ]
+  [ "$(repo_prefix Blik)" = bk ]
+  [ "$(repo_prefix factory)" = fy ]
+  [ "$(repo_prefix phoenix_livesvelte_demo)" = pld ]
+  [ "$(repo_prefix HTTPServer)" = hs ]
+  [ "$(repo_prefix my.repo)" = mr ]
+  [ "$(repo_prefix go)" = go ]
+  [ -z "$(repo_prefix 2048-game)" ] # no letter first: bd picks
+}
+
+@test "init: a short prefix from the repo's name, and a --prefix of the human's wins" {
+  git init -q "$TMP/AllesBuien"
+  bd() { printf '%s\n' "$*" >>"$TMP/bd.log"; }
+  run cmd_init "$TMP/AllesBuien" --prefix zz
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMP/bd.log")" = "init --non-interactive --skip-agents --skip-hooks --prefix ab --prefix zz" ]
+}
+
 @test "branch names: slug from the title, found again by bead id" {
   [ "$(slugify 'Add a --farewell CLI flag!')" = "add-a-farewell-cli-flag" ]
   local long
