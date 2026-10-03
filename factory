@@ -1664,29 +1664,36 @@ cmd_sync() { # repo: pull (when the remote has beads data), then push
 }
 
 # task_order [color]: bd list --json on stdin -> one line per task, in the order next takes
-# them: a task after the open ones that block it, else in progress first, then priority
-# and age. A dependency cycle leaves the rest by priority and age. Colours are bd's own.
+# them: a task after the open ones that block it (blocks or conditional-blocks, its own or a
+# parent's), else in progress first, then by priority, newest first as bd ready does.
+# Blocked, deferred and hooked tasks, which next skips, come after the rest, and so does a
+# dependency cycle. bd's waits-for gates are not followed. Colours are bd's own.
 task_order() {
   jq -r --argjson color "${1:-0}" '
     def paint($c): if $color == 1 and $c != "" then "\u001b[\($c)m\(.)\u001b[m" else . end;
     (. // []) as $all
-    | [$all[].id] as $ids
-    | (reduce $all[] as $t ({}; .[$t.id] = [($t.dependencies // [])[] | select(.type == "blocks") | .depends_on_id | select(IN($ids[]))])) as $deps
-    | {left: $all, done: []}
+    | (reduce $all[] as $t ({}; .[$t.id] = ($t.dependencies // []))) as $deps
+    | def blockers($id; $seen):
+        $deps[$id][] | .depends_on_id as $d | select($deps[$d])
+        | if .type == "blocks" or .type == "conditional-blocks" then $d
+          elif .type == "parent-child" and ($seen[$d] | not) then blockers($d; $seen + {($d): true})
+          else empty end;
+    [$all[] | .blockers = [blockers(.id; {(.id): true})]]
+    | sort_by([({in_progress: 0, open: 1}[.status] // 2), .priority, (.created_at // "" | explode | map(-.)), .id])
+    | {left: ., done: [], seen: {}}
     | until(.left == [];
-        [.done[].id] as $done
-        | ([.left[] | select(all($deps[.id][]; IN($done[])))]
-          | sort_by([(if .status == "in_progress" then 0 else 1 end), .priority, .created_at]) | first) as $next
-        | if $next then .done += [$next] | .left |= map(select(.id != $next.id))
-          else .done += (.left | sort_by([.priority, .created_at])) | .left = [] end)
+        .seen as $seen
+        | (first(.left[] | select(all(.blockers[]; $seen[.]))) // null) as $next
+        | if $next then .done += [$next] | .seen[$next.id] = true | .left |= map(select(.id != $next.id))
+          else .done += .left | .left = [] end)
     | .done[]
-    | (if .status == "in_progress" then "38;2;255;180;84" else "" end) as $sc
+    | ({in_progress: "38;2;255;180;84", blocked: "38;2;242;109;120", deferred: "38;2;108;118;128"}[.status] // "") as $sc
     | ({"0": "1;38;2;240;113;120", "1": "38;2;255;143;64", "2": "38;2;230;180;80"}[.priority | tostring] // "") as $pc
-    | "\({open: "○", in_progress: "◐", blocked: "●", deferred: "❄", closed: "✓"}[.status] // "?" | paint($sc)) \(.id) \("● P\(.priority)" | paint($pc)) \(.title)"'
+    | "\({open: "○", in_progress: "◐", blocked: "●", deferred: "❄", hooked: "◇", closed: "✓"}[.status] // "?" | paint($sc)) \(.id) \("● P\(.priority)" | paint($pc)) \(.title)"'
 }
 
 cmd_tasks() { # repo [bd list args...]: without args, the open tasks in the order next takes them
-  local repo=$1 color=0
+  local repo=$1 color=0 out
   shift
   need_beads "$repo"
   if (($#)); then
@@ -1694,7 +1701,8 @@ cmd_tasks() { # repo [bd list args...]: without args, the open tasks in the orde
     return
   fi
   [[ -t 1 ]] && color=1
-  bd -C "$repo" list --json -n 0 | task_order "$color"
+  out=$(bd -C "$repo" list --json -n 0 | task_order "$color")
+  if [[ -n $out ]]; then printf '%s\n' "$out"; else log "no open tasks in $repo"; fi
 }
 
 cmd_next() {

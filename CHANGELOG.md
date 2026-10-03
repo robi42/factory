@@ -7,8 +7,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - `factory tasks` lists the open tasks in the order `factory next` takes them: a task
-  after the ones that block it, else in progress first, then by priority and age. With
-  arguments such as `--all` it is `bd list` as before.
+  after the ones that block it, else in progress first, then by priority, the newest
+  first as `bd ready` has it; blocked and deferred tasks come last. With arguments such
+  as `--all` it is `bd list` as before.
 - `factory init` gives the beads a short prefix from the repo's name: the initials of
   several words (AllesBuien `ab`), else a word's first and last letter (Blik `bk`).
   `--prefix` still picks another. Under a directory with its own `.beads`, such as a Gas
