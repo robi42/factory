@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- The guardrails' note that the protected-path check is waived now carries the `[factory]`
+  tag like every other line Factory prints.
+
 ## [0.1.8] - 2026-10-03
 
 ### Changed

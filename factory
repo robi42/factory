@@ -548,7 +548,7 @@ guard_check() {
     bad=1
   fi
   if [[ -e $wt/$RUN_DIR/allow-protected ]]; then
-    printf 'note: protected-path check waived by the human for this task\n' >&2
+    log "guardrails: protected-path check waived by the human"
   else
     mapfile -t globs < <(protected_globs "$wt")
     while IFS= read -r f; do

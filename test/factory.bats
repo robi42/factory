@@ -478,7 +478,7 @@ IN
   : >"$REPO/.factory/run/allow-protected"
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
-  [[ $output == *"waived"* ]]
+  [[ $output == *"$TAG guardrails: protected-path check waived by the human"* ]]
   printf 'echo x\n' >>"$REPO/run.sh"
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
