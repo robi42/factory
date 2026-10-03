@@ -15,6 +15,7 @@ ENV_KNOBS=$(compgen -A variable FACTORY_)
 : "${FACTORY_PLAN_EFFORT:=max}"
 : "${FACTORY_BUILD_EFFORT:=xhigh}"
 : "${FACTORY_REVIEW_EFFORT:=xhigh}"
+: "${FACTORY_PLAN_ROUNDS:=2}"
 : "${FACTORY_ROUNDS:=3}"
 : "${FACTORY_TURN_TIMEOUT_MS:=3600000}"
 : "${FACTORY_CLAUDE_PERMISSIONS:=auto}"
@@ -87,6 +88,7 @@ usage() {
   row "FACTORY_PLAN_EFFORT=$FACTORY_PLAN_EFFORT" 'planner effort: low, medium, high, xhigh, max'
   row "FACTORY_BUILD_EFFORT=$FACTORY_BUILD_EFFORT" 'builder effort: low, medium, high, xhigh, max'
   row "FACTORY_REVIEW_EFFORT=$FACTORY_REVIEW_EFFORT" 'reviewer effort: the same, and ultra'
+  row "FACTORY_PLAN_ROUNDS=$FACTORY_PLAN_ROUNDS" 'plan review rounds before the build (always at least one)'
   row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up'
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
   row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'a stalled turn fails after this; a working one toasts you and goes on'
@@ -961,28 +963,34 @@ Reply with just that verdict line once the file is written.
 P
 }
 
-plan_review_prompt() {
+plan_review_prompt() { # round
   cat <<P
 Task $TASK_ID: $TASK_TITLE
 
 $TASK_DESC
 
-A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Point out real gaps only.
-Write your notes to $RUN_DIR/plan-review.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
+A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Point out real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1)).md")
+Write your notes to $RUN_DIR/plan-review-$1.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
 Reply with just that verdict line once the file is written.
 P
 }
 
-plan_build_check_prompt() {
+plan_build_check_prompt() { # round
   cat <<P
 Task $TASK_ID: $TASK_TITLE
 
 $TASK_DESC
 
-You will implement $RUN_DIR/plan.md next. Read it against this repo first: is it concrete enough to build, is its design the simplest that fits this codebase, does it miss anything the task needs, or add anything it does not? Note real gaps only.
-Write your notes to $RUN_DIR/plan-review-build.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
+You will implement $RUN_DIR/plan.md next. Read it against this repo first: is it concrete enough to build, is its design the simplest that fits this codebase, does it miss anything the task needs, or add anything it does not? Note real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1))-build.md")
+Write your notes to $RUN_DIR/plan-review-$1-build.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
 Reply with just that verdict line once the file is written.
 P
+}
+
+# plan_recheck round notes: from the second round on, a reviewer checks the revision
+plan_recheck() {
+  (($1 > 1)) || return 0
+  printf '\nThe planner revised the plan after the previous review round; your notes from it are in %s. Check the revision against them and for anything it broke; ask for another revision only for a real problem, not for polish.' "$2"
 }
 
 answers_prompt() { # answers
@@ -1010,9 +1018,9 @@ Commit. Reply with just DONE.
 P
 }
 
-plan_fix_prompt() {
+plan_fix_prompt() { # round
   cat <<P
-Reviewers left notes on your plan in $RUN_DIR/plan-review.md and $RUN_DIR/plan-review-build.md. Update $RUN_DIR/plan.md where they are right; ignore what is not.
+Reviewers left notes on your plan in $RUN_DIR/plan-review-$1.md and $RUN_DIR/plan-review-$1-build.md. Update $RUN_DIR/plan.md where they are right; ignore what is not.
 Reply with just PLAN READY when done.
 P
 }
@@ -1126,7 +1134,15 @@ show_md() {
   if command -v glow >/dev/null 2>&1; then glow "$1" </dev/null >&2; else sed 's/^/    /' "$1" >&2; fi
 }
 
+# plan_rounds dir -> how many plan review rounds left their notes in dir
+plan_rounds() {
+  local n=0
+  while [[ -e $1/plan-review-$((n + 1)).md ]]; do n=$((n + 1)); done
+  printf '%s' "$n"
+}
+
 show_for_approval() { # kind dir
+  local n v
   printf '\n%s ' "$TAG" >&2
   if [[ $1 == plan ]]; then
     printf 'plan for %s (%s):\n\n' "$TASK_ID" "$2/plan.md" >&2
@@ -1135,6 +1151,12 @@ show_for_approval() { # kind dir
       printf '\n%s what the planner changed after your note (%s):\n\n' "$TAG" "$2/plan-changes.md" >&2
       show_md "$2/plan-changes.md"
       rm -f "$2/plan-changes.md"
+    fi
+    n=$(plan_rounds "$2")
+    if ((n)); then
+      v=$(verdicts "$2/plan-review-$n.md" "$2/plan-review-$n-build.md")
+      [[ $2/plan.md -nt $2/plan-review-$n-build.md ]] && v+=" (plan changed since)" # the last revision, a note or a hand edit
+      printf '\n%s plan review round %s: %s, notes in %s and %s\n' "$TAG" "$n" "$v" "$2/plan-review-$n.md" "$2/plan-review-$n-build.md" >&2
     fi
     printf '\n%s [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' "$TAG" >&2
   else
@@ -1273,7 +1295,7 @@ setup_task() { # repo arg
   MEMORY=$(memory_block "$repo")
   log "task $TASK_ID: $TASK_TITLE"
   log "models: plan=$FACTORY_PLAN_MODEL ($FACTORY_PLAN_EFFORT) build=$FACTORY_BUILD_MODEL ($FACTORY_BUILD_EFFORT) review=$FACTORY_REVIEW_MODEL ($FACTORY_REVIEW_EFFORT)"
-  log "gate: $GATE$([[ -n ${FACTORY_GATE:-} || -f $repo/.factory/gate ]] || printf ' (detected from the repo; add .factory/gate to make it explicit)') | base: $BASE | rounds: $FACTORY_ROUNDS | claude: $FACTORY_CLAUDE_PERMISSIONS"
+  log "gate: $GATE$([[ -n ${FACTORY_GATE:-} || -f $repo/.factory/gate ]] || printf ' (detected from the repo; add .factory/gate to make it explicit)') | base: $BASE | rounds: plan $FACTORY_PLAN_ROUNDS, build $FACTORY_ROUNDS | claude: $FACTORY_CLAUDE_PERMISSIONS"
   if ! bd -C "$repo" update "$TASK_ID" --claim >/dev/null 2>&1; then
     st=$(bd_field "$repo" "$TASK_ID" '.status')
     die "cannot claim $TASK_ID (status: ${st:-unknown}); reopen it with: bd -C $repo reopen $TASK_ID"
@@ -1345,22 +1367,29 @@ stop_task() {
   die "stopped at $2 for $TASK_ID; the workspace stays open"
 }
 
-# plan_phase repo: plan (with questions), dual plan review, one revision, human approval.
+# plan_phase repo: plan (with questions), then dual plan review and a revision, round after
+# round until both approve or FACTORY_PLAN_ROUNDS are used up, then human approval. An
+# objection in the last round still gets its revision, which goes on unreviewed.
 plan_phase() {
-  local verdict
+  local verdict round=1
   log "planning"
+  rm -f "$WT/$RUN_DIR"/plan-review-*.md # reviews of an earlier plan would pass as fresh ones
   plan_or_interview "$PLAN_AGENT" || stop_task "$1" "planner questions"
   planner_kept_hands_off "$PLAN_AGENT"
-  log "plan review: $REVIEW_AGENT and $BUILD_AGENT"
-  ask_for_file "$REVIEW_AGENT" "$(plan_review_prompt)" "$WT/$RUN_DIR/plan-review.md"
-  ask_for_file "$BUILD_AGENT" "$(plan_build_check_prompt)" "$WT/$RUN_DIR/plan-review-build.md"
-  verdict=$(verdicts "$WT/$RUN_DIR/plan-review.md" "$WT/$RUN_DIR/plan-review-build.md")
-  log "plan verdicts: $verdict"
-  if [[ $verdict != "APPROVE APPROVE" ]]; then
+  while :; do
+    log "plan review round $round: $REVIEW_AGENT and $BUILD_AGENT"
+    ask_for_file "$REVIEW_AGENT" "$(plan_review_prompt "$round")" "$WT/$RUN_DIR/plan-review-$round.md"
+    ask_for_file "$BUILD_AGENT" "$(plan_build_check_prompt "$round")" "$WT/$RUN_DIR/plan-review-$round-build.md"
+    verdict=$(verdicts "$WT/$RUN_DIR/plan-review-$round.md" "$WT/$RUN_DIR/plan-review-$round-build.md")
+    log "plan verdicts: $verdict"
+    [[ $verdict == "APPROVE APPROVE" ]] && break
     log "plan revision"
-    ask "$PLAN_AGENT" "$(plan_fix_prompt)"
+    ask "$PLAN_AGENT" "$(plan_fix_prompt "$round")"
     planner_kept_hands_off "$PLAN_AGENT"
-  fi
+    ((round < FACTORY_PLAN_ROUNDS)) || break
+    round=$((round + 1))
+  done
+  [[ $verdict == "APPROVE APPROVE" ]] || warn "plan rounds used up; the revision after round $round goes on unreviewed"
   mark reviewed
   approve_plan "$1"
 }

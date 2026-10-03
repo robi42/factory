@@ -37,9 +37,11 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
 
 1. **Plan.** The planner explores the repo and writes `plan.md`. If the task is ambiguous
    in a way that changes the design, it asks you first.
-2. **Plan review.** Codex and the builder each review the plan; the planner revises once
-   if either objects.
-3. **Your approval.** Approve, send a note back, or abort.
+2. **Plan review.** Codex and the builder each review the plan. If either objects, the
+   planner revises and both check the revision, up to `FACTORY_PLAN_ROUNDS` rounds; an
+   objection in the last round still gets its revision.
+3. **Your approval.** You see the plan and the last review's verdicts; approve, send a
+   note back, or abort.
 4. **Build.** The builder implements the plan and commits.
 5. **Gate and guardrails.** Factory runs the gate itself and checks the branch.
 6. **Code review.** Codex and the planner each review the diff. Anything but two approvals
@@ -155,9 +157,10 @@ waits: answer there (finish with a line containing only `.`, or Ctrl-D) or with 
 three rounds; if the planner still has questions after that, the run stops and you talk
 to it in its pane.
 
-**Plan approval.** Factory prints the plan and waits. Answer in its terminal: `a` approve,
-`p` approve and allow protected paths, `r` revise with a note, `b` abort; any other key
-asks again. Or from anywhere:
+**Plan approval.** Factory prints the plan, the last plan review's verdicts (marked when
+the plan changed since) and where its notes are, and waits. Answer in its terminal: `a`
+approve, `p` approve and allow protected paths, `r` revise with a note, `b` abort; any
+other key asks again. Or from anywhere:
 `fy approve` (with `--allow-protected` for the `p` case) and `fy reject "note"`. A note
 goes to the planner, the plan comes back revised with a short note on what changed and
 why, and you are asked again. You can also edit `plan.md` or talk to the planner in its
@@ -198,7 +201,7 @@ without changing anything. Copilot never approves formally, only in its review t
 ### Run artifacts
 
 They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
-`questions.md` (only when asked), `plan-review.md` (Codex), `plan-review-build.md`
+`questions.md` (only when asked), `plan-review-N.md` (Codex), `plan-review-N-build.md`
 (builder), `review-N.md` (Codex), `review-N-plan.md` (planner), `response-N.md`
 (builder's pushback), `plan-changes.md` (what the planner changed after your note),
 `copilot-N.md` and `copilot-N-response.md` (Copilot's comments and the builder's
@@ -298,6 +301,7 @@ after the gate passes and before review:
 | `FACTORY_PLAN_EFFORT` | `max` (`low`, `medium`, `high`, `xhigh`, `max`) |
 | `FACTORY_BUILD_EFFORT` | `xhigh` (the same levels) |
 | `FACTORY_REVIEW_EFFORT` | `xhigh` (the same levels, and `ultra`) |
+| `FACTORY_PLAN_ROUNDS` | `2` plan review rounds (always at least one) |
 | `FACTORY_ROUNDS` | `3` build / review rounds |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
 | `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h); a stalled turn fails then, a working one toasts you and goes on |

@@ -350,6 +350,27 @@ context_of() {
   [[ $output != *"changed after your note"* ]]
 }
 
+@test "plan approval: the last plan review round's verdicts and where its notes are" {
+  fake_task
+  printf 'the plan\n' >"$TMP/plan.md"
+  run show_for_approval plan "$TMP"
+  [[ $output != *"plan review round"* ]]
+  printf 'VERDICT: REVISE\n' >"$TMP/plan-review-1.md"
+  printf 'VERDICT: APPROVE\n' >"$TMP/plan-review-1-build.md"
+  printf 'VERDICT: APPROVE\n' >"$TMP/plan-review-2.md"
+  printf 'VERDICT: REVISE\n' >"$TMP/plan-review-2-build.md"
+  touch -t 202001010000 "$TMP"/plan-review-*.md # the planner revised the plan after them
+  run show_for_approval plan "$TMP"
+  [[ $output == *"plan review round 2: APPROVE REVISE (plan changed since), notes in $TMP/plan-review-2.md and $TMP/plan-review-2-build.md"* ]]
+  printf 'VERDICT: APPROVE\n' >"$TMP/plan-review-2-build.md"
+  touch -t 202001010000 "$TMP/plan.md" # both approved the plan as it stands
+  run show_for_approval plan "$TMP"
+  [[ $output == *"plan review round 2: APPROVE APPROVE, notes in"* ]]
+  touch -t 201901010000 "$TMP"/plan-review-*.md # then a note or an edit changed the plan
+  run show_for_approval plan "$TMP"
+  [[ $output == *"plan review round 2: APPROVE APPROVE (plan changed since), notes in"* ]]
+}
+
 @test "plan approval: files from factory approve / reject, no terminal" {
   plan_ready
   FACTORY_POLL_SECONDS=1
@@ -582,6 +603,52 @@ IN
   [ "$status" -eq 1 ]
   [[ $output == *"(round 3)"*"still has questions after 3 rounds"* ]]
   [[ $output != *"(round 4)"* ]]
+}
+
+@test "plan_phase: a revised plan goes back to both reviewers, up to FACTORY_PLAN_ROUNDS" {
+  fake_task
+  WT=$TMP
+  TASK_DESC="" GATE=true
+  PLAN_AGENT=planner BUILD_AGENT=builder REVIEW_AGENT=codex
+  mkdir -p "$TMP/.factory/run"
+  plan_or_interview() { :; }
+  planner_kept_hands_off() { :; }
+  mark() { :; }
+  approve_plan() { printf 'to the human\n'; }
+  ask() { printf 'revise: %s\n' "$2"; }
+  ask_for_file() { # each review takes the next verdict from $TMP/verdicts
+    printf 'x' >>"$TMP/n"
+    printf 'review %s %s: %s\n' "$1" "${3##*/}" "$2"
+    printf 'VERDICT: %s\n' "$(sed -n "$(wc -c <"$TMP/n")p" "$TMP/verdicts")" >"$3"
+  }
+  : >"$TMP/n"
+  printf '%s\n' REVISE APPROVE APPROVE APPROVE >"$TMP/verdicts"
+  run plan_phase "$TMP"
+  [ "$status" -eq 0 ]
+  [[ $output == *"plan review round 1"*"plan verdicts: REVISE APPROVE"*"revise: Reviewers left notes on your plan in .factory/run/plan-review-1.md and .factory/run/plan-review-1-build.md"* ]]
+  [[ $output == *"review codex plan-review-2.md: "*"your notes from it are in .factory/run/plan-review-1.md"*"review builder plan-review-2-build.md: "*"your notes from it are in .factory/run/plan-review-1-build.md"*"plan verdicts: APPROVE APPROVE"*"to the human" ]]
+  [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
+  [[ $output != *"review codex plan-review-1.md: "*"your notes from it"*"review builder plan-review-1-build.md"* ]]
+  [[ $output != *"unreviewed"* ]]
+  # still objected to in the last round: that revision too, then on to the human
+  : >"$TMP/n"
+  printf '%s\n' REVISE APPROVE APPROVE REVISE >"$TMP/verdicts"
+  run plan_phase "$TMP"
+  [ "$(grep -c '^revise:' <<<"$output")" -eq 2 ]
+  [[ $output == *"revise: Reviewers left notes on your plan in .factory/run/plan-review-2.md"*"the revision after round 2 goes on unreviewed"*"to the human" ]]
+  [[ $output != *"round 3"* ]]
+  # one round: the old single revision, and no round-2 review of the last run left over
+  : >"$TMP/n"
+  FACTORY_PLAN_ROUNDS=1 run plan_phase "$TMP"
+  [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
+  [[ $output != *"round 2"* ]]
+  [ ! -e "$TMP/.factory/run/plan-review-2.md" ]
+  # and two approvals need none
+  : >"$TMP/n"
+  printf '%s\n' APPROVE APPROVE >"$TMP/verdicts"
+  run plan_phase "$TMP"
+  [[ $output != *"revise:"* ]]
+  [[ $output == *"to the human" ]]
 }
 
 @test "answer subcommand writes answers.md into the task worktree" {

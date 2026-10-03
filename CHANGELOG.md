@@ -5,6 +5,17 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `FACTORY_PLAN_ROUNDS`, 2 by default. After a revision, the plan goes back to Codex and
+  the builder, who check it against their notes, until both approve or the rounds run out;
+  an objection in the last round still gets its revision, with a warning that it goes on
+  unreviewed. The plan used to go on after one revision that nobody checked.
+
+### Changed
+- The plan approval prompt shows the last plan review's verdicts, whether the plan changed
+  since, and where its notes are. Plan reviews are written per round, to
+  `plan-review-N.md` (Codex) and `plan-review-N-build.md` (builder).
+
 ### Fixed
 - The guardrails' note that the protected-path check is waived now carries the `[factory]`
   tag like every other line Factory prints.
