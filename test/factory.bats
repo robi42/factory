@@ -1164,15 +1164,21 @@ JSON
   [ "$(repo_prefix HTTPServer)" = hs ]
   [ "$(repo_prefix my.repo)" = mr ]
   [ "$(repo_prefix go)" = go ]
-  [ -z "$(repo_prefix 2048-game)" ] # no letter first: bd picks
+  [ "$(repo_prefix x)" = x ]
+  [ "$(repo_prefix 2048-game)" = ge ]
+  [ -z "$(repo_prefix 2048)" ] # no letter: bd picks
 }
 
 @test "init: a short prefix from the repo's name, and a --prefix of the human's wins" {
   git init -q "$TMP/AllesBuien"
+  git init -q "$TMP/2048"
   bd() { printf '%s\n' "$*" >>"$TMP/bd.log"; }
-  run cmd_init "$TMP/AllesBuien" --prefix zz
+  cd "$TMP/AllesBuien"
+  run cmd_init . --prefix zz
   [ "$status" -eq 0 ]
-  [ "$(cat "$TMP/bd.log")" = "init --non-interactive --skip-agents --skip-hooks --prefix ab --prefix zz" ]
+  run cmd_init "$TMP/2048"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMP/bd.log")" = "init --non-interactive --skip-agents --skip-hooks --prefix ab --prefix zz"$'\n'"init --non-interactive --skip-agents --skip-hooks" ]
 }
 
 @test "branch names: slug from the title, found again by bead id" {

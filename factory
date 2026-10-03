@@ -349,11 +349,11 @@ slugify() {
 
 # repo_prefix name -> a short bead prefix: the initials of a name of several words
 # (AllesBuien ab, phoenix_live_demo pld), else a word's first and last letter (Blik bk);
-# empty when that would not start with a letter
+# leading digits are dropped (2048-game ge), and a name without a letter gives nothing
 repo_prefix() {
   local w word p=""
   # words split at camel case (HTTPServer: http server) and at anything not a letter or digit
-  read -ra w <<<"$(printf '%s' "$1" | LC_ALL=C sed -E 's/([A-Z]+)([A-Z][a-z])/\1 \2/g; s/([a-z0-9])([A-Z])/\1 \2/g; s/[^A-Za-z0-9]+/ /g' | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  read -ra w <<<"$(printf '%s' "$1" | LC_ALL=C sed -E 's/([A-Z]+)([A-Z][a-z])/\1 \2/g; s/([a-z0-9])([A-Z])/\1 \2/g; s/[^A-Za-z0-9]+/ /g; s/^[^A-Za-z]+//' | LC_ALL=C tr '[:upper:]' '[:lower:]')"
   if ((${#w[@]} > 1)); then
     for word in "${w[@]}"; do p+=${word:0:1}; done
   elif ((${#w[@]} == 1)); then
