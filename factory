@@ -1322,7 +1322,7 @@ start_or_adopt_agents() {
   set_color "$BUILD_AGENT" cyan
   start_agent "$REVIEW_AGENT" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
     -c "model_reasoning_effort=\"$FACTORY_REVIEW_EFFORT\"" \
-    -c "projects.\"$repo_root\".trust_level=\"trusted\"" \
+    -c "projects={\"$repo_root\"={trust_level=\"trusted\"}}" \
     -c "sandbox_workspace_write.writable_roots=[\"$repo_root/.beads\"]"
   log "agents up: $PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
 }

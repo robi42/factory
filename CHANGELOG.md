@@ -8,6 +8,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 - The guardrails' note that the protected-path check is waived now carries the `[factory]`
   tag like every other line Factory prints.
+- Codex never took Factory's trust for the reviewer's repo: it splits a `-c` key at its
+  dots, quotes and all, so the quoted repo path never matched. In a repo Codex had not
+  trusted yet, the reviewer met the trust dialog, Factory accepted it, and Codex saved the
+  trust in `~/.codex/config.toml` for good. Factory now passes it as an inline table.
 
 ## [0.1.8] - 2026-10-03
 
