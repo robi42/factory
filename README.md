@@ -396,7 +396,8 @@ notification service so an approval request reaches you on another workspace. Se
 
 **Herdr agent integrations.** `herdr integration install claude` and `codex` switch
 Herdr from screen heuristics to hook-based agent state, which makes idle and blocked
-detection more reliable. Factory handles the known startup dialogs either way.
+detection more reliable. Factory handles the known startup dialogs either way, and hands
+one it does not know to you, waiting for your answer.
 
 **Beads housekeeping.** `fy init` sets `beads.role` so Beads stops warning; untracking
 `.beads/interactions.jsonl` keeps `git status` quiet.

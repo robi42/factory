@@ -894,6 +894,54 @@ JSON
   [[ $output == *"no idle done within 2 min and it is unknown"* ]]
 }
 
+@test "settle_dialogs: Codex's folder trust dialog gets Enter, as the old one did" {
+  fake_task
+  : >"$TMP/keys"
+  herdr() {
+    case "$*" in
+      "agent read"*)
+        if [[ -s $TMP/keys ]]; then
+          printf '› Ask Codex to do anything\n'
+        else
+          printf '  Folder access\n  Trust this folder? Codex can read, edit, and run files here, subject to your\n› 1. Trust and continue\n  2. Quit\n'
+        fi
+        ;;
+      "agent send-keys"*) printf '%s\n' "$*" >>"$TMP/keys" ;;
+      "agent get"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+    esac
+  }
+  sleep() { :; }
+  run settle_dialogs t-review
+  [ "$status" -eq 0 ]
+  [[ $output == *"t-review: accepting Codex trust dialog (attempt 1)"* ]]
+  [ "$(cat "$TMP/keys")" = "agent send-keys t-review enter" ]
+}
+
+@test "settle_dialogs: an unknown dialog goes to the human once and the run waits; a stuck start dies" {
+  fake_task
+  : >"$TMP/waits"
+  herdr() {
+    case "$*" in
+      "agent read"*) printf 'Something new?\n› 1. Yes\n' ;;
+      "agent get"*) printf '{"result":{"agent":{"agent_status":"%s"}}}' "$(cat "$TMP/state")" ;;
+      "agent wait"*)
+        printf 'x' >>"$TMP/waits"
+        printf '{"result":{"agent":{"agent_status":"idle"}}}'
+        ;;
+    esac
+  }
+  sleep() { :; }
+  printf blocked >"$TMP/state"
+  run settle_dialogs t-review
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'do not recognise' <<<"$output")" -eq 1 ]
+  [ -s "$TMP/waits" ]
+  printf working >"$TMP/state"
+  run settle_dialogs t-review
+  [ "$status" -eq 1 ]
+  [[ $output == *"t-review: still working after startup"* ]]
+}
+
 @test "live_agents counts the named agents alive in a workspace" {
   herdr() {
     printf '{"result":{"agents":[{"name":"t-plan","workspace_id":"w1"},{"name":"t-build","workspace_id":"w1"},{"name":"t-review","workspace_id":"w9"},{"name":null,"workspace_id":"w1"}]}}'

@@ -161,7 +161,8 @@ wait_for() {
 # settle_dialogs name [quiet]: clear the startup dialogs agents show in a fresh worktree
 # (trust prompts, mode notices, Codex hook review). Herdr does not flag all of them
 # as blocked, so this looks at the screen rather than the reported state. With quiet it
-# returns as soon as none is on screen, and never dies.
+# returns as soon as none is on screen, and never dies; without, a dialog it does not
+# know goes to the human once, and the run waits for the answer.
 settle_dialogs() {
   local name=$1 quiet=${2:-} i txt status
   for i in 1 2 3 4 5 6; do
@@ -171,7 +172,7 @@ settle_dialogs() {
       herdr agent send-keys "$name" down >/dev/null
       sleep 0.5
       herdr agent send-keys "$name" enter >/dev/null
-    elif grep -q 'Do you trust the contents of this directory' <<<"$txt"; then
+    elif grep -qE 'Do you trust the contents of this directory|Trust this folder\?' <<<"$txt"; then
       log "$name: accepting Codex trust dialog (attempt $i)"
       herdr agent send-keys "$name" enter >/dev/null
     elif grep -qE 'hooks need review|Press enter to view hooks' <<<"$txt"; then
@@ -185,16 +186,20 @@ settle_dialogs() {
     else
       [[ -n $quiet ]] && return 0 # nothing on screen we know; the caller keeps waiting
       status=$(agent_status "$name")
-      case $status in
-        idle | done) return 0 ;;
-        blocked) attention "$name" "is blocked on a dialog I do not recognise; answer it in its pane" ;;
-      esac
+      case $status in idle | done) return 0 ;; esac
     fi
     sleep 3
   done
   [[ -n $quiet ]] && return 0
   status=$(agent_status "$name")
-  case $status in idle | done) return 0 ;; esac
+  case $status in
+    idle | done) return 0 ;;
+    blocked)
+      attention "$name" "is blocked on a dialog I do not recognise; answer it in its pane"
+      wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" >/dev/null
+      return 0
+      ;;
+  esac
   die "$name: still $status after startup; look at its pane"
 }
 

@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `factory tasks` lists the open tasks in the order `factory next` takes them: a task
+  after the ones that block it, else in progress first, then by priority and age. With
+  arguments such as `--all` it is `bd list` as before.
+
 ### Fixed
 - Seven of the twenty default guardrail patterns were never applied: they begin with `#`,
   and the list's comment filter dropped them. `noqa`, `type: ignore`, `nosec`,
@@ -20,6 +25,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   review that recommended approval with nits went back to the builder for another pushed
   round, up to `FACTORY_COPILOT_ROUNDS`, and the bead noted the header. Factory now takes
   the first `###` heading as the verdict and the sentence under it as the summary.
+- Codex 0.160 asks "Trust this folder?" in a folder it has not trusted yet, and the run
+  stopped there. Factory accepts it as it did the old trust dialog.
+- A startup dialog Factory does not know goes to you once, and the run waits for your
+  answer. It used to warn six times in 18 seconds and then stop the run.
 
 ## [0.1.7] - 2026-09-25
 
