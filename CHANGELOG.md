@@ -35,8 +35,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   the first `###` heading as the verdict and the sentence under it as the summary.
 - Codex 0.160 asks "Trust this folder?" in a folder it has not trusted yet, and the run
   stopped there. Factory accepts it as it did the old trust dialog.
-- A startup dialog Factory does not know goes to you once, and the run waits for your
-  answer. It used to warn six times in 18 seconds and then stop the run.
+- A startup dialog Factory cannot clear goes to you once, and the run waits for your
+  answer, up to `FACTORY_TURN_TIMEOUT_MS`. It used to warn six times in 18 seconds and
+  then stop the run.
 
 ## [0.1.7] - 2026-09-25
 

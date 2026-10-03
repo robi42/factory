@@ -920,9 +920,18 @@ JSON
 @test "settle_dialogs: an unknown dialog goes to the human once and the run waits; a stuck start dies" {
   fake_task
   : >"$TMP/waits"
+  : >"$TMP/keys"
   herdr() {
     case "$*" in
-      "agent read"*) printf 'Something new?\n› 1. Yes\n' ;;
+      "agent read"*)
+        # once the human has answered, a known dialog follows
+        if [[ -s $TMP/waits && ! -s $TMP/keys ]]; then
+          printf '2 hooks need review\nPress enter to view hooks\n'
+        else
+          printf 'Something new?\n› 1. Yes\n'
+        fi
+        ;;
+      "agent send-keys"*) printf '%s\n' "$*" >>"$TMP/keys" ;;
       "agent get"*) printf '{"result":{"agent":{"agent_status":"%s"}}}' "$(cat "$TMP/state")" ;;
       "agent wait"*)
         printf 'x' >>"$TMP/waits"
@@ -934,8 +943,10 @@ JSON
   printf blocked >"$TMP/state"
   run settle_dialogs t-review
   [ "$status" -eq 0 ]
-  [ "$(grep -c 'do not recognise' <<<"$output")" -eq 1 ]
+  [ "$(grep -c 'could not clear' <<<"$output")" -eq 1 ]
   [ -s "$TMP/waits" ]
+  [ "$(cat "$TMP/keys")" = "agent send-keys t-review esc" ]
+  : >"$TMP/waits"
   printf working >"$TMP/state"
   run settle_dialogs t-review
   [ "$status" -eq 1 ]
