@@ -3,6 +3,9 @@
 # Recipes use bash features (process substitution); sh is dash on Debian-family runners.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+# The scripts the checks below read; the Bats files come by glob.
+scripts := "factory extras/cargo-sccache/sccache"
+
 _default:
     @just help
 
@@ -20,27 +23,27 @@ help:
     @echo ""
 
 fmt:
-    shfmt -i 2 -ci -bn -w factory test/*.bats
+    shfmt -i 2 -ci -bn -w {{ scripts }} test/*.bats
 
 style:
     @echo ""
-    shfmt -i 2 -ci -bn -d factory test/*.bats
+    shfmt -i 2 -ci -bn -d {{ scripts }} test/*.bats
     @printf "\033[32m✓ style\033[0m\n"
 
 lint:
     @echo ""
-    shellcheck -S style -s bash factory
+    shellcheck -S style -s bash {{ scripts }}
     shellcheck -S style -s bash -x -P SCRIPTDIR test/*.bats
     @printf "\033[32m✓ lint\033[0m\n"
 
 syntax:
     @echo ""
-    bash -n factory
+    for script in {{ scripts }}; do bash -n "$script"; done
     @printf "\033[32m✓ syntax\033[0m\n"
 
 guard:
     @echo ""
-    @if grep -nE -f <(grep -vE '^\s*(#|$)' guardrails.txt) factory justfile test/*.bats; then \
+    @if grep -nE -f <(grep -vE '^\s*(#|$)' guardrails.txt) {{ scripts }} justfile test/*.bats; then \
         printf "\033[31m✗ guard: our own source matches a forbidden pattern\033[0m\n" >&2; exit 1; fi
     @printf "\033[32m✓ guard\033[0m\n"
 

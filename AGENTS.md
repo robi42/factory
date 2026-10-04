@@ -17,6 +17,7 @@ Code and Codex sessions in Herdr panes, with Beads for tasks and mechanical guar
   above it first.
 - `guardrails.txt`: forbidden-pattern list applied to task branches, and to this repo.
 - `test/factory.bats`: unit tests for the functions and flows; Herdr and Beads are stubbed.
+- `test/cargo-sccache.bats`: tests for the compiler wrapper in `extras/cargo-sccache`.
 - `extras/`: things useful next to Factory but not part of it.
 
 ## Rules that the code cannot tell you

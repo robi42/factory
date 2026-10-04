@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Cargo's compiler wrapper for Factory's tasks: sccache where it can work, the compiler alone
+# where it cannot. Point build.rustc-wrapper at this file (see the README). Cargo then runs
+# it in place of rustc, and because its name is sccache the cc crate also puts it in front
+# of the C and C++ compilers that build scripts run.
+#
+# The compiler runs alone, without the cache, when no sccache but this file is on the PATH,
+# and when CODEX_SANDBOX_NETWORK_DISABLED is set: Codex's sandbox denies the connection to
+# sccache's server, and sccache then fails the compile instead of running it.
+real=""
+while IFS= read -r found; do
+  if [[ ! $found -ef ${BASH_SOURCE[0]} ]]; then
+    real=$found
+    break
+  fi
+done < <(type -aP sccache)
+if [[ -z $real || -n ${CODEX_SANDBOX_NETWORK_DISABLED:-} ]]; then
+  (($#)) || exit 2
+  exec -- "$@"
+fi
+
+# What Cargo compiles inside its own directory, a dependency's sources, never changes, so
+# every worktree can share those objects. They go to a server and a cache of their own, with
+# sccache's direct mode off: an object is then keyed by its preprocessed text and its flags,
+# without the paths and line numbers that tie it to one checkout. A server started in that
+# mode keeps it for every compile it is sent, and the workspace's own code is to keep
+# sccache's defaults: hence the second server, one port up or with -deps on its socket.
+cargo_home=$(cd -P -- "${CARGO_HOME:-$HOME/.cargo}" 2>/dev/null && pwd)
+here=$(pwd -P)
+if [[ -n $cargo_home && ($here/ == "$cargo_home"/registry/src/* || $here/ == "$cargo_home"/git/checkouts/*) ]]; then
+  export SCCACHE_DIRECT=false
+  export SCCACHE_DIR="${SCCACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/sccache}-deps"
+  if [[ -n ${SCCACHE_SERVER_UDS:-} ]]; then
+    export SCCACHE_SERVER_UDS="$SCCACHE_SERVER_UDS-deps"
+  else
+    export SCCACHE_SERVER_PORT=$((${SCCACHE_SERVER_PORT:-4226} + 1))
+  fi
+fi
+exec "$real" "$@"

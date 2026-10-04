@@ -12,6 +12,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   and Codex run as a shell command rather than through the agent, they answer a gate from
   the pane you are in: `!fy approve`, `!fy reject <note>`. The planner and the builder
   point you to them when you tell them a decision in words, and never run them.
+- Extras: `cargo-sccache/sccache`, a compiler wrapper for Cargo builds in task worktrees.
+  It runs sccache and shares between worktrees only the dependencies, which no task can
+  edit; in Codex's sandbox or without sccache installed it runs the compiler alone.
+  `extras/cargo-sccache/README.md` has the setup, what is shared, and why a shared
+  `target/` is no way to the same saving.
 
 ### Changed
 - The build approval prompt shows the commits and the diff stat in git's colours, the

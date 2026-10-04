@@ -399,6 +399,25 @@ from a Claude Code `SessionStart` hook or the first line of your gate:
 [ -d .codegraph ] || codegraph init
 ```
 
+**A compiler cache for Cargo builds.** A task's worktree starts with an empty `target/`, so
+each task pays for a full build, a long one with C++ behind a build script, as in a CXX-Qt
+app. `extras/cargo-sccache/sccache` puts [sccache](https://github.com/mozilla/sccache) in
+front of the compilers. Between worktrees it shares only what no task can edit, the
+dependencies, so a new worktree gets much of their compiled code from the cache. It steps
+aside in Codex's sandbox, where plain sccache fails every compile. Name it as Cargo's
+compiler wrapper, in `~/.cargo/config.toml` for every build or in a `.cargo/config.toml`
+in Herdr's worktree directory for the task worktrees alone:
+
+```toml
+[build]
+rustc-wrapper = "/path/to/factory/extras/cargo-sccache/sccache"
+```
+
+`extras/cargo-sccache/README.md` says what is shared and what is not. Do not give the
+worktrees one `target/` instead (`CARGO_TARGET_DIR`, `build.target-dir`): Cargo judges
+freshness by modification time and does not tell checkouts apart, so a task can pass its
+gate on another task's binaries.
+
 **GitHub for the Codex reviewer.** GitHub's remote MCP server, authenticated with a
 token in an environment variable (Herdr panes are non-login shells, so `.bashrc`):
 
