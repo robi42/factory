@@ -1837,6 +1837,10 @@ task_args() {
     TARGS=("$@")
     return 0
   fi
+  # a repo's root first means the explicit form; its bead is never read as the start of a note
+  if (($# >= 2)) && [[ -e $1/.git ]]; then
+    die "$2 is not a bead id Factory takes (letters and digits on either side of one hyphen)"
+  fi
   top=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
   branch=$(git -C "$top" branch --show-current)
   id=$(bead_of_branch "$branch")

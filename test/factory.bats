@@ -453,6 +453,12 @@ context_of() {
   [ -e "$run/aborted" ]
   run main answer 1. CSV
   [ "$(cat "$run/answers.md")" = "1. CSV" ]
+  # a repo named with an id of another shape is an error, never a note for the task here
+  rm -f "$run/reject.md"
+  run main reject "$REPO" my_repo-x7k use argparse
+  [ "$status" -eq 1 ]
+  [[ $output == *"my_repo-x7k is not a bead id Factory takes"* ]]
+  [ ! -e "$run/reject.md" ]
   cd "$REPO" # the repo's own checkout is no task's worktree
   run main approve
   [ "$status" -eq 1 ]
