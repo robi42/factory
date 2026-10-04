@@ -1196,10 +1196,19 @@ show_for_approval() { # kind dir
 # collect_answers questions-file: show the planner's questions and wait for the human.
 # Answers come from this terminal (lines until one containing only ".", or Ctrl-D) or from
 # `factory answer`, which writes answers.md next to the questions. Prints the answers.
+# While it waits, waiting next to the questions says so and names this run, for answer.
 collect_answers() {
-  local q=$1 dir line stdin_open=1 rc answers=""
-  dir=$(dirname "$q")
+  local dir rc=0
+  dir=$(dirname "$1")
   rm -f "$dir/answers.md"
+  printf 'questions %s\n' "$$" >"$dir/waiting"
+  await_answers "$1" "$dir" || rc=$?
+  rm -f "$dir/waiting"
+  return "$rc"
+}
+
+await_answers() { # questions-file run-dir: collect_answers' waiting
+  local q=$1 dir=$2 line stdin_open=1 rc answers=""
   toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal, or type !fy answer ... in the planner's pane" request
   printf '\n%s the planner asks (%s):\n\n' "$TAG" "$q" >&2
   show_md "$q"
@@ -1793,7 +1802,7 @@ task_run_dir() {
   printf '%s/%s' "$wt" "$RUN_DIR"
 }
 
-# gate_waiting run-dir -> plan or build while a live run waits at that approval, else 1
+# gate_waiting run-dir -> plan, build or questions: what a live run waits for there, else 1
 gate_waiting() {
   local kind pid
   read -r kind pid 2>/dev/null <"$1/waiting" || return 1
@@ -1804,7 +1813,8 @@ gate_waiting() {
 cmd_approve() { # repo bead-id [--allow-protected]
   local dir kind
   dir=$(task_run_dir "$1" "$2") || return 1
-  kind=$(gate_waiting "$dir") || die "nothing of $2 waits for approval"
+  kind=$(gate_waiting "$dir") || kind=""
+  [[ $kind == plan || $kind == build ]] || die "nothing of $2 waits for approval"
   if [[ ${3:-} == --allow-protected ]]; then
     [[ $kind == plan ]] || die "--allow-protected is for the plan; $2 waits with its build"
     : >"$dir/allow-protected"
@@ -1817,7 +1827,8 @@ cmd_approve() { # repo bead-id [--allow-protected]
 cmd_reject() { # repo bead-id note
   local dir kind
   dir=$(task_run_dir "$1" "$2") || return 1
-  kind=$(gate_waiting "$dir") || die "nothing of $2 waits for approval"
+  kind=$(gate_waiting "$dir") || kind=""
+  [[ $kind == plan || $kind == build ]] || die "nothing of $2 waits for approval"
   printf '%s\n' "$3" >"$dir/reject.md"
   log "sent your note on the $kind to $2"
 }
@@ -1825,7 +1836,8 @@ cmd_reject() { # repo bead-id note
 cmd_abort() { # repo bead-id
   local dir kind
   dir=$(task_run_dir "$1" "$2") || return 1
-  kind=$(gate_waiting "$dir") || die "nothing of $2 waits for approval"
+  kind=$(gate_waiting "$dir") || kind=""
+  [[ $kind == plan || $kind == build ]] || die "nothing of $2 waits for approval"
   : >"$dir/aborted"
   log "aborted $2 at its $kind"
 }
@@ -1851,8 +1863,10 @@ task_args() {
 }
 
 cmd_answer() { # repo bead-id [text | -]
-  local dir text=${3:-}
+  local dir text=${3:-} kind
   dir=$(task_run_dir "$1" "$2") || return 1
+  kind=$(gate_waiting "$dir") || kind=""
+  [[ $kind == questions ]] || die "no questions of $2 wait for answers"
   if [[ -z $text || $text == - ]]; then text=$(cat); fi
   [[ -n $text ]] || die "empty answer"
   printf '%s\n' "$text" >"$dir/answers.md"

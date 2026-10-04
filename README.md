@@ -164,10 +164,10 @@ of the task's panes, by typing the command after a `!`, which Claude Code and Co
 a shell command rather than through the agent; there the task is the one whose worktree
 the pane is in: `!fy answer <answers>`, `!fy approve`, `!fy reject <note>`, `!fy abort`.
 Or from any terminal, naming the repo and bead: `fy approve <repo> <bead-id>`. A run
-without a terminal waits for these commands. `approve`, `reject` and `abort` say so when
-nothing waits for them. The agents point you to these commands when you tell them a
-decision in words, and never run them. `--auto` skips both approvals; the planner's
-questions still wait for your answer.
+without a terminal waits for these commands. `approve`, `reject`, `abort` and `answer`
+say so when nothing waits for them. The agents point you to these commands when you tell
+them a decision in words, and never run them. `--auto` skips both approvals; the
+planner's questions still wait for your answer.
 
 **Questions.** When the planner asks, Factory prints the questions in its terminal and
 waits: answer there (finish with a line containing only `.`, or Ctrl-D), or with
@@ -223,7 +223,8 @@ They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
 (builder's pushback), `plan-changes.md` (what the planner changed after your note; shown
 once at the approval prompt, then removed), `copilot-N.md` and `copilot-N-response.md`
 (Copilot's comments and the builder's pushback), `gate-N.log` (also `gate-rebase-pr.log`
-and `gate-copilot-N.log`), `state` (where a rerun resumes; `--fresh` clears it).
+and `gate-copilot-N.log`), `state` (where a rerun resumes; `--fresh` clears it), `waiting`
+(what the run waits for, while it waits).
 
 `fy init` writes a short `AGENTS.md` (with `CLAUDE.md` linking to it) only when a repo
 has neither. Keep it to what the code cannot tell a new engineer: how to verify, layout

@@ -22,8 +22,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 - The build approval prompt shows the commits and the diff stat in git's colours, the
   stat fitted to the terminal's width.
 - `factory approve`, `reject` and `abort` refuse when no run waits at an approval for the
-  task, instead of leaving a file the next approval prompt clears; a gate names itself
-  and its run in `.factory/run/waiting` while it waits. `--allow-protected` is refused at
+  task, and `answer` when no questions wait, instead of leaving a file the next prompt
+  clears; a gate or the planner's questions name themselves and the run in
+  `.factory/run/waiting` while they wait. `--allow-protected` is refused at
   the build's approval. There it used to waive the protected-path check for the rest of
   the task, the rebase and the Copilot rounds included, and the pull request recorded the
   waiver.

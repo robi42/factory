@@ -426,6 +426,9 @@ context_of() {
   run cmd_approve "$REPO" toy-9 --allow-protected
   [ "$status" -eq 1 ]
   [[ $output == *"--allow-protected is for the plan"* ]]
+  printf 'questions %s\n' "$$" >"$run/waiting" # questions wait, not an approval
+  run cmd_approve "$REPO" toy-9
+  [ "$status" -eq 1 ]
   printf 'plan 999999999\n' >"$run/waiting" # a run that is gone
   run cmd_abort "$REPO" toy-9
   [ "$status" -eq 1 ]
@@ -451,6 +454,7 @@ context_of() {
   [ "$(cat "$run/reject.md")" = "use argparse, not getopt" ]
   run main abort
   [ -e "$run/aborted" ]
+  printf 'questions %s\n' "$$" >"$run/waiting"
   run main answer 1. CSV
   [ "$(cat "$run/answers.md")" = "1. CSV" ]
   # a repo named with an id of another shape is an error, never a note for the task here
@@ -737,6 +741,24 @@ IN
   [[ $output == *"to the human" ]]
 }
 
+@test "collect_answers: the questions name themselves and the run while they wait" {
+  fake_task
+  FACTORY_POLL_SECONDS=1
+  mkdir -p "$TMP/run"
+  printf '1. Which format?\n' >"$TMP/run/questions.md"
+  (
+    sleep 2
+    if [[ -e $TMP/run/waiting ]]; then cp "$TMP/run/waiting" "$TMP/seen"; fi
+    printf '1. CSV\n' >"$TMP/run/answers.md"
+  ) &
+  run collect_answers "$TMP/run/questions.md" </dev/null
+  wait
+  [ "$status" -eq 0 ]
+  [[ $output == *"answers received via file"* ]]
+  [ "$(cat "$TMP/seen")" = "questions $$" ]
+  [ ! -e "$TMP/run/waiting" ]
+}
+
 @test "build_phase: a note at the last round's approval still gets a round of its own" {
   fake_task
   WT=$TMP GATE=true BASE=main BRANCH=work
@@ -767,9 +789,19 @@ IN
   [ "$VERDICT" = REVISE ] && [ "$ROUND" -eq 2 ]
 }
 
-@test "answer subcommand writes answers.md into the task worktree" {
+@test "answer subcommand writes answers.md into the task worktree, while questions wait" {
   make_repo
   task_worktree
+  run cmd_answer "$REPO" toy-9 "1. CSV"
+  [ "$status" -eq 1 ]
+  [[ $output == *"no questions of toy-9 wait for answers"* ]]
+  printf 'plan %s\n' "$$" >"$TMP/wt-9/.factory/run/waiting" # an approval is no question
+  run cmd_answer "$REPO" toy-9 "1. CSV"
+  [ "$status" -eq 1 ]
+  printf 'questions %s\n' "$$" >"$TMP/wt-9/.factory/run/waiting"
+  run cmd_approve "$REPO" toy-9 # and questions are no approval
+  [ "$status" -eq 1 ]
+  [[ $output == *"nothing of toy-9 waits for approval"* ]]
   cmd_answer "$REPO" toy-9 "1. CSV"
   [ "$(cat "$TMP/wt-9/.factory/run/answers.md")" = "1. CSV" ]
   cmd_answer "$REPO" toy-9 - <<<"from stdin"
