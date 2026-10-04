@@ -14,6 +14,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   point you to them when you tell them a decision in words, and never run them.
 
 ### Changed
+- The build approval prompt shows the commits and the diff stat in git's colours, the
+  stat fitted to the terminal's width.
 - `factory approve`, `reject` and `abort` refuse when no run waits at an approval for the
   task, instead of leaving a file the next approval prompt clears; a gate names itself
   and its run in `.factory/run/waiting` while it waits. `--allow-protected` is refused at

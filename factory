@@ -1161,7 +1161,7 @@ plan_rounds() {
 }
 
 show_for_approval() { # kind dir
-  local n v
+  local n v color=never width=80
   printf '\n%s ' "$TAG" >&2
   if [[ $1 == plan ]]; then
     printf 'plan for %s (%s):\n\n' "$TASK_ID" "$2/plan.md" >&2
@@ -1180,9 +1180,14 @@ show_for_approval() { # kind dir
     printf '\n%s [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' "$TAG" >&2
   else
     printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2
+    if [[ -t 2 ]]; then # git sees only the indenting sed, so it gets the colours and width here
+      color=always
+      width=$(tput cols 2>/dev/null) || width=80
+      [[ $width =~ ^[0-9]+$ ]] || width=80
+    fi
     {
-      git -C "$WT" log --oneline "$(base_ref)..HEAD"
-      git -C "$WT" diff --stat "$(base_ref)...HEAD"
+      git -C "$WT" log --oneline --color="$color" "$(base_ref)..HEAD"
+      git -C "$WT" diff --stat="$((width - 4))" --color="$color" "$(base_ref)...HEAD"
     } 2>/dev/null | sed 's/^/    /' >&2 || warn "could not show the branch"
     printf '\n%s [a]pprove (look at the worktree or talk to the builder first if you like), [r]evise with a note, a[b]ort? (a/r/b) ' "$TAG" >&2
   fi
