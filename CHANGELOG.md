@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-04
+
 ### Added
 - `FACTORY_PLAN_ROUNDS`, 2 by default. After a revision, the plan goes back to Codex and
   the builder, who check it against their notes, until both approve or the rounds run out;
@@ -243,7 +245,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/robi42/factory/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/robi42/factory/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/robi42/factory/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/robi42/factory/compare/v0.1.5...v0.1.6
