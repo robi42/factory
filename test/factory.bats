@@ -863,6 +863,30 @@ JSON
   [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
 }
 
+@test "clean: a task still in planning stays, though its branch has no commits of its own" {
+  make_repo
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" branch factory/toy-p
+  herdr() { printf '{"result":{"worktrees":[]}}'; }
+  BD_STATUS=in_progress
+  bd() {
+    case "$*" in
+      *"config get"*) printf 'sync.remote (not set in config.yaml)\n' ;;
+      *show*) printf '{"status":"%s"}\n' "$BD_STATUS" ;;
+      *close*) printf '%s\n' "$*" >>"$TMP/closed" ;;
+    esac
+  }
+  run cmd_clean "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"keeping factory/toy-p: task toy-p is in_progress"* ]]
+  [ "$(git -C "$REPO" branch --list 'factory/*' --format='%(refname:short)')" = "factory/toy-p" ]
+  [ ! -e "$TMP/closed" ]
+  BD_STATUS=closed
+  run cmd_clean "$REPO"
+  [[ $output == *"cleaned factory/toy-p"* ]]
+  [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
+}
+
 @test "planner_kept_hands_off: clean tree passes, dirty tree gets one revert, then dies" {
   make_repo
   WT=$REPO

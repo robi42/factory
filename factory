@@ -1817,10 +1817,15 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
   printf '%s\n' "$url"
 }
 
-# merged_into repo branch base: 0 when the branch is merged (ancestor of base, or its PR merged).
+# merged_into repo branch base bead-status: 0 when the branch is merged: its PR merged, or it is
+# an ancestor of base and its task is closed or has no bead. A branch with no commits of its own
+# is an ancestor from the start, so ancestry alone takes a task still in planning for a merged one.
 merged_into() {
-  local repo=$1 branch=$2 base=$3
-  git -C "$repo" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$base" 2>/dev/null && return 0
+  local repo=$1 branch=$2 base=$3 status=$4
+  if [[ -z $status || $status == closed ]] \
+    && git -C "$repo" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$base" 2>/dev/null; then
+    return 0
+  fi
   if git -C "$repo" remote get-url origin >/dev/null 2>&1 && command -v gh >/dev/null 2>&1; then
     [[ $(cd "$repo" && gh pr view "$branch" --json state -q .state 2>/dev/null) == MERGED ]] && return 0
   fi
@@ -1844,7 +1849,8 @@ cmd_clean() {
     [[ -n $branch ]] || continue
     id=$(bead_of_branch "$branch")
     [[ -z $only || $only == "$id" ]] || continue
-    if ((force)) || merged_into "$repo" "$branch" "$base"; then
+    status=$(bd_field "$repo" "$id" '.status' 2>/dev/null) || status=""
+    if ((force)) || merged_into "$repo" "$branch" "$base" "$status"; then
       if [[ -n $ws ]]; then
         h worktree remove --workspace "$ws" --force >/dev/null
       elif [[ -n $path ]]; then
@@ -1852,7 +1858,6 @@ cmd_clean() {
       fi
       git -C "$repo" worktree prune
       git -C "$repo" branch -D "$branch" >/dev/null
-      status=$(bd_field "$repo" "$id" '.status' 2>/dev/null) || status=""
       if [[ -n $status && $status != closed ]]; then
         why=merged
         ((force)) && why=dropped
@@ -1860,6 +1865,8 @@ cmd_clean() {
       fi
       log "cleaned $branch${ws:+ (workspace $ws)}"
       n=$((n + 1))
+    elif [[ -n $status && $status != closed ]]; then
+      log "keeping $branch: task $id is $status (factory clean $repo $id --force to drop it)"
     else
       log "keeping $branch: not merged into $base (factory clean $repo $id --force to drop it)"
     fi

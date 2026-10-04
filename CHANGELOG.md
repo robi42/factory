@@ -17,6 +17,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   `plan-review-N.md` (Codex) and `plan-review-N-build.md` (builder).
 
 ### Fixed
+- `factory clean` removed a task still in planning and closed its bead as merged. A branch
+  with no commits of its own is an ancestor of the base from the start, and ancestry alone
+  counted as merged, so the worktree went, and the plan with it. Ancestry now counts only
+  once the task's bead is closed, as Factory closes it at build approval; a merged pull
+  request still counts on its own. `clean` says which task it keeps and why.
 - The guardrails' note that the protected-path check is waived now carries the `[factory]`
   tag like every other line Factory prints.
 - Codex never took Factory's trust for the reviewer's repo: it splits a `-c` key at its
