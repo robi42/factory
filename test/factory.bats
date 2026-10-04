@@ -390,18 +390,73 @@ context_of() {
   [[ $output == *"asked planner: "*"too big, split it"* ]]
   [[ $output == *"approved via file"* ]]
   [ ! -e "$TMP/approved" ]
+  [ ! -e "$TMP/waiting" ]
+  # the gate names itself and this run while it waits; an abort file ends it with 3
+  (
+    sleep 2
+    if [[ -e $TMP/waiting ]]; then cp "$TMP/waiting" "$TMP/seen"; fi
+    : >"$TMP/aborted"
+    sleep 4
+    : >"$TMP/approved" # ends a gate that ignores the abort, so a regression fails instead of hanging
+  ) &
+  run human_gate plan planner "$TMP" </dev/null
+  wait
+  [ "$status" -eq 3 ]
+  [[ $output == *"aborted via file"* ]]
+  [ "$(cat "$TMP/seen")" = "plan $$" ]
+  [ ! -e "$TMP/waiting" ] && [ ! -e "$TMP/aborted" ]
 }
 
-@test "approve and reject subcommands find the task worktree" {
+@test "approve, reject and abort find the task worktree and need a run waiting there" {
   make_repo
   task_worktree
+  local run="$TMP/wt-9/.factory/run"
+  run cmd_approve "$REPO" toy-9
+  [ "$status" -eq 1 ]
+  [[ $output == *"nothing of toy-9 waits for approval"* ]]
+  [ ! -e "$run/approved" ]
+  printf 'plan %s\n' "$$" >"$run/waiting" # a live run at plan approval
   cmd_approve "$REPO" toy-9
-  [ -e "$TMP/wt-9/.factory/run/approved" ]
+  [ -e "$run/approved" ]
   cmd_reject "$REPO" toy-9 "use argparse"
-  [ "$(cat "$TMP/wt-9/.factory/run/reject.md")" = "use argparse" ]
+  [ "$(cat "$run/reject.md")" = "use argparse" ]
+  cmd_abort "$REPO" toy-9
+  [ -e "$run/aborted" ]
+  printf 'build %s\n' "$$" >"$run/waiting"
+  run cmd_approve "$REPO" toy-9 --allow-protected
+  [ "$status" -eq 1 ]
+  [[ $output == *"--allow-protected is for the plan"* ]]
+  printf 'plan 999999999\n' >"$run/waiting" # a run that is gone
+  run cmd_abort "$REPO" toy-9
+  [ "$status" -eq 1 ]
   run cmd_approve "$REPO" toy-404
   [ "$status" -eq 1 ]
   [[ $output == *"no worktree"* ]]
+}
+
+@test "in a task's worktree, as in an agent's pane, the commands take the task from there" {
+  make_repo
+  task_worktree
+  local run="$TMP/wt-9/.factory/run"
+  printf 'plan %s\n' "$$" >"$run/waiting"
+  cd "$TMP/wt-9"
+  task_args use argparse
+  [ "${TARGS[*]}" = "$REPO toy-9 use argparse" ]
+  task_args "$REPO" toy-9 --allow-protected # a repo and a bead named still win
+  [ "${TARGS[*]}" = "$REPO toy-9 --allow-protected" ]
+  run main approve --allow-protected
+  [ "$status" -eq 0 ]
+  [ -e "$run/approved" ] && [ -e "$run/allow-protected" ]
+  run main reject use argparse, not getopt
+  [ "$(cat "$run/reject.md")" = "use argparse, not getopt" ]
+  run main abort
+  [ -e "$run/aborted" ]
+  run main answer 1. CSV
+  [ "$(cat "$run/answers.md")" = "1. CSV" ]
+  cd "$REPO" # the repo's own checkout is no task's worktree
+  run main approve
+  [ "$status" -eq 1 ]
+  [[ $output == *"usage: factory approve [<repo> <bead-id>]"* ]]
 }
 
 @test "detect_gate: repo conventions win over language defaults" {
@@ -509,6 +564,7 @@ IN
 @test "approve --allow-protected and the p answer write the waiver" {
   make_repo
   task_worktree
+  printf 'plan %s\n' "$$" >"$TMP/wt-9/.factory/run/waiting"
   cmd_approve "$REPO" toy-9 --allow-protected
   [ -e "$TMP/wt-9/.factory/run/allow-protected" ]
   [ -e "$TMP/wt-9/.factory/run/approved" ]
@@ -576,6 +632,11 @@ IN
   [[ $(plan_review_prompt 1) == *"plan-review-1.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_build_check_prompt 1) == *"plan-review-1-build.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_prompt) == *"reply with its content"* ]]
+  # the decisions are the human's to type; the agents only point there
+  [[ $(plan_prompt) == *"!fy answer <answers>, !fy approve (--allow-protected"*"!fy reject <note> or !fy abort"*"Never run these yourself"* ]]
+  protected_globs() { :; }
+  BRANCH=work WT=$TMP
+  [[ $(build_prompt) == *"!fy approve, !fy reject <note> or !fy abort in a pane. Never run these yourself"* ]]
   [[ $(answers_prompt "1. CSV") == *"reply with its content"* ]]
   [[ $(plan_fix_prompt 1) == *"reply with the plan's content"* ]]
   [[ $(plan_note_prompt "split it") == *"Reply with the content of plan-changes.md"* ]]

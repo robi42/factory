@@ -132,6 +132,11 @@ fy run     --fresh ~/src/app app-k3x         # rerun from scratch instead of res
 fy answer  ~/src/app app-k3x "1. CSV  2. keep the old format"
 fy approve ~/src/app app-k3x                 # add --allow-protected when the plan must touch protected files
 fy reject  ~/src/app app-k3x "keep it in one module"
+fy abort   ~/src/app app-k3x
+
+# ...or in any of the task's panes, where the task is the one there
+!fy approve
+!fy reject keep it in one module
 
 # afterwards
 fy pr      ~/src/app app-k3x                 # open a PR for a branch a run left behind; needs its builder agent alive
@@ -154,16 +159,24 @@ second one pays for the overlap.
 
 ### The human gates
 
+Each gate takes your answer in three places. In Factory's terminal, by key. In any of the
+task's panes, by typing the command after a `!`, which Claude Code and Codex run as a shell
+command rather than through the agent; there the task is the one whose worktree the pane
+is in: `!fy answer <answers>`, `!fy approve`, `!fy reject <note>`, `!fy abort`. Or from
+any terminal, naming the repo and bead: `fy approve <repo> <bead-id>`. `approve`, `reject`
+and `abort` say so when nothing waits for them. The agents point you to these commands
+when you tell them a decision in words, and never run them.
+
 **Questions.** When the planner asks, Factory prints the questions in its terminal and
-waits: answer there (finish with a line containing only `.`, or Ctrl-D) or with `fy answer`. Up to
-three rounds; if the planner still has questions after that, the run stops and you talk
-to it in its pane.
+waits: answer there (finish with a line containing only `.`, or Ctrl-D), or with
+`fy answer`. Up to three rounds; if the planner still has questions after that, the run
+stops and you talk to it in its pane.
 
 **Plan approval.** Factory prints the plan, the last plan review's verdicts (marked when
 the plan changed since) and where its notes are, and waits. Answer in its terminal: `a`
 approve, `p` approve and allow protected paths, `r` revise with a note, `b` abort; any
-other key asks again. Or from anywhere:
-`fy approve` (with `--allow-protected` for the `p` case) and `fy reject "note"`. A note
+other key asks again. Or with `fy approve` (`--allow-protected` for the `p` case),
+`fy reject <note>` and `fy abort`. A note
 goes to the planner, the plan comes back revised with a short note on what changed and
 why, and you are asked again. You can also edit `plan.md` or talk to the planner in its
 pane first; the builder reads the file.
@@ -172,7 +185,7 @@ waits for the files.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
 the branch's commits and diff stat and waits the same way: `a` approve, `r` revise with a
-note, `b` abort, or `fy approve` and `fy reject "note"` from anywhere. A note goes to the
+note, `b` abort, or `fy approve`, `fy reject <note>` and `fy abort`. A note goes to the
 builder and costs one more round of gate, guardrails and reviews before you are asked
 again. Look at the worktree or talk to the builder in its pane first if you like.
 

@@ -5,7 +5,19 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `factory abort`, the gate's `b` from anywhere.
+- In a task's worktree, `factory approve`, `reject`, `abort` and `answer` need no repo and
+  bead: the task is the one there. Typed after a `!` in an agent's pane, which Claude Code
+  and Codex run as a shell command rather than through the agent, they answer a gate from
+  the pane you are in: `!fy approve`, `!fy reject <note>`. The planner and the builder
+  point you to them when you tell them a decision in words, and never run them.
+
 ### Changed
+- `factory approve`, `reject` and `abort` refuse when no run waits at an approval for the
+  task, instead of leaving a file the next approval prompt clears; a gate names itself
+  and its run in `.factory/run/waiting` while it waits. `--allow-protected` is refused at
+  the build's approval, where it did nothing.
 - Agents reply with what they write, so their panes show it: the planner its plan (or,
   after your note, what it changed), the reviewers their reviews, the builder its
   pushback. A review now ends with its step and round, such as `PLAN REVIEW round 1` or
