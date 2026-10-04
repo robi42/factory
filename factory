@@ -91,7 +91,7 @@ usage() {
   row "FACTORY_BUILD_EFFORT=$FACTORY_BUILD_EFFORT" 'builder effort: low, medium, high, xhigh, max'
   row "FACTORY_REVIEW_EFFORT=$FACTORY_REVIEW_EFFORT" 'reviewer effort: the same, and ultra'
   row "FACTORY_PLAN_ROUNDS=$FACTORY_PLAN_ROUNDS" 'plan review rounds before the build (always at least one)'
-  row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up'
+  row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up; a note of yours at the last gets one more'
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
   row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'a stalled turn fails after this; a working one toasts you and goes on'
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
@@ -1426,9 +1426,10 @@ approve_plan() {
 }
 
 # build_phase repo [resume]: build, then gate, guardrails, dual review and the human's
-# approval per round. Sets ROUND VERDICT GATE_LOG.
+# approval per round, up to FACTORY_ROUNDS; a note from the human always gets a round of its
+# own, past the last if need be. Sets ROUND VERDICT GATE_LOG.
 build_phase() {
-  local repo=$1 violations rc
+  local repo=$1 violations rc limit=$FACTORY_ROUNDS
   log "building"
   if [[ ${2:-} == resume ]]; then
     ask "$BUILD_AGENT" "$(build_prompt) Part of it may already be implemented or committed on this branch from an earlier run; check the branch and continue from there."
@@ -1437,7 +1438,7 @@ build_phase() {
   fi
   ROUND=1
   VERDICT=""
-  while ((ROUND <= FACTORY_ROUNDS)); do
+  while ((ROUND <= limit)); do
     GATE_LOG="$WT/$RUN_DIR/gate-$ROUND.log"
     if ! run_gate "$WT" "$GATE" "$GATE_LOG"; then
       ask "$BUILD_AGENT" "$(gate_fix_prompt "$GATE_LOG")"
@@ -1468,6 +1469,7 @@ build_phase() {
           VERDICT=REVISE
           log "note for the builder; another round"
           ask "$BUILD_AGENT" "$(build_note_prompt "$HUMAN_NOTE")"
+          ((ROUND < limit)) || limit=$((ROUND + 1))
           ROUND=$((ROUND + 1))
           continue
           ;;
@@ -1478,7 +1480,7 @@ build_phase() {
     ask "$BUILD_AGENT" "$(revise_prompt "$ROUND")"
     ROUND=$((ROUND + 1))
   done
-  ROUND=$FACTORY_ROUNDS # the loop ends one past the last round
+  ROUND=$limit # the loop ends one past the last round
 }
 
 # finish_task repo: memories, then close the bead (with PR and Copilot review) or hand over.

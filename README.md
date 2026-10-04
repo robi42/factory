@@ -187,9 +187,8 @@ the file.
 the branch's commits and diff stat and waits the same way: `a` approve, `r` revise with a
 note, `b` abort, or `fy approve`, `fy reject <note>` and `fy abort`. A note goes to the
 builder and costs one more round of gate, guardrails and reviews before you are asked
-again. In the last round (`FACTORY_ROUNDS`) none is left: the builder still gets the note,
-but the run ends unchecked and the task needs a human. Look at the worktree or talk to the
-builder in its pane first if you like.
+again; in the last round it gets one more, past `FACTORY_ROUNDS`. Look at the worktree or
+talk to the builder in its pane first if you like.
 
 **Merge.** On approval the bead is closed and you get a toast; the branch, named
 `factory/<bead-id>-<title-slug>` and checked out under Herdr's worktree directory as
@@ -321,7 +320,7 @@ after the gate passes and before review:
 | `FACTORY_BUILD_EFFORT` | `xhigh` (the same levels) |
 | `FACTORY_REVIEW_EFFORT` | `xhigh` (the same levels, and `ultra`) |
 | `FACTORY_PLAN_ROUNDS` | `2` plan review rounds (always at least one) |
-| `FACTORY_ROUNDS` | `3` build / review rounds |
+| `FACTORY_ROUNDS` | `3` build / review rounds; a note of yours at the last gets one more |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
 | `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h); a stalled turn fails then, a working one toasts you and goes on |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |

@@ -34,6 +34,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   pushback. A review now ends with its step and round, such as `PLAN REVIEW round 1` or
   `CODE REVIEW round 2`, above the verdict line.
 
+### Fixed
+- A note at build approval in the last round got no round of its own: the builder took
+  it, and the run ended unchecked as needing a human. It now gets its round, one past
+  `FACTORY_ROUNDS` if need be.
+
 ## [0.1.9] - 2026-10-04
 
 ### Added

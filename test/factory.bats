@@ -737,6 +737,36 @@ IN
   [[ $output == *"to the human" ]]
 }
 
+@test "build_phase: a note at the last round's approval still gets a round of its own" {
+  fake_task
+  WT=$TMP GATE=true BASE=main BRANCH=work
+  REVIEW_AGENT=codex PLAN_AGENT=planner BUILD_AGENT=builder
+  FACTORY_ROUNDS=1
+  mkdir -p "$TMP/.factory/run"
+  run_gate() { :; }
+  guard_check() { :; }
+  base_ref() { printf main; }
+  mark() { :; }
+  ask() { printf 'asked %s: %.40s\n' "$1" "$2"; }
+  ask_for_file() { printf 'VERDICT: %s\n' "$(cat "$TMP/verdict")" >"$3"; }
+  human_gate() { # a note the first time, an approval the second
+    if [[ -e $TMP/noted ]]; then return 0; fi
+    : >"$TMP/noted"
+    HUMAN_NOTE="rename the flag"
+    return 4
+  }
+  printf 'APPROVE\n' >"$TMP/verdict"
+  build_phase "$TMP" >"$TMP/out" 2>&1
+  [ "$VERDICT" = APPROVE ] && [ "$ROUND" -eq 2 ]
+  grep -q 'asked builder: The human reviewed the implementation' "$TMP/out"
+  grep -q 'review round 2' "$TMP/out"
+  # the reviewers asking for more in that extra round still end the run
+  rm -f "$TMP/noted"
+  human_gate() { HUMAN_NOTE="rename the flag" && printf 'REVISE\n' >"$TMP/verdict" && return 4; }
+  build_phase "$TMP" >"$TMP/out" 2>&1
+  [ "$VERDICT" = REVISE ] && [ "$ROUND" -eq 2 ]
+}
+
 @test "answer subcommand writes answers.md into the task worktree" {
   make_repo
   task_worktree
