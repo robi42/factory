@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-04
+
 ### Added
 - `factory abort`, the gate's `b` from anywhere.
 - In a task's worktree, `factory approve`, `reject`, `abort` and `answer` need no repo and
@@ -24,10 +26,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `factory approve`, `reject` and `abort` refuse when no run waits at an approval for the
   task, and `answer` when no questions wait, instead of leaving a file the next prompt
   clears; a gate or the planner's questions name themselves and the run in
-  `.factory/run/waiting` while they wait. `--allow-protected` is refused at
-  the build's approval. There it used to waive the protected-path check for the rest of
-  the task, the rebase and the Copilot rounds included, and the pull request recorded the
-  waiver.
+  `.factory/run/waiting` while they wait. `--allow-protected` is refused at the build's
+  approval. There it used to waive the protected-path check for the rest of the task, the
+  rebase and the Copilot rounds included, and the pull request recorded the waiver.
 - `factory reject` and `answer` take a note or answers of several words without quotes,
   as typed in a pane; both used to refuse a second word.
 - Agents reply with what they write, so their panes show it: the planner its plan (or,
@@ -280,7 +281,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/robi42/factory/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/robi42/factory/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/robi42/factory/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/robi42/factory/compare/v0.1.6...v0.1.7
