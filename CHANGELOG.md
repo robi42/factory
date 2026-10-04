@@ -5,6 +5,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Agents reply with what they write, so their panes show it: the planner its plan (or,
+  after your note, what it changed), the reviewers their reviews, the builder its
+  pushback. A review now ends with its step and round, such as `PLAN REVIEW round 1` or
+  `CODE REVIEW round 2`, above the verdict line.
+
 ## [0.1.9] - 2026-10-04
 
 ### Added

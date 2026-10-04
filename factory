@@ -841,7 +841,7 @@ copilot_fix_prompt() { # round
 GitHub Copilot reviewed the pull request and left the comments in $RUN_DIR/copilot-$1.md (file:line: comment).
 Fix what is right. For anything you disagree with, say why in $RUN_DIR/copilot-$1-response.md instead.
 The gate must pass: $GATE
-Commit; do not push. Reply with just DONE.
+Commit; do not push. Reply with the content of copilot-$1-response.md if you wrote it, else with just DONE.
 P
 }
 
@@ -917,7 +917,7 @@ You are the planner. Explore this repo, then write a short, specific implementat
 Do not write the code itself and do not change any file outside $RUN_DIR/; the factory checks.
 If the task is ambiguous in a way that would change the design, do not plan yet: write your numbered questions to $RUN_DIR/questions.md and reply with those questions. Prefer a plan with stated assumptions over questions when the ambiguity is minor.
 $MEMORY
-Reply with just PLAN READY once the file is written.
+Once the file is written, reply with its content.
 P
 }
 
@@ -958,8 +958,8 @@ review_prompt() { # round
 Review task $TASK_ID: $TASK_TITLE
 The plan is in $RUN_DIR/plan.md. The changes: git diff $(base_ref)...HEAD
 Look for bugs, missed requirements, shortcuts (skipped tests, suppressed warnings, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.
-Write the review to $RUN_DIR/review-$1.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
-Reply with just that verdict line once the file is written.
+Write the review to $RUN_DIR/review-$1.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
+Once the file is written, reply with its content.
 P
 }
 
@@ -970,8 +970,8 @@ Task $TASK_ID: $TASK_TITLE
 $TASK_DESC
 
 A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Point out real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1)).md")
-Write your notes to $RUN_DIR/plan-review-$1.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
-Reply with just that verdict line once the file is written.
+Write your notes to $RUN_DIR/plan-review-$1.md and end that file with two lines: PLAN REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
+Once the file is written, reply with its content.
 P
 }
 
@@ -982,8 +982,8 @@ Task $TASK_ID: $TASK_TITLE
 $TASK_DESC
 
 You will implement $RUN_DIR/plan.md next. Read it against this repo first: is it concrete enough to build, is its design the simplest that fits this codebase, does it miss anything the task needs, or add anything it does not? Note real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1))-build.md")
-Write your notes to $RUN_DIR/plan-review-$1-build.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
-Reply with just that verdict line once the file is written.
+Write your notes to $RUN_DIR/plan-review-$1-build.md and end that file with two lines: PLAN REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
+Once the file is written, reply with its content.
 P
 }
 
@@ -999,14 +999,14 @@ Answers to your questions:
 
 $1
 
-Now write $RUN_DIR/plan.md as described before and reply with just PLAN READY. If something is still unclear, write the remaining questions to $RUN_DIR/questions.md and reply with them.
+Now write $RUN_DIR/plan.md as described before and reply with its content. If something is still unclear, write the remaining questions to $RUN_DIR/questions.md and reply with them.
 P
 }
 
 plan_note_prompt() { # note
   cat <<P
 The human reviewed $RUN_DIR/plan.md and says: $1
-Update the plan accordingly. Write what you changed and why, briefly, to $RUN_DIR/plan-changes.md; where you kept something the human questioned, say why there. Reply with just PLAN READY.
+Update the plan accordingly. Write what you changed and why, briefly, to $RUN_DIR/plan-changes.md; where you kept something the human questioned, say why there. Reply with the content of plan-changes.md.
 P
 }
 
@@ -1021,7 +1021,7 @@ P
 plan_fix_prompt() { # round
   cat <<P
 Reviewers left notes on your plan in $RUN_DIR/plan-review-$1.md and $RUN_DIR/plan-review-$1-build.md. Update $RUN_DIR/plan.md where they are right; ignore what is not.
-Reply with just PLAN READY when done.
+Then reply with the plan's content.
 P
 }
 
@@ -1029,8 +1029,8 @@ plan_check_prompt() { # round
   cat <<P
 The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(base_ref)...HEAD
 Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.
-Write your notes to $RUN_DIR/review-$1-plan.md and end that file with one line: VERDICT: APPROVE or VERDICT: REVISE
-Reply with just that verdict line once the file is written.
+Write your notes to $RUN_DIR/review-$1-plan.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
+Once the file is written, reply with its content.
 P
 }
 
@@ -1038,7 +1038,7 @@ revise_prompt() { # round
   cat <<P
 Reviewers asked for changes in $RUN_DIR/review-$1.md and $RUN_DIR/review-$1-plan.md. Fix real issues; if a point is wrong, say why in $RUN_DIR/response-$1.md instead.
 The gate must pass: $GATE
-Commit. Reply with just DONE.
+Commit. Reply with the content of response-$1.md if you wrote it, else with just DONE.
 P
 }
 

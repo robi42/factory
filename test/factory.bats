@@ -567,6 +567,25 @@ IN
   [ ! -e "$TMP/answers.md" ]
 }
 
+@test "prompts: agents reply with what they write; reviews name their step and round" {
+  fake_task
+  TASK_DESC="" GATE=true MEMORY=""
+  base_ref() { printf main; }
+  [[ $(review_prompt 2) == *"review-2.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
+  [[ $(plan_check_prompt 2) == *"review-2-plan.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
+  [[ $(plan_review_prompt 1) == *"plan-review-1.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
+  [[ $(plan_build_check_prompt 1) == *"plan-review-1-build.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
+  [[ $(plan_prompt) == *"reply with its content"* ]]
+  [[ $(answers_prompt "1. CSV") == *"reply with its content"* ]]
+  [[ $(plan_fix_prompt 1) == *"reply with the plan's content"* ]]
+  [[ $(plan_note_prompt "split it") == *"Reply with the content of plan-changes.md"* ]]
+  [[ $(revise_prompt 1) == *"content of response-1.md if you wrote it, else with just DONE"* ]]
+  [[ $(copilot_fix_prompt 1) == *"content of copilot-1-response.md if you wrote it, else with just DONE"* ]]
+  # the step and round sit above the verdict, which still ends the file
+  printf 'notes\nCODE REVIEW round 2\nVERDICT: REVISE\n' >"$TMP/review.md"
+  [ "$(verdict_of "$TMP/review.md")" = REVISE ]
+}
+
 @test "plan_or_interview: the human's answers reach the planner, whose plan ends the interview" {
   fake_task
   WT=$TMP

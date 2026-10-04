@@ -60,8 +60,10 @@ over its socket CLI. It creates the worktree workspace and panes, starts `claude
 `codex` in them, sends each prompt with `herdr agent prompt`, and waits on Herdr's agent
 lifecycle (`working`, `idle`, `blocked`) rather than parsing screens. Handoffs between
 roles are files in the worktree's `.factory/run/`: the plan, the reviews with a verdict
-line, the gate log. Factory never trusts an agent's word for "done": it checks the file
-exists, runs the gate itself, and inspects the diff.
+line, the gate log. Each agent also replies with what it wrote, so its pane shows the plan
+or the review; a review ends with its step and round (`PLAN REVIEW round 1`,
+`CODE REVIEW round 2`) above the verdict. Factory never trusts an agent's word for
+"done": it checks the file exists, runs the gate itself, and inspects the diff.
 
 Because the state is the worktree plus Beads, the orchestrator is disposable. Kill it or
 Ctrl-C it: the agents, worktree and workspace stay, the bead gets a note saying at which
