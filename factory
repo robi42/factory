@@ -73,10 +73,10 @@ usage() {
   row 'factory tasks   <repo> [--all]' 'open tasks in the order next takes them; args (--all) go to bd list'
   row 'factory sync    <repo>' 'pull, then push the beads database to its git remote'
   row 'factory init    <repo> [bd init args...]' 'lean bd init with a short prefix, detect the gate, AGENTS.md stub'
-  row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the waiting plan or build from any terminal'
-  row 'factory reject  <repo> <bead-id> "note"' 'send a note back; the plan or build comes back revised'
+  row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the plan or build; --allow-protected (plan only) waives protected paths'
+  row 'factory reject  <repo> <bead-id> note...' 'send a note back; the plan or build comes back revised'
   row 'factory abort   <repo> <bead-id>' 'abort the task at its waiting plan or build'
-  row 'factory answer  <repo> <bead-id> ["answers" | -]' 'answer the planner'"'"'s questions from any terminal'
+  row 'factory answer  <repo> <bead-id> [answers... | -]' 'answer the planner'"'"'s questions from any terminal'
   row '  in a task'"'"'s worktree: no <repo> <bead-id>' 'the task is the one there: !fy approve in an agent'"'"'s pane'
   row 'factory pr      <repo> <bead-id> [--no-copilot]' 'push an existing task branch and open a pull request'
   row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
@@ -97,12 +97,12 @@ usage() {
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
   row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" '1: code changes must touch a test file'
   row "FACTORY_APPROVAL=$FACTORY_APPROVAL" 'ask: you approve each plan and build; auto: skip'
-  row "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS" 'seconds between checks for the approve, reject and answer files'
+  row "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS" 'seconds between checks for the approve, reject, abort and answer files'
   row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request'
   row "FACTORY_COPILOT=$FACTORY_COPILOT" '1: request a Copilot review on the PR and act on its comments'
   row "FACTORY_COPILOT_ROUNDS=$FACTORY_COPILOT_ROUNDS" 'Copilot review rounds before giving up'
   row "FACTORY_COPILOT_WAIT_S=$FACTORY_COPILOT_WAIT_S" 'seconds to wait for each Copilot review'
-  row "FACTORY_BD_PUSH=$FACTORY_BD_PUSH" '1: push beads to their sync remote after tasks and adds'
+  row "FACTORY_BD_PUSH=$FACTORY_BD_PUSH" '1: push beads to their sync remote after tasks, adds, PRs and cleans'
   row "FACTORY_GUARDRAILS=$FACTORY_GUARDRAILS" 'forbidden-pattern list; a repo'"'"'s .factory/guardrails.txt replaces it'
   row "FACTORY_FRESH=$FACTORY_FRESH" '1: start the task over instead of resuming (--fresh)'
 }
@@ -353,7 +353,7 @@ slugify() {
 }
 
 # repo_prefix name -> a short bead prefix: the initials of a name of several words
-# (AllesBuien ab, phoenix_live_demo pld), else a word's first and last letter (Blik bk);
+# (AllesBuien ab, phoenix_live_demo pld), else a word's first and last character (Blik bk);
 # leading digits are dropped (2048-game ge), and a name without a letter gives nothing
 repo_prefix() {
   local w word p=""
@@ -1200,7 +1200,7 @@ collect_answers() {
   local q=$1 dir line stdin_open=1 rc answers=""
   dir=$(dirname "$q")
   rm -f "$dir/answers.md"
-  toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal or with: factory answer" request
+  toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal, or type !fy answer ... in the planner's pane" request
   printf '\n%s the planner asks (%s):\n\n' "$TAG" "$q" >&2
   show_md "$q"
   printf '\n%s answer below; a line containing only "." or Ctrl-D ends it  (or type !fy answer ... in the planner'"'"'s pane)\n' "$TAG" >&2
@@ -1221,7 +1221,7 @@ collect_answers() {
       elif ((rc <= 128)); then
         stdin_open=0
         [[ -n $answers ]] && break
-        log "no terminal to answer from; waiting for: factory answer <repo> $TASK_ID \"...\""
+        log "no terminal to answer from; waiting for !fy answer ... in the planner's pane (or factory answer <repo> $TASK_ID \"...\")"
       fi
     else
       sleep "$FACTORY_POLL_SECONDS"
@@ -1994,7 +1994,7 @@ take_flags() {
 main() {
   local cmd=${1:-help} a u
   if (($# > 0)); then shift; fi
-  for a in "$@"; do # the first non-flag argument names the repo
+  for a in "$@"; do # the first non-flag argument usually names the repo (task_args finds it in a worktree)
     if [[ $a != --* ]]; then
       load_repo_env "$a"
       break

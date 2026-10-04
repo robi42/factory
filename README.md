@@ -99,7 +99,7 @@ Status: early. Built and used by one person on Arch Linux; expect rough edges el
    git clone git@github.com:robi42/factory.git ~/Projects/factory
    cd ~/Projects/factory                     # or wherever you keep repos
    mise install                              # just, shfmt, shellcheck, bats, codespell, bd
-   ln -s "$PWD/factory" ~/.local/bin/fy      # or any name you like
+   ln -s "$PWD/factory" ~/.local/bin/fy      # the agents and toasts call it fy
    ```
 3. Make `bd` resolve from a fresh login shell, because Claude Code runs its commands from
    one:
@@ -126,22 +126,22 @@ fy next    ~/src/app                         # claim the next ready bead and run
 fy run     ~/src/app "Fix flaky login test"  # a one-off, also filed as a bead
 fy queue   ~/src/app                         # work through everything that is ready
 fy next    --pr --auto ~/src/app             # open a PR when approved; skip both approvals
-fy run     --fresh ~/src/app app-k3x         # rerun from scratch instead of resuming
+fy run     --fresh ~/src/app ap-k3x          # rerun from scratch instead of resuming
 
 # while a run waits for you (from any terminal)
-fy answer  ~/src/app app-k3x "1. CSV  2. keep the old format"
-fy approve ~/src/app app-k3x                 # add --allow-protected when the plan must touch protected files
-fy reject  ~/src/app app-k3x "keep it in one module"
-fy abort   ~/src/app app-k3x
+fy answer  ~/src/app ap-k3x "1. CSV  2. keep the old format"
+fy approve ~/src/app ap-k3x                  # add --allow-protected when the plan must touch protected files
+fy reject  ~/src/app ap-k3x "keep it in one module"
+fy abort   ~/src/app ap-k3x
 
 # ...or in any of the task's panes, where the task is the one there
 !fy approve
 !fy reject keep it in one module
 
 # afterwards
-fy pr      ~/src/app app-k3x                 # open a PR for a branch a run left behind; needs its builder agent alive
+fy pr      ~/src/app ap-k3x                  # open a PR for a branch a run left behind; needs its builder agent alive
 fy clean   ~/src/app                         # drop workspaces, worktrees and branches of merged tasks
-fy clean   ~/src/app app-k3x --force         # ...or of one task you abandoned
+fy clean   ~/src/app ap-k3x --force          # ...or of one task you abandoned
 fy check   <worktree> main                   # gate + guardrails on a branch, no agents
 fy sync    ~/src/app                         # pull, then push the Beads database
 fy status                                    # live Factory agents in Herdr
@@ -159,13 +159,15 @@ second one pays for the overlap.
 
 ### The human gates
 
-Each gate takes your answer in three places. In Factory's terminal, by key. In any of the
-task's panes, by typing the command after a `!`, which Claude Code and Codex run as a shell
-command rather than through the agent; there the task is the one whose worktree the pane
-is in: `!fy answer <answers>`, `!fy approve`, `!fy reject <note>`, `!fy abort`. Or from
-any terminal, naming the repo and bead: `fy approve <repo> <bead-id>`. `approve`, `reject`
-and `abort` say so when nothing waits for them. The agents point you to these commands
-when you tell them a decision in words, and never run them.
+Each gate takes your answer in three places. In Factory's terminal, at its prompt. In any
+of the task's panes, by typing the command after a `!`, which Claude Code and Codex run as
+a shell command rather than through the agent; there the task is the one whose worktree
+the pane is in: `!fy answer <answers>`, `!fy approve`, `!fy reject <note>`, `!fy abort`.
+Or from any terminal, naming the repo and bead: `fy approve <repo> <bead-id>`. A run
+without a terminal waits for these commands. `approve`, `reject` and `abort` say so when
+nothing waits for them. The agents point you to these commands when you tell them a
+decision in words, and never run them. `--auto` skips both approvals; the planner's
+questions still wait for your answer.
 
 **Questions.** When the planner asks, Factory prints the questions in its terminal and
 waits: answer there (finish with a line containing only `.`, or Ctrl-D), or with
@@ -173,28 +175,29 @@ waits: answer there (finish with a line containing only `.`, or Ctrl-D), or with
 stops and you talk to it in its pane.
 
 **Plan approval.** Factory prints the plan, the last plan review's verdicts (marked when
-the plan changed since) and where its notes are, and waits. Answer in its terminal: `a`
-approve, `p` approve and allow protected paths, `r` revise with a note, `b` abort; any
-other key asks again. Or with `fy approve` (`--allow-protected` for the `p` case),
-`fy reject <note>` and `fy abort`. A note
-goes to the planner, the plan comes back revised with a short note on what changed and
-why, and you are asked again. You can also edit `plan.md` or talk to the planner in its
-pane first; the builder reads the file.
-`--auto` skips both approvals for unattended queues. If the run has no terminal it simply
-waits for the files.
+the plan changed since) and where its notes are, and waits. Answer in its terminal with a
+letter and Enter: `a` approve, `p` approve and allow protected paths, `r` revise with a
+note, `b` abort; any other answer asks again. Or with `fy approve` (`--allow-protected`
+for the `p` case), `fy reject <note>` and `fy abort`. A note goes to the planner, the plan
+comes back revised with a short note on what changed and why, and you are asked again.
+You can also edit `plan.md` or talk to the planner in its pane first; the builder reads
+the file.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
 the branch's commits and diff stat and waits the same way: `a` approve, `r` revise with a
 note, `b` abort, or `fy approve`, `fy reject <note>` and `fy abort`. A note goes to the
 builder and costs one more round of gate, guardrails and reviews before you are asked
-again. Look at the worktree or talk to the builder in its pane first if you like.
+again. In the last round (`FACTORY_ROUNDS`) none is left: the builder still gets the note,
+but the run ends unchecked and the task needs a human. Look at the worktree or talk to the
+builder in its pane first if you like.
 
 **Merge.** On approval the bead is closed and you get a toast; the branch, named
 `factory/<bead-id>-<title-slug>` and checked out under Herdr's worktree directory as
 `<repo>/factory-<bead-id>`, is yours to merge. Otherwise the bead stays in progress
 with a comment saying why, and the workspace stays open. Once merged (squash merges count
 when the pull request shows as merged), `fy clean` removes the workspace, worktree and
-branch and closes the bead.
+branch and closes the bead. A task whose bead is still open is kept unless its pull
+request shows as merged; close the bead, or use `--force`.
 
 ### Pull requests and Copilot
 
@@ -218,9 +221,10 @@ without changing anything. Copilot never approves formally, only in its review t
 They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
 `questions.md` (only when asked), `plan-review-N.md` (Codex), `plan-review-N-build.md`
 (builder), `review-N.md` (Codex), `review-N-plan.md` (planner), `response-N.md`
-(builder's pushback), `plan-changes.md` (what the planner changed after your note),
-`copilot-N.md` and `copilot-N-response.md` (Copilot's comments and the builder's
-pushback), `gate-N.log`.
+(builder's pushback), `plan-changes.md` (what the planner changed after your note; shown
+once at the approval prompt, then removed), `copilot-N.md` and `copilot-N-response.md`
+(Copilot's comments and the builder's pushback), `gate-N.log` (also `gate-rebase-pr.log`
+and `gate-copilot-N.log`), `state` (where a rerun resumes; `--fresh` clears it).
 
 `fy init` writes a short `AGENTS.md` (with `CLAUDE.md` linking to it) only when a repo
 has neither. Keep it to what the code cannot tell a new engineer: how to verify, layout
@@ -322,13 +326,13 @@ after the gate passes and before review:
 | `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h); a stalled turn fails then, a working one toasts you and goes on |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
 | `FACTORY_REQUIRE_TESTS` | `1`: code changes must also touch a test file |
-| `FACTORY_APPROVAL` | `ask`; `auto` skips both human gates (`--auto`) |
-| `FACTORY_POLL_SECONDS` | `5` seconds between checks for the approve, reject and answer files |
+| `FACTORY_APPROVAL` | `ask`; `auto` skips the plan and build approvals (`--auto`) |
+| `FACTORY_POLL_SECONDS` | `5` seconds between checks for the approve, reject, abort and answer files |
 | `FACTORY_PR` | `0`; `1` opens a pull request (`--pr`) |
 | `FACTORY_COPILOT` | `1`; `0` skips the Copilot review loop (`--no-copilot`) |
 | `FACTORY_COPILOT_ROUNDS` | `3` Copilot review rounds |
 | `FACTORY_COPILOT_WAIT_S` | `900` (15 min) per Copilot review |
-| `FACTORY_BD_PUSH` | `1`: push the Beads database to its sync remote after tasks and adds |
+| `FACTORY_BD_PUSH` | `1`: push the Beads database to its sync remote after tasks, adds, PRs and cleans |
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
 | `FACTORY_FRESH` | `0`; `1` starts over instead of resuming (`--fresh`) |
 
@@ -418,12 +422,14 @@ Herdr from screen heuristics to hook-based agent state, which makes idle and blo
 detection more reliable. Factory handles the known startup dialogs either way, and hands
 one it cannot clear to you, waiting up to `FACTORY_TURN_TIMEOUT_MS` for your answer.
 
-**Beads housekeeping.** `fy init` sets `beads.role` so Beads stops warning; untracking
-`.beads/interactions.jsonl` keeps `git status` quiet. It also gives the beads a short
-prefix from the repo's name: the initials of several words (AllesBuien `ab-…`), else a
-word's first and last letter (Blik `bk-…`); `--prefix` picks another. Left to itself, bd
-inherits the prefix of a `.beads` in a directory above, such as a Gas Town's `hq`, and
-`bd rename-prefix` renames an existing one.
+**Beads housekeeping.** `fy init` sets `beads.role` so Beads stops warning, and gives the
+beads a short prefix from the repo's name: the initials of several words (AllesBuien
+`ab-…`), else a word's first and last character (Blik `bk-…`); `--prefix` picks another.
+Left to itself, bd inherits the prefix of a `.beads` in a directory above, such as a Gas
+Town's `hq`, and `bd rename-prefix` renames an existing one. Factory takes a bead id only
+as lowercase letters and digits on either side of one hyphen (`ab-x7k`); `fy run` files
+any other as the title of a new task. Untrack `.beads/interactions.jsonl` yourself to keep
+`git status` quiet.
 
 **Rendered Markdown at the prompts.** With [glow](https://github.com/charmbracelet/glow) on
 your PATH, the plan and the planner's questions are rendered in the terminal instead of
@@ -432,7 +438,7 @@ built-in one or a JSON of your own, for example a Nord one to match your termina
 
 ## Why so lean
 
-Factory is a single Bash script of under two thousand lines, and that is the point.
+Factory is a single Bash script of about two thousand lines, and that is the point.
 Current models plan, build and review well when given a clear task, a real codebase and
 a hard definition of done; what they need from a harness is less than the frameworks of
 a year ago assumed. So Factory bets on a few things:
@@ -484,7 +490,7 @@ Factory borrows deliberately, and leaves out even more deliberately.
 ## Develop
 
 ```sh
-just ci      # shfmt, shellcheck, guardrails applied to ourselves, codespell, bats
+just ci      # shfmt, shellcheck, bash -n, guardrails applied to ourselves, codespell, bats
 ```
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,

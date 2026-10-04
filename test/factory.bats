@@ -1338,10 +1338,11 @@ JSON
   [[ $output == *"uncommitted changes in the worktree"* ]]
 }
 
-@test "repo_prefix: the initials of several words, else a word's first and last letter" {
+@test "repo_prefix: the initials of several words, else a word's first and last character" {
   [ "$(repo_prefix AllesBuien)" = ab ]
   [ "$(repo_prefix Blik)" = bk ]
   [ "$(repo_prefix factory)" = fy ]
+  [ "$(repo_prefix game2048)" = g8 ]
   [ "$(repo_prefix phoenix_livesvelte_demo)" = pld ]
   [ "$(repo_prefix HTTPServer)" = hs ]
   [ "$(repo_prefix my.repo)" = mr ]

@@ -19,7 +19,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `factory approve`, `reject` and `abort` refuse when no run waits at an approval for the
   task, instead of leaving a file the next approval prompt clears; a gate names itself
   and its run in `.factory/run/waiting` while it waits. `--allow-protected` is refused at
-  the build's approval, where it did nothing.
+  the build's approval. There it used to waive the protected-path check for the rest of
+  the task, the rebase and the Copilot rounds included, and the pull request recorded the
+  waiver.
+- `factory reject` and `answer` take a note or answers of several words without quotes,
+  as typed in a pane; both used to refuse a second word.
 - Agents reply with what they write, so their panes show it: the planner its plan (or,
   after your note, what it changed), the reviewers their reviews, the builder its
   pushback. A review now ends with its step and round, such as `PLAN REVIEW round 1` or

@@ -5,8 +5,8 @@ Code and Codex sessions in Herdr panes, with Beads for tasks and mechanical guar
 
 ## Run and verify
 
-- Gate: `just ci` must pass (shfmt, shellcheck, our own guardrails, codespell, bats).
-  Tools come from `mise.toml`; run `mise install` once, then `mise exec -- just ci`.
+- Gate: `just ci` must pass (shfmt, shellcheck, bash -n, our own guardrails, codespell,
+  bats). Tools come from `mise.toml`; run `mise install` once, then `mise exec -- just ci`.
 - A change to the pipeline deserves a live smoke run against a small fixture repo of your
   own (a git repo with `bd init` and a gate; `.smoke/` is gitignored for that purpose):
   `mise exec -- ./factory run --auto .smoke/<repo> "<task>"`, with Herdr running.
