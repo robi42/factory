@@ -136,7 +136,7 @@ fy abort   ~/src/app ap-k3x
 
 # ...or in any of the task's panes, where the task is the one there
 !fy approve
-!fy reject keep it in one module
+!fy reject "keep it in one module"
 
 # afterwards
 fy pr      ~/src/app ap-k3x                  # open a PR for a branch a run left behind; needs its builder agent alive
@@ -162,13 +162,16 @@ second one pays for the overlap.
 Each gate takes your answer in three places. In Factory's terminal, at its prompt. In any
 of the task's panes, by typing the command after a `!`, which Claude Code and Codex run as
 a shell command rather than through the agent; there the task is the one whose worktree
-the pane is in: `!fy answer <answers>`, `!fy approve`, `!fy reject <note>`, `!fy abort`.
-Or from any terminal, naming the repo and bead: `fy approve <repo> <bead-id>`. Claude
-Code's agent replies to a command typed in its pane, and Factory lets that reply finish
-before it prompts the agent. A run without a terminal waits for these commands.
-`approve`, `reject`, `abort` and `answer` say so when nothing waits for them. The agents
-point you to these commands when you tell them a decision in words, and never run them.
-`--auto` skips both approvals; the planner's questions still wait for your answer.
+the pane is in: `!fy answer "<answers>"`, `!fy approve`, `!fy reject "<note>"`,
+`!fy abort`. Or from any terminal, naming the repo and bead:
+`fy approve <repo> <bead-id>`. Either way a shell reads the line before Factory does, so
+keep a note or answers in double quotes; an apostrophe or a parenthesis breaks the
+command otherwise. Claude Code's agent replies to a command typed in its pane, and
+Factory lets that reply finish before it prompts the agent. A run without a terminal
+waits for these commands. `approve`, `reject`, `abort` and `answer` say so when nothing
+waits for them. The agents point you to these commands when you tell them a decision in
+words, and never run them. `--auto` skips both approvals; the planner's questions still
+wait for your answer.
 
 **Questions.** When the planner asks, Factory prints the questions in its terminal and
 waits: answer there (finish with a line containing only `.`, or Ctrl-D), or with

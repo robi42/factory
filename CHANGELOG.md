@@ -20,6 +20,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   could start before the agent had acted on the note. Factory now lets the turn end
   first, and after an approval, a note or answers that came by file it pauses a few
   seconds for such a reply to start.
+- `!fy reject <note>` failed on a note with an apostrophe or a parenthesis, since the
+  pane's shell reads the line first. The agents and the README now show a note and
+  answers in double quotes.
 
 ## [0.1.10] - 2026-10-04
 

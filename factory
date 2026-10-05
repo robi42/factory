@@ -920,7 +920,7 @@ $TASK_DESC
 
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
 Do not write the code itself and do not change any file outside $RUN_DIR/; the factory checks.
-The human answers your questions and approves, revises or aborts the plan by typing !fy answer <answers>, !fy approve (--allow-protected to waive protected paths), !fy reject <note> or !fy abort in a pane. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
+The human answers your questions and approves, revises or aborts the plan by typing !fy answer "<answers>", !fy approve (--allow-protected to waive protected paths), !fy reject "<note>" or !fy abort in a pane. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 If the task is ambiguous in a way that would change the design, do not plan yet: write your numbered questions to $RUN_DIR/questions.md and reply with those questions. Prefer a plan with stated assumptions over questions when the ambiguity is minor.
 $MEMORY
 Once the file is written, reply with its content.
@@ -934,7 +934,7 @@ Task $TASK_ID: $TASK_TITLE
 Re-read $RUN_DIR/plan.md now; it is final and may have changed since you checked it. Implement it on this branch ($BRANCH) in this worktree. Run the gate until it passes: $GATE
 Commit when done; do not push. The factory tracks and closes bead $TASK_ID itself. Files under $RUN_DIR/ are ignored by git. Do not change: $(protected_globs "$WT" | tr '\n' ' ')
 No skipped tests, suppressed warnings, or swallowed errors; fix things properly.
-The human approves, revises or aborts the build by typing !fy approve, !fy reject <note> or !fy abort in a pane. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
+The human approves, revises or aborts the build by typing !fy approve, !fy reject "<note>" or !fy abort in a pane. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 $MEMORY
 Reply with just DONE when finished.
 P
@@ -1229,10 +1229,10 @@ collect_answers() {
 
 await_answers() { # questions-file run-dir: collect_answers' waiting
   local q=$1 dir=$2 line stdin_open=1 rc answers=""
-  toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal, or type !fy answer ... in the planner's pane" request
+  toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal, or type !fy answer \"...\" in the planner's pane" request
   printf '\n%s the planner asks (%s):\n\n' "$TAG" "$q" >&2
   show_md "$q"
-  printf '\n%s answer below; a line containing only "." or Ctrl-D ends it  (or type !fy answer ... in the planner'"'"'s pane)\n' "$TAG" >&2
+  printf '\n%s answer below; a line containing only "." or Ctrl-D ends it  (or type !fy answer "..." in the planner'"'"'s pane)\n' "$TAG" >&2
   while :; do
     if [[ -s $dir/answers.md ]]; then
       answers=$(<"$dir/answers.md")
@@ -1251,7 +1251,7 @@ await_answers() { # questions-file run-dir: collect_answers' waiting
       elif ((rc <= 128)); then
         stdin_open=0
         [[ -n $answers ]] && break
-        log "no terminal to answer from; waiting for !fy answer ... in the planner's pane (or factory answer <repo> $TASK_ID \"...\")"
+        log "no terminal to answer from; waiting for !fy answer \"...\" in the planner's pane (or factory answer <repo> $TASK_ID \"...\")"
       fi
     else
       sleep "$FACTORY_POLL_SECONDS"
