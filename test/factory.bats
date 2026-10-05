@@ -64,6 +64,16 @@ plan_ready() {
   plan_round() { printf 'plan round %s on the note: %s\n' "$1" "$2"; }
 }
 
+# gate_opens: wait, up to 10 s, until the gate in $TMP listens for the plan, as a human in a
+# pane would; a gate that never opens then fails its test instead of hanging it
+gate_opens() {
+  local _
+  for _ in $(seq 100); do
+    grep -qs '^plan ' "$TMP/waiting" && return 0
+    sleep 0.1
+  done
+}
+
 # the branch globals the gates and guards read, as task_context and open_workspace set them
 on_work_branch() {
   WT=$REPO
@@ -333,16 +343,41 @@ context_of() {
   FACTORY_APPROVAL=auto
   human_gate plan planner "$TMP" </dev/null
   FACTORY_APPROVAL=ask
-  ask() { printf 'asked %s: %s\n' "$1" "$2"; }
+  ask() {
+    printf 'asked %s: %s\n' "$1" "$2"
+    printf 'gate in the round: %s\n' "$(gate_waiting "$TMP" || printf closed)"
+  }
+  role_of() { # the note prompt: the panes are told the terminal has the answer
+    printf 'gate while typing: %s\n' "$(gate_waiting "$TMP" || printf closed)" >&2
+    printf planner
+  }
   run human_gate plan planner "$TMP" <<<$'r\nsplit the module\na'
   [ "$status" -eq 0 ]
   [[ $output != *"no terminal"* ]]
-  [[ $output == *"asked planner: The human reviewed"*"split the module"*"plan round 1 on the note: split the module"* ]]
-  # only the keys shown mean anything: y, n and an empty note ask again, without re-rendering
+  [[ $output == *"gate while typing: typing"*"asked planner: The human reviewed"*"split the module"*"gate in the round: note"*"plan round 1 on the note: split the module"* ]]
+  # only the keys shown mean anything: y, n and an empty note ask again, without re-rendering;
+  # after the empty note the gate listens to the panes again
+  open_gate() {
+    printf 'gate opens\n' >&2
+    printf '%s %s\n' "$1" "$$" >"$2/waiting"
+  }
   run human_gate plan planner "$TMP" <<<$'y\nn\nr\n\na'
   [ "$status" -eq 0 ]
-  [[ $output == *"a, p, r or b?"*"a, p, r or b?"*"a, p, r or b?"* ]]
+  [[ $output == *"a, p, r or b?"*"a, p, r or b?"*"gate while typing: typing"*"gate opens"*"a, p, r or b?"* ]]
+  [ "$(grep -c 'gate opens' <<<"$output")" -eq 2 ]
   [ "$(grep -c 'plan for toy-1' <<<"$output")" -eq 1 ]
+}
+
+@test "an approval gate opens afresh: answers left from before go, and a plan waiver with them" {
+  plan_ready
+  printf 'stale\n' >"$TMP/reject.md"
+  : >"$TMP/aborted"
+  : >"$TMP/approved"
+  : >"$TMP/allow-protected"
+  run human_gate plan planner "$TMP" <<<"a"
+  [ "$status" -eq 0 ]
+  [[ $output != *"via file"* ]]
+  [ ! -e "$TMP/reject.md" ] && [ ! -e "$TMP/aborted" ] && [ ! -e "$TMP/allow-protected" ]
 }
 
 @test "plan approval: the planner's change note is shown once, below the revised plan" {
@@ -393,18 +428,18 @@ context_of() {
     printf 'gate in the round: %s\n' "$(gate_waiting "$TMP" || printf closed)"
     : >"$TMP/approved"
     ( # the human approves once the plan is back, and the gate must still be waiting then
-      until grep -qs '^plan ' "$TMP/waiting"; do sleep 0.2; done
+      gate_opens
       sleep 1.5
       if [[ -e $TMP/waiting ]]; then : >"$TMP/still-waiting"; fi
       : >"$TMP/approved"
-    ) >/dev/null 2>&1 &
+    ) >/dev/null 2>&1 3>&- &
   }
   pause_for_pane_reply() { printf 'pause for the reply, gate %s\n' "$(gate_waiting "$TMP" || printf closed)"; }
-  # the human's reject arrives while the factory is already waiting
+  # the human's reject arrives once the factory waits
   (
-    sleep 2
+    gate_opens
     printf 'too big, split it\n' >"$TMP/reject.md"
-  ) &
+  ) 3>&- &
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 0 ]
@@ -417,12 +452,12 @@ context_of() {
   [ ! -e "$TMP/waiting" ]
   # the gate names itself and this run while it waits; an abort file ends it with 3
   (
-    sleep 2
+    gate_opens
     if [[ -e $TMP/waiting ]]; then cp "$TMP/waiting" "$TMP/seen"; fi
     : >"$TMP/aborted"
     sleep 4
     : >"$TMP/approved" # ends a gate that ignores the abort, so a regression fails instead of hanging
-  ) &
+  ) 3>&- &
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 3 ]
@@ -455,6 +490,12 @@ context_of() {
     run $c
     [ "$status" -eq 1 ]
     [[ $output == *"the plan of toy-9 is in the review round after your note; answer once it is back"* ]]
+  done
+  printf 'typing %s\n' "$$" >"$run/waiting" # a note typed at Factory's terminal
+  for c in "cmd_approve $REPO toy-9" "cmd_reject $REPO toy-9 later" "cmd_abort $REPO toy-9"; do
+    run $c
+    [ "$status" -eq 1 ]
+    [[ $output == *"Factory's terminal is taking a note on toy-9; finish it there"* ]]
   done
   [ ! -e "$run/approved" ] && [ ! -e "$run/reject.md" ] && [ ! -e "$run/aborted" ]
   printf 'build %s\n' "$$" >"$run/waiting"
@@ -626,9 +667,11 @@ IN
   on_work_branch
   FACTORY_APPROVAL=ask
   FACTORY_POLL_SECONDS=1
+  : >"$TMP/allow-protected" # the plan's approval waived the check for the build
   run human_gate build builder "$TMP" <<<"a"
   [ "$status" -eq 0 ]
   [[ $output == *"build for toy-1 on work"*"change"*"run.sh"* ]]
+  [ -e "$TMP/allow-protected" ]
   run human_gate build builder "$TMP" <<<$'p\na'
   [ "$status" -eq 0 ]
   [[ $output == *"a, r or b?"* ]]

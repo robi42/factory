@@ -11,9 +11,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   notes, and the planner revises once more if either objects, adding that to its summary
   of what changed. Then the plan comes back to you with that round's verdicts, past
   `FACTORY_PLAN_ROUNDS` if need be. It used to reach the planner alone, so after a last
-  round that ended in REVISE no reviewer saw the plan again. While the round runs,
-  `factory approve`, `reject` and `abort` say so instead of taking an answer about a plan
-  still changing.
+  round that ended in REVISE no reviewer saw the plan again. While the round runs, and
+  while Factory's terminal takes a note, `factory approve`, `reject` and `abort` say so
+  instead of taking an answer that would be dropped or applied to a plan still changing.
 - `factory reject` refuses an empty note, as `answer` refuses empty answers.
 - In a terminal, the approval prompts colour their keys by what they do: approving green,
   revising yellow, aborting red.
@@ -31,6 +31,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   everything as typed, and the README says how to write an apostrophe there.
 - In a run without a terminal, an approval that comes back after a note says again where
   to answer.
+- The protected-path waiver (`p`, or `approve --allow-protected`) goes with the plan
+  approval it came with: when that approval does not stand, because the plan is shown
+  again or planned afresh, neither does the waiver.
 
 ## [0.1.10] - 2026-10-04
 
