@@ -736,10 +736,10 @@ IN
   [[ $(plan_build_check_prompt 1) == *"plan-review-1-build.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_prompt) == *"reply with its content"* ]]
   # the decisions are the human's to type; the agents only point there
-  [[ $(plan_prompt) == *"!fy answer '<answers>', !fy approve (--allow-protected"*"!fy reject '<note>' or !fy abort"*"Never run these yourself"* ]]
+  [[ $(plan_prompt) == *"!fy answer '<answers>', !fy approve (--allow-protected"*"!fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
   protected_globs() { :; }
   BRANCH=work WT=$TMP
-  [[ $(build_prompt) == *"!fy approve, !fy reject '<note>' or !fy abort in a pane. Never run these yourself"* ]]
+  [[ $(build_prompt) == *"!fy approve, !fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
   [[ $(answers_prompt "1. CSV") == *"reply with its content"* ]]
   [[ $(plan_fix_prompt 1) == *"reply with the plan's content"* ]]
   [[ $(plan_note_prompt "split it") == *"Reply with the content of plan-changes.md"* ]]

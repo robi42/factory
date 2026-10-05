@@ -74,9 +74,9 @@ usage() {
   row 'factory sync    <repo>' 'pull, then push the beads database to its git remote'
   row 'factory init    <repo> [bd init args...]' 'lean bd init with a short prefix, detect the gate, AGENTS.md stub'
   row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the plan or build; --allow-protected (plan only) waives protected paths'
-  row 'factory reject  <repo> <bead-id> note...' 'send a note back; the plan or build comes back revised'
+  row "factory reject  <repo> <bead-id> '<note>'" 'send a note back; the plan or build comes back revised'
   row 'factory abort   <repo> <bead-id>' 'abort the task at its waiting plan or build'
-  row 'factory answer  <repo> <bead-id> [answers... | -]' 'answer the planner'"'"'s questions from any terminal'
+  row "factory answer  <repo> <bead-id> ['<answers>' | -]" 'answer the planner'"'"'s questions from any terminal'
   row '  in a task'"'"'s worktree: no <repo> <bead-id>' 'the task is the one there: !fy approve in an agent'"'"'s pane'
   row 'factory pr      <repo> <bead-id> [--no-copilot]' 'push an existing task branch and open a pull request'
   row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
@@ -924,7 +924,7 @@ $TASK_DESC
 
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
 Do not write the code itself and do not change any file outside $RUN_DIR/; the factory checks.
-The human answers your questions and approves, revises or aborts the plan by typing !fy answer '<answers>', !fy approve (--allow-protected to waive protected paths), !fy reject '<note>' or !fy abort in a pane. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
+The human answers your questions and approves, revises or aborts the plan by typing !fy answer '<answers>', !fy approve (--allow-protected to waive protected paths), !fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 If the task is ambiguous in a way that would change the design, do not plan yet: write your numbered questions to $RUN_DIR/questions.md and reply with those questions. Prefer a plan with stated assumptions over questions when the ambiguity is minor.
 $MEMORY
 Once the file is written, reply with its content.
@@ -938,7 +938,7 @@ Task $TASK_ID: $TASK_TITLE
 Re-read $RUN_DIR/plan.md now; it is final and may have changed since you checked it. Implement it on this branch ($BRANCH) in this worktree. Run the gate until it passes: $GATE
 Commit when done; do not push. The factory tracks and closes bead $TASK_ID itself. Files under $RUN_DIR/ are ignored by git. Do not change: $(protected_globs "$WT" | tr '\n' ' ')
 No skipped tests, suppressed warnings, or swallowed errors; fix things properly.
-The human approves, revises or aborts the build by typing !fy approve, !fy reject '<note>' or !fy abort in a pane. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
+The human approves, revises or aborts the build by typing !fy approve, !fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 $MEMORY
 Reply with just DONE when finished.
 P
@@ -1174,7 +1174,7 @@ close_gate() {
 # no_terminal_hint: where a gate takes its answer when this run has no terminal
 no_terminal_hint() {
   printf '\n' >&2
-  log "no terminal to answer from; waiting for !fy approve, reject or abort in one of the task's panes (or factory approve <repo> $TASK_ID)"
+  log "no terminal to answer from; waiting for !fy approve, !fy reject '<note>' or !fy abort in one of the task's panes (or factory approve <repo> $TASK_ID)"
 }
 
 # pause_for_pane_reply: Claude Code replies to a command typed after a ! in its pane once the
@@ -2173,7 +2173,7 @@ main() {
       cmd_approve "$@"
       ;;
     reject)
-      u="usage: factory reject [<repo> <bead-id>] note...  (without them in a task's worktree)"
+      u="usage: factory reject [<repo> <bead-id>] '<note>'  (without them in a task's worktree)"
       task_args "$@" || die "$u"
       set -- "${TARGS[@]}"
       (($# >= 3)) || die "$u"
@@ -2187,7 +2187,7 @@ main() {
       cmd_abort "$1" "$2"
       ;;
     answer)
-      task_args "$@" || die "usage: factory answer [<repo> <bead-id>] [answers... | -]  (stdin when omitted or -; without them in a task's worktree)"
+      task_args "$@" || die "usage: factory answer [<repo> <bead-id>] ['<answers>' | -]  (stdin when omitted or -; without them in a task's worktree)"
       set -- "${TARGS[@]}"
       cmd_answer "$1" "$2" "${*:3}"
       ;;

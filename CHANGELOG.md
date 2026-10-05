@@ -27,8 +27,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   seconds for such a reply to start.
 - A note or answers typed after `!fy reject` or `!fy answer` go through the pane's shell
   first: unquoted, an apostrophe or a parenthesis broke the command, and backticks ran as
-  one. The agents, the hints and the README now show them in single quotes, which keep
-  everything as typed, and the README says how to write an apostrophe there.
+  one. The agents, `factory help`, the hints and the README now show them in single quotes,
+  which keep everything as typed, and the agents and the README say how to write an
+  apostrophe there.
 - In a run without a terminal, an approval that comes back after a note says again where
   to answer.
 - An uncommitted edit under `.factory/`, such as to the gate, went unnoticed: the
