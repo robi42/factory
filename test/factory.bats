@@ -1193,6 +1193,20 @@ IN
   [[ $output == *"uncommitted changes in the worktree"* ]]
 }
 
+@test "guard: a worktree whose git config points git at another checkout fails" {
+  make_repo
+  task_worktree
+  printf 'echo hello\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam change
+  git -C "$REPO" worktree add -q --detach "$TMP/decoy" factory/toy-9 # clean, at the same commit
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"  # what the gate would run
+  git -C "$TMP/wt-9" config extensions.worktreeConfig true
+  git -C "$TMP/wt-9" config --worktree core.worktree "$TMP/decoy"
+  run guard_check "$TMP/wt-9" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"git reads the work tree at $(cd "$TMP/decoy" && pwd -P), not $TMP/wt-9"* ]]
+}
+
 @test "guard: an ignored file at a protected path fails, whether the repo or the user ignores it" {
   make_repo
   printf ':(glob)**/.mise*.toml\n.cargo/config*\n' >"$REPO/.factory/protected"

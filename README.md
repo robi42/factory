@@ -349,7 +349,8 @@ after the gate passes and before review:
   `.factory/run/` and, in the main checkout, your own `.factory/env`), at least one commit.
   Git compares the worktree with the branch through an index of Factory's own, so neither
   the worktree's index nor its git config can hide a change, as `assume-unchanged` or an
-  fsmonitor hook could.
+  fsmonitor hook could, and a worktree whose config points git at another checkout
+  (`core.worktree`) fails.
 - Protected paths untouched: `.factory/gate`, `.factory/protected`, `.factory/guardrails.txt`,
   `.factory/env`, and every glob listed in `.factory/protected`. A task that legitimately
   must change them, such as adding the gate, gets a one-task waiver from you at plan

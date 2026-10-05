@@ -82,6 +82,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   the gate ran on it. Git now compares the worktree with HEAD through an index of
   Factory's own, with those settings at their defaults. It reads every file to do so,
   which takes about two seconds on 20,000 files.
+- A worktree whose own git config set `core.worktree` pointed every git call of the
+  guardrails at another checkout, a clean one, while the gate ran in the worktree itself.
+  The guardrails now refuse a worktree that git does not read as the top of its checkout.
 
 ## [0.1.11] - 2026-10-05
 

@@ -724,7 +724,14 @@ tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 # non-ASCII character, would match no check, and :(literal) keeps a name from being read as
 # a pathspec.
 guard_check() {
-  local wt=$1 base=$2 bad=0 f globs kept
+  local wt=$1 base=$2 bad=0 f globs kept top
+  # git -C reads the worktree's own config, which an agent can write: core.worktree there
+  # points every git call below at another checkout than the one the gate runs in
+  top=$(git -C "$wt" rev-parse --show-toplevel)
+  if [[ $top != "$(cd "$wt" && pwd -P)" ]]; then
+    printf 'git reads the work tree at %s, not %s: name the top of a checkout, with no core.worktree in its git config\n' "$top" "$wt"
+    bad=1
+  fi
   if tree_dirty "$wt"; then
     printf 'uncommitted changes in the worktree; commit your work (ignore build artifacts, do not commit them)\n'
     bad=1
