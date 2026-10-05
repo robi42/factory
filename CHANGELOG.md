@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- A note at plan approval goes through a plan review round of its own: the planner
+  revises, Codex and the builder check the revision against your note and their last
+  notes, and the planner revises once more if either objects. Then the plan comes back to
+  you with that round's verdicts, past `FACTORY_PLAN_ROUNDS` if need be. It used to reach
+  the planner alone, so after a last round that ended in REVISE no reviewer saw the plan
+  again.
+
 ## [0.1.10] - 2026-10-04
 
 ### Added

@@ -178,10 +178,12 @@ stops and you talk to it in its pane.
 the plan changed since) and where its notes are, and waits. Answer in its terminal with a
 letter and Enter: `a` approve, `p` approve and allow protected paths, `r` revise with a
 note, `b` abort; any other answer asks again. Or with `fy approve` (`--allow-protected`
-for the `p` case), `fy reject <note>` and `fy abort`. A note goes to the planner, the plan
-comes back revised with a short note on what changed and why, and you are asked again.
-You can also edit `plan.md` or talk to the planner in its pane first; the builder reads
-the file.
+for the `p` case), `fy reject <note>` and `fy abort`. A note goes to the planner and then
+through a plan review round of its own, past `FACTORY_PLAN_ROUNDS` if need be: both
+reviewers check the revision against your note, and the planner revises once more if
+either objects. The plan comes back with a short note on what changed and why and that
+round's verdicts, and you are asked again. For a change no reviewer needs to see, edit
+`plan.md` or talk to the planner in its pane first; the builder reads the file.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
 the branch's commits and diff stat and waits the same way: `a` approve, `r` revise with a
@@ -320,7 +322,7 @@ after the gate passes and before review:
 | `FACTORY_PLAN_EFFORT` | `max` (`low`, `medium`, `high`, `xhigh`, `max`) |
 | `FACTORY_BUILD_EFFORT` | `xhigh` (the same levels) |
 | `FACTORY_REVIEW_EFFORT` | `xhigh` (the same levels, and `ultra`) |
-| `FACTORY_PLAN_ROUNDS` | `2` plan review rounds (always at least one) |
+| `FACTORY_PLAN_ROUNDS` | `2` plan review rounds (always at least one); a note of yours gets one more |
 | `FACTORY_ROUNDS` | `3` build / review rounds; a note of yours at the last gets one more |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
 | `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h); a stalled turn fails then, a working one toasts you and goes on |

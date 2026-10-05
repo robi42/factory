@@ -51,11 +51,15 @@ fake_task() {
   TASK_TITLE=t
 }
 
-# plan_ready: a plan waiting for the human, as plan_phase hands it to human_gate
+# plan_ready: a plan waiting for the human, as plan_phase hands it to human_gate; a note's
+# plan round only says that it ran
 plan_ready() {
   fake_task
   FACTORY_APPROVAL=ask
+  WT=$TMP
   printf 'the plan\n' >"$TMP/plan.md"
+  planner_kept_hands_off() { :; }
+  plan_round() { printf 'plan round %s on the note: %s\n' "$1" "$2"; }
 }
 
 # the branch globals the gates and guards read, as task_context and open_workspace set them
@@ -330,7 +334,7 @@ context_of() {
   ask() { printf 'asked %s: %s\n' "$1" "$2"; }
   run human_gate plan planner "$TMP" <<<$'r\nsplit the module\na'
   [ "$status" -eq 0 ]
-  [[ $output == *"asked planner: The human reviewed"*"split the module"* ]]
+  [[ $output == *"asked planner: The human reviewed"*"split the module"*"plan round 1 on the note: split the module"* ]]
   # only the keys shown mean anything: y, n and an empty note ask again, without re-rendering
   run human_gate plan planner "$TMP" <<<$'y\nn\nr\n\na'
   [ "$status" -eq 0 ]
@@ -787,6 +791,33 @@ IN
   human_gate() { HUMAN_NOTE="rename the flag" && printf 'REVISE\n' >"$TMP/verdict" && return 4; }
   build_phase "$TMP" >"$TMP/out" 2>&1
   [ "$VERDICT" = REVISE ] && [ "$ROUND" -eq 2 ]
+}
+
+@test "plan approval: a note gets a plan round of its own, its reviewers told of the note" {
+  fake_task
+  WT=$TMP
+  TASK_DESC="" GATE=true
+  PLAN_AGENT=planner BUILD_AGENT=builder REVIEW_AGENT=codex
+  mkdir -p "$TMP/.factory/run"
+  printf 'VERDICT: REVISE\n' >"$TMP/.factory/run/plan-review-2.md" # the rounds before were used up
+  : >"$TMP/.factory/run/plan-review-1.md"
+  planner_kept_hands_off() { :; }
+  ask() { printf 'asked %s: %.80s\n' "$1" "$2"; }
+  ask_for_file() { # the reviewers approve this time
+    printf 'review %s %s: %s\n' "$1" "${3##*/}" "$2"
+    printf 'VERDICT: APPROVE\n' >"$3"
+  }
+  run take_note plan planner "keep the fetcher per epoch"
+  [ "$status" -eq 0 ]
+  [[ $output == *"asked planner: The human reviewed"*"plan review round 3"* ]]
+  [[ $output == *"review codex plan-review-3.md: "*"your notes from it are in .factory/run/plan-review-2.md"*"Then the human sent this note"*"keep the fetcher per epoch"* ]]
+  [[ $output == *"review builder plan-review-3-build.md: "*"plan-review-2-build.md"*"keep the fetcher per epoch"* ]]
+  [[ $output == *"plan verdicts: APPROVE APPROVE"* ]]
+  [[ $output != *"plan revision"* ]]
+  # an objection gets the planner's revision before the plan goes back to the human
+  ask_for_file() { printf 'VERDICT: REVISE\n' >"$3"; }
+  run take_note plan planner "keep the fetcher per epoch"
+  [[ $output == *"plan review round 4"*"plan revision"*"asked planner: Reviewers left notes on your plan in .factory/run/plan-review-4.md"* ]]
 }
 
 @test "answer subcommand writes answers.md into the task worktree, while questions wait" {

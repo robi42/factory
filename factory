@@ -90,7 +90,7 @@ usage() {
   row "FACTORY_PLAN_EFFORT=$FACTORY_PLAN_EFFORT" 'planner effort: low, medium, high, xhigh, max'
   row "FACTORY_BUILD_EFFORT=$FACTORY_BUILD_EFFORT" 'builder effort: low, medium, high, xhigh, max'
   row "FACTORY_REVIEW_EFFORT=$FACTORY_REVIEW_EFFORT" 'reviewer effort: the same, and ultra'
-  row "FACTORY_PLAN_ROUNDS=$FACTORY_PLAN_ROUNDS" 'plan review rounds before the build (always at least one)'
+  row "FACTORY_PLAN_ROUNDS=$FACTORY_PLAN_ROUNDS" 'plan review rounds before the build (always at least one); a note of yours gets one more'
   row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up; a note of yours at the last gets one more'
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
   row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'a stalled turn fails after this; a working one toasts you and goes on'
@@ -967,34 +967,40 @@ Once the file is written, reply with its content.
 P
 }
 
-plan_review_prompt() { # round
+plan_review_prompt() { # round [human's note]
   cat <<P
 Task $TASK_ID: $TASK_TITLE
 
 $TASK_DESC
 
-A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Point out real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1)).md")
+A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Point out real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1)).md" "${2:-}")
 Write your notes to $RUN_DIR/plan-review-$1.md and end that file with two lines: PLAN REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.
 P
 }
 
-plan_build_check_prompt() { # round
+plan_build_check_prompt() { # round [human's note]
   cat <<P
 Task $TASK_ID: $TASK_TITLE
 
 $TASK_DESC
 
-You will implement $RUN_DIR/plan.md next. Read it against this repo first: is it concrete enough to build, is its design the simplest that fits this codebase, does it miss anything the task needs, or add anything it does not? Note real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1))-build.md")
+You will implement $RUN_DIR/plan.md next. Read it against this repo first: is it concrete enough to build, is its design the simplest that fits this codebase, does it miss anything the task needs, or add anything it does not? Note real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1))-build.md" "${2:-}")
 Write your notes to $RUN_DIR/plan-review-$1-build.md and end that file with two lines: PLAN REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.
 P
 }
 
-# plan_recheck round notes: from the second round on, a reviewer checks the revision
+# plan_recheck round notes [human's note]: from the second round on, a reviewer checks the
+# revision; after a note from the human, against that note too
 plan_recheck() {
-  (($1 > 1)) || return 0
-  printf '\nThe planner revised the plan after the previous review round; your notes from it are in %s. Check the revision against them and for anything it broke; ask for another revision only for a real problem, not for polish.' "$2"
+  if (($1 > 1)); then
+    printf '\nThe planner revised the plan after the previous review round; your notes from it are in %s. Check the revision against them and for anything it broke; ask for another revision only for a real problem, not for polish.' "$2"
+  fi
+  if [[ -n ${3:-} ]]; then
+    printf '\nThen the human sent this note, and the planner revised the plan for it (%s says what changed): %s\nCheck the plan against the note as well.' "$RUN_DIR/plan-changes.md" "$3"
+  fi
+  return 0
 }
 
 answers_prompt() { # answers
@@ -1134,11 +1140,16 @@ await_human() { # plan|build agent dir: human_gate's waiting
 
 role_of() { case $1 in plan) printf planner ;; *) printf builder ;; esac }
 
-# take_note kind agent note: a plan note goes straight to the planner; a build note ends
-# the gate with 4 so the caller runs another round
+# take_note kind agent note: a plan note goes to the planner and then through a plan round of
+# its own, past FACTORY_PLAN_ROUNDS if need be; a build note ends the gate with 4 so the
+# caller runs another round
 take_note() {
   case $1 in
-    plan) ask "$2" "$(plan_note_prompt "$3")" ;;
+    plan)
+      ask "$2" "$(plan_note_prompt "$3")"
+      planner_kept_hands_off "$2"
+      plan_round "$(($(plan_rounds "$WT/$RUN_DIR") + 1))" "$3"
+      ;;
     build)
       HUMAN_NOTE=$3
       return 4
@@ -1400,29 +1411,37 @@ stop_task() {
   die "stopped at $2 for $TASK_ID; the workspace stays open"
 }
 
-# plan_phase repo: plan (with questions), then dual plan review and a revision, round after
-# round until both approve or FACTORY_PLAN_ROUNDS are used up, then human approval. An
-# objection in the last round still gets its revision, which goes on unreviewed.
+# plan_round round [human's note]: Codex and the builder review the plan, and the planner
+# revises it once when either objects. Sets PLAN_VERDICT.
+plan_round() {
+  local round=$1
+  log "plan review round $round: $REVIEW_AGENT and $BUILD_AGENT"
+  ask_for_file "$REVIEW_AGENT" "$(plan_review_prompt "$round" "${2:-}")" "$WT/$RUN_DIR/plan-review-$round.md"
+  ask_for_file "$BUILD_AGENT" "$(plan_build_check_prompt "$round" "${2:-}")" "$WT/$RUN_DIR/plan-review-$round-build.md"
+  PLAN_VERDICT=$(verdicts "$WT/$RUN_DIR/plan-review-$round.md" "$WT/$RUN_DIR/plan-review-$round-build.md")
+  log "plan verdicts: $PLAN_VERDICT"
+  [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] && return 0
+  log "plan revision"
+  ask "$PLAN_AGENT" "$(plan_fix_prompt "$round")"
+  planner_kept_hands_off "$PLAN_AGENT"
+}
+
+# plan_phase repo: plan (with questions), then plan rounds until both reviewers approve or
+# FACTORY_PLAN_ROUNDS are used up, then human approval. An objection in the last round still
+# gets its revision, which goes on unreviewed.
 plan_phase() {
-  local verdict round=1
+  local round=1
   log "planning"
   rm -f "$WT/$RUN_DIR"/plan-review-*.md # reviews of an earlier plan would pass as fresh ones
   plan_or_interview "$PLAN_AGENT" || stop_task "$1" "planner questions"
   planner_kept_hands_off "$PLAN_AGENT"
   while :; do
-    log "plan review round $round: $REVIEW_AGENT and $BUILD_AGENT"
-    ask_for_file "$REVIEW_AGENT" "$(plan_review_prompt "$round")" "$WT/$RUN_DIR/plan-review-$round.md"
-    ask_for_file "$BUILD_AGENT" "$(plan_build_check_prompt "$round")" "$WT/$RUN_DIR/plan-review-$round-build.md"
-    verdict=$(verdicts "$WT/$RUN_DIR/plan-review-$round.md" "$WT/$RUN_DIR/plan-review-$round-build.md")
-    log "plan verdicts: $verdict"
-    [[ $verdict == "APPROVE APPROVE" ]] && break
-    log "plan revision"
-    ask "$PLAN_AGENT" "$(plan_fix_prompt "$round")"
-    planner_kept_hands_off "$PLAN_AGENT"
+    plan_round "$round"
+    [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] && break
     ((round < FACTORY_PLAN_ROUNDS)) || break
     round=$((round + 1))
   done
-  [[ $verdict == "APPROVE APPROVE" ]] || warn "plan rounds used up; the revision after round $round goes on unreviewed"
+  [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] || warn "plan rounds used up; the revision after round $round goes on unreviewed"
   mark reviewed
   approve_plan "$1"
 }
