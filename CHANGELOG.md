@@ -91,6 +91,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   files under it paths that no protected glob names. The guardrails now refuse a symlink
   the branch adds that leads to such a place, waiver or not, and one to a directory unless
   you waived the protected paths.
+- A line of `.factory/protected` that git cannot read as a pathspec, such as `:(bogus)x`,
+  made git fail in both checks of protected paths, which then read no path and passed; only
+  git's own error reached the terminal. The guardrails now fail and say which line.
 
 ## [0.1.11] - 2026-10-05
 

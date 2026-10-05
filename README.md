@@ -352,9 +352,10 @@ after the gate passes and before review:
   fsmonitor hook could, and a worktree whose config points git at another checkout
   (`core.worktree`) fails.
 - Protected paths untouched: `.factory/gate`, `.factory/protected`, `.factory/guardrails.txt`,
-  `.factory/env`, and every glob listed in `.factory/protected`. A task that legitimately
-  must change them, such as adding the gate, gets a one-task waiver from you at plan
-  approval (`p`, or `--allow-protected`); the pull request body records it.
+  `.factory/env`, and every glob listed in `.factory/protected`, which git reads as a
+  pathspec; a line git cannot read fails the guardrails. A task that legitimately must
+  change them, such as adding the gate, gets a one-task waiver from you at plan approval
+  (`p`, or `--allow-protected`); the pull request body records it.
 - No ignored file at a protected path, waiver or not: git leaves it out of the branch and
   its diff, but the gate reads it, as mise reads an ignored `.mise.local.toml` in a repo
   that protects mise's configs. Factory's own `.factory/run/` is exempt, and so is your

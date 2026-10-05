@@ -724,7 +724,7 @@ tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 # non-ASCII character, would match no check, and :(literal) keeps a name from being read as
 # a pathspec.
 guard_check() {
-  local wt=$1 base=$2 bad=0 f globs kept top
+  local wt=$1 base=$2 bad=0 f globs kept top err
   # git -C reads the worktree's own config, which an agent can write: core.worktree there
   # points every git call below at another checkout than the one the gate runs in
   top=$(git -C "$wt" rev-parse --show-toplevel)
@@ -750,7 +750,12 @@ guard_check() {
   fi
   mapfile -t globs < <(protected_globs "$wt")
   mapfile -t kept < <(kept_out "$wt")
-  if [[ -e $wt/$RUN_DIR/allow-protected ]]; then
+  # Git reads each glob as a pathspec. One it cannot read fails every git call that names the
+  # globs, and a check of protected paths would then read no path and pass.
+  if ! err=$(git -C "$wt" ls-files -- "${globs[@]}" 2>&1 >/dev/null); then
+    printf 'protected paths unchecked: %s (fix that line of .factory/protected)\n' "${err#fatal: }"
+    bad=1
+  elif [[ -e $wt/$RUN_DIR/allow-protected ]]; then
     log "guardrails: protected-path check waived by the human"
   else
     while IFS= read -r -d '' f; do

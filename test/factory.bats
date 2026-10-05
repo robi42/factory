@@ -1321,6 +1321,23 @@ IN
   [ -z "$output" ]
 }
 
+@test "guard: a line of .factory/protected that git cannot read as a pathspec fails" {
+  make_repo
+  printf '.cargo/config*\n:(bogus)x\n' >"$REPO/.factory/protected"
+  printf '/.cargo/\n' >"$REPO/.gitignore"
+  commit_all "protect cargo's config, with a typo"
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
+  commit_all "relax gate"
+  mkdir -p "$REPO/.cargo"
+  printf '[build]\nrustflags = ["--cap-lints=allow"]\n' >"$REPO/.cargo/config.toml"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected paths unchecked: Invalid pathspec magic 'bogus' in ':(bogus)x'"* ]]
+}
+
 @test "guard: waiver skips only the protected-path check" {
   make_repo
   printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
