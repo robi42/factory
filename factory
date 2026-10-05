@@ -532,10 +532,11 @@ run_gate() { # worktree gate logfile
   return 1
 }
 
-# tree_state worktree -> git's status line for each file changed or added outside .factory/
-tree_state() { git -C "$1" status --porcelain --untracked-files=all -- . ':(exclude).factory'; }
+# tree_state worktree -> git's status line for each file changed or added outside Factory's
+# own run dir; the rest of .factory/, the gate among it, is the repo's
+tree_state() { git -C "$1" status --porcelain --untracked-files=all -- . ":(exclude)$RUN_DIR"; }
 
-# tree_dirty worktree: 0 when files outside .factory/ changed or appeared
+# tree_dirty worktree: 0 when files outside Factory's run dir changed or appeared
 tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 
 # guard_check worktree base: mechanical guardrails on the branch. Prints violations.

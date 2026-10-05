@@ -31,6 +31,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   everything as typed, and the README says how to write an apostrophe there.
 - In a run without a terminal, an approval that comes back after a note says again where
   to answer.
+- An uncommitted edit under `.factory/`, such as to the gate, went unnoticed: the
+  planner's hands-off check and the builder's guardrails looked only outside it, while the
+  gate that ran was the edited copy. Only Factory's own `.factory/run/` is left out now.
 - The planner's hands-off check looks at what each of its turns changed. Files you add or
   change in the worktree while its questions or the plan approval wait, or before a rerun,
   were blamed on it, and it was told to discard them or the run died.

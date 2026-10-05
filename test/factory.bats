@@ -327,6 +327,19 @@ context_of() {
   [ "$status" -eq 0 ]
 }
 
+@test "guard: an uncommitted change under .factory/, such as the gate, counts; only its run dir is Factory's" {
+  make_repo
+  mkdir -p "$REPO/.factory/run" && printf 'plan\n' >"$REPO/.factory/run/plan.md"
+  run tree_dirty "$REPO"
+  [ "$status" -eq 1 ]
+  printf 'exit 0\n' >>"$REPO/.factory/gate"
+  run tree_dirty "$REPO"
+  [ "$status" -eq 0 ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"uncommitted changes in the worktree"* ]]
+}
+
 @test "guard: docs-only change needs no test" {
   make_repo
   printf 'notes\n' >"$REPO/NOTES.md"
@@ -1239,7 +1252,14 @@ JSON
   [[ $output == *"must not touch code"* ]]
   mkdir -p "$REPO/.factory/run" && printf 'plan\n' >"$REPO/.factory/run/plan.md"
   git -C "$REPO" checkout -q -- .
-  planner_kept_hands_off planner # files under .factory/ are fine
+  planner_kept_hands_off planner # files under .factory/run/ are fine
+  # the rest of .factory/ is not
+  printf 'exit 0\n' >>"$REPO/.factory/gate"
+  ask() { printf 'asked %s: %s\n' "$1" "$2"; }
+  run planner_kept_hands_off planner
+  [ "$status" -eq 1 ]
+  [[ $output == *"Revert these changes"*" M .factory/gate"* ]]
+  git -C "$REPO" checkout -q -- .
   # given the tree before its turn, only what the turn changed is the planner's
   printf 'the human'"'"'s\n' >"$REPO/fixture.csv"
   local before
