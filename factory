@@ -726,8 +726,7 @@ guard_check() {
   local rules
   rules=$(guardrails_file "$wt")
   while IFS= read -r -d '' f; do
-    if git -C "$wt" diff -U0 "$base...HEAD" -- ":(literal)$f" | grep -E '^\+[^+]' \
-      | grep -E -f <(grep -vE '^\s*(#|$)' "$rules") | sed 's/^+//' | label "$f"; then
+    if added_lines "$wt" "$base" "$f" | grep -E -f <(grep -vE '^\s*(#|$)' "$rules") | label "$f"; then
       hits=1
     fi
   done < <(git -C "$wt" diff --name-only -z "$base...HEAD" -- . ':(exclude).factory')
@@ -738,10 +737,18 @@ guard_check() {
   return $bad
 }
 
-# label path: each line on stdin after the path it comes from
+# added_lines worktree base path: the lines the branch adds to path, each with diff's + still
+# on it, as a repo's rules may anchor on it (^\+). Above a hunk's @@ line are the file headers,
+# +++ among them; below it, each line that begins with a + is an added line, whatever comes
+# after the +.
+added_lines() {
+  git -C "$1" diff -U0 "$2...HEAD" -- ":(literal)$3" | sed -n '/^@@/,/^diff /{/^+/p;}'
+}
+
+# label path: each added line on stdin after the path it comes from, without diff's +
 label() {
   local line
-  while IFS= read -r line; do printf '%s: %s\n' "$1" "$line"; done
+  while IFS= read -r line; do printf '%s: %s\n' "$1" "${line#+}"; done
 }
 
 # tests_changed_with_source worktree base: true unless code changed and no test file did.

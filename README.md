@@ -335,7 +335,8 @@ after the gate passes and before review:
   `eslint-disable`, `shellcheck disable`; skipped tests; `|| true`. Adapted from
   [AI Guardrails](https://github.com/florianbuetow/ai-guardrails). A repo can ship its own
   `.factory/guardrails.txt`, which replaces Factory's list for that repo and is protected
-  like the gate; copy the default and edit it.
+  like the gate; copy the default and edit it. A pattern sees each added line with diff's
+  `+` in front, so `^\+` anchors it at the line's start.
 - A change to code files must also touch a test file (`FACTORY_REQUIRE_TESTS=0` to relax).
 - No committed build artifacts, no uncommitted changes, at least one commit.
 - Protected paths untouched: `.factory/gate`, `.factory/protected`, `.factory/guardrails.txt`,

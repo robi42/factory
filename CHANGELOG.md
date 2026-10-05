@@ -49,6 +49,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   code, test nor build artifact. A name that reads as a pathspec, such as
   `:(exclude)x.sh`, hid the file's lines too. Git now hands over the names as it stores
   them.
+- The guardrails skipped an added line that begins with a `+`, such as a suppression in a
+  patch file the build applies: the filter that dropped the `+++` file header dropped it
+  as well. Only the headers above each hunk are skipped now, and a pattern still sees
+  each added line with diff's `+` in front, as one anchored with `^\+` expects.
 
 ## [0.1.11] - 2026-10-05
 

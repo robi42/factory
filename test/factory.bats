@@ -398,6 +398,33 @@ context_of() {
   [ "$status" -eq 0 ]
 }
 
+@test "guard: an added line that begins with a + is checked; the file headers are not lines" {
+  make_repo
+  # Build the bad strings at runtime so this file passes its own guard check.
+  local hash='#' marker=Disabled
+  mkdir -p "$REPO/patches" "$REPO/docs"
+  printf -- '--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n+%s[allow(dead_code)]\n fn unused() {}\n' \
+    "$hash" >"$REPO/patches/lib.patch"
+  printf 'notes\n' >"$REPO/docs/@$marker.md" # its diff header +++ line matches a pattern
+  commit_all patch
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"patches/lib.patch: +${hash}[allow(dead_code)]"* ]]
+  [[ $output != *"docs/"* ]]
+}
+
+@test "guard: a repo's rules see each added line with diff's +, as a rule anchored on it expects" {
+  make_repo
+  printf '^\\+[[:space:]]*allow\\(\n' >"$REPO/.factory/guardrails.txt"
+  commit_all "own rules"
+  mkdir -p "$REPO/src"
+  printf '#[cfg_attr(\n    test,\n    allow(dead_code)\n)]\nfn f() {}\n' >"$REPO/src/lib.rs"
+  commit_all wrapped
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"src/lib.rs:     allow(dead_code)"* ]]
+}
+
 @test "guard: a file whose name git would quote, or read as a pathspec, has its lines checked" {
   make_repo
   # Build the bad strings at runtime so this file passes its own guard check.

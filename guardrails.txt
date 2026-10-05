@@ -1,4 +1,5 @@
-# One extended regex per line. Matched against lines ADDED on a factory branch.
+# One extended regex per line. Matched against each line ADDED on a factory branch, with
+# diff's leading + still on it: anchor a pattern with ^\+, not ^ alone.
 # Adapted from florianbuetow/ai-guardrails: no swallowed errors, no suppressed
 # checks, no skipped tests. Edit to taste; blank lines and # comments are ignored.
 # A pattern must not begin with a hash, or it is read as a comment: write [#] instead.
