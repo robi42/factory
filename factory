@@ -697,11 +697,23 @@ kept_out() {
 }
 
 # tree_state worktree -> git's status line for each file changed or added, the gate, the rules
-# and the rest of .factory/ included, but for what kept_out leaves out
+# and the rest of .factory/ included, but for what kept_out leaves out. Git compares the files
+# with HEAD through an index of its own, with the settings that could hide a change at their
+# defaults: the worktree's index and git config, which an agent can write, can mark a file
+# unchanged (assume-unchanged, skip-worktree, sparse patterns), have an fsmonitor hook or a lax
+# core.checkStat report no change, or leave out a submodule or a name that differs in case.
 tree_state() {
-  local kept
+  local kept dir out
   mapfile -t kept < <(kept_out "$1")
-  git -C "$1" status --porcelain --untracked-files=all -- . "${kept[@]}"
+  dir=$(mktemp -d)
+  if GIT_INDEX_FILE=$dir/index git -C "$1" read-tree HEAD; then
+    out=$(GIT_INDEX_FILE=$dir/index git -C "$1" -c core.fsmonitor=false -c core.ignoreCase=false \
+      status --porcelain --untracked-files=all --ignore-submodules=none -- . "${kept[@]}") || out="git status failed"
+  else
+    out="no HEAD to compare with"
+  fi
+  rm -rf "$dir"
+  printf '%s' "$out"
 }
 
 # tree_dirty worktree: 0 when tree_state lists a file

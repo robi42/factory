@@ -1105,6 +1105,94 @@ IN
   [[ $output == *"uncommitted changes in the worktree"* ]]
 }
 
+@test "guard: a change still counts when the worktree's index marks the file unchanged" {
+  make_repo
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  local flag
+  for flag in assume-unchanged skip-worktree; do
+    printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
+    git -C "$REPO" update-index "--$flag" .factory/gate
+    [ -z "$(git -C "$REPO" status --porcelain)" ] # git's own status shows nothing
+    run guard_check "$REPO" main
+    printf 'with %s:\n%s\n' "$flag" "$output"
+    [ "$status" -eq 1 ]
+    [[ $output == *"uncommitted changes in the worktree"* ]]
+    git -C "$REPO" update-index "--no-$flag" .factory/gate
+    git -C "$REPO" checkout -q -- .factory/gate
+  done
+}
+
+@test "guard: a change still counts when the git config has git status report none" {
+  make_repo
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  # An fsmonitor hook that reports no change at all, its token and not one path.
+  printf '#!/bin/sh\nprintf "tok\\0"\n' >"$TMP/fsmonitor"
+  chmod +x "$TMP/fsmonitor"
+  git -C "$REPO" config core.fsmonitor "$TMP/fsmonitor"
+  git -C "$REPO" config core.fsmonitorHookVersion 2
+  git -C "$REPO" status --porcelain >/dev/null # the index takes the hook's token
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
+  touch -d '-1 minute' "$REPO/.factory/gate"
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"uncommitted changes in the worktree"* ]]
+  git -C "$REPO" config --unset core.fsmonitor
+  git -C "$REPO" checkout -q -- .factory/gate
+  # A stat that looks at size and mtime alone, and an edit that keeps both.
+  touch -d '-1 minute' "$REPO/.factory/gate"
+  git -C "$REPO" config core.checkStat minimal
+  git -C "$REPO" config core.trustctime false
+  git -C "$REPO" status --porcelain >/dev/null # the index takes the gate's stat
+  touch -r "$REPO/.factory/gate" "$TMP/stamp"
+  printf '#!/bin/sh\nexit 1\n' >"$REPO/.factory/gate"
+  touch -r "$TMP/stamp" "$REPO/.factory/gate"
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"uncommitted changes in the worktree"* ]]
+}
+
+@test "guard: a change still counts when the git config leaves it out of git status" {
+  make_repo
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  # Sparse patterns that leave the gate out, and git told to expect it in the worktree all the same.
+  git -C "$REPO" sparse-checkout set --no-cone '/*' '!/.factory/gate' 2>/dev/null
+  git -C "$REPO" config sparse.expectFilesOutsideOfPatterns true
+  mkdir -p "$REPO/.factory"
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"uncommitted changes in the worktree"* ]]
+  rm "$REPO/.factory/gate"
+  git -C "$REPO" sparse-checkout disable
+  # A submodule whose changes the config ignores.
+  git init -q "$TMP/lib"
+  git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m lib
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" lib
+  commit_all "add lib"
+  git -C "$REPO" config submodule.lib.ignore all
+  printf 'echo relaxed\n' >"$REPO/lib/build.sh"
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"uncommitted changes in the worktree"* ]]
+  rm "$REPO/lib/build.sh"
+  # A name that differs from a tracked one in case alone: GNU make reads makefile first.
+  printf 'ci:\n\ttrue\n' >"$REPO/Makefile"
+  commit_all make
+  git -C "$REPO" config core.ignoreCase true
+  printf 'ci:\n\tfalse\n' >"$REPO/makefile"
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"uncommitted changes in the worktree"* ]]
+}
+
 @test "guard: an ignored file at a protected path fails, whether the repo or the user ignores it" {
   make_repo
   printf ':(glob)**/.mise*.toml\n.cargo/config*\n' >"$REPO/.factory/protected"

@@ -75,6 +75,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   repo's main checkout, where you may keep it untracked and `fy check` reads it, so
   `fy check` failed there. It is left out there again, as the ignored-file check leaves it
   out; in a task's worktree it still counts.
+- The check for uncommitted changes trusted the worktree's index and git config, which an
+  agent can write: a file marked assume-unchanged or skip-worktree, sparse patterns, an
+  fsmonitor hook that reported no change, `core.checkStat=minimal`, a submodule's `ignore`
+  setting or `core.ignoreCase` hid an edited `.factory/gate`, or any other change, while
+  the gate ran on it. Git now compares the worktree with HEAD through an index of
+  Factory's own, with those settings at their defaults. It reads every file to do so,
+  which takes about two seconds on 20,000 files.
 
 ## [0.1.11] - 2026-10-05
 
