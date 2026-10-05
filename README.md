@@ -360,6 +360,10 @@ after the gate passes and before review:
   that protects mise's configs. Factory's own `.factory/run/` is exempt, and so is your
   own `.factory/env` in the repo's main checkout, where `fy check` may run but no agent
   works.
+- No symlink added that leads out of the worktree, into `.git` or into an ignored place,
+  waiver or not: the gate would read through it what no diff shows. A symlink to a
+  directory gives the files under it paths that no protected glob names, so it needs the
+  waiver.
 - The planner must leave the code untouched; what one of its turns changes is sent back once.
 
 ## Knobs

@@ -85,6 +85,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 - A worktree whose own git config set `core.worktree` pointed every git call of the
   guardrails at another checkout, a clean one, while the gate ran in the worktree itself.
   The guardrails now refuse a worktree that git does not read as the top of its checkout.
+- A symlink let the gate read what the guardrails did not see. One into an ignored place
+  such as `target/`, into `.git` or out of the worktree showed its content in no diff:
+  `.cargo -> target/cfg` made an ignored file Cargo's config. One to a directory gave the
+  files under it paths that no protected glob names. The guardrails now refuse a symlink
+  the branch adds that leads to such a place, waiver or not, and one to a directory unless
+  you waived the protected paths.
 
 ## [0.1.11] - 2026-10-05
 

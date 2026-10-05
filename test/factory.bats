@@ -1255,6 +1255,53 @@ IN
   [[ $output == *"ignored file at a protected path: .factory/env"* ]]
 }
 
+@test "guard: a symlink into an ignored place, into .git or out of the worktree fails, waiver or not" {
+  make_repo
+  local pipe='||'
+  printf '/target/\n' >"$REPO/.gitignore"
+  commit_all "ignore target"
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  mkdir -p "$REPO/target/cfg"
+  printf 'run_thing %s true\n' "$pipe" >"$REPO/target/real.sh"
+  printf '[build]\nrustflags = ["--cap-lints=allow"]\n' >"$REPO/target/cfg/config.toml"
+  ln -s target/real.sh "$REPO/tool.sh"
+  ln -s target/cfg "$REPO/.cargo" # cargo reads .cargo/config.toml through it
+  ln -s ../outside.sh "$REPO/out.sh"
+  ln -s .git/hooks "$REPO/hooks"
+  commit_all links
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"symlink to a place git does not show: tool.sh -> target/real.sh"* ]]
+  [[ $output == *"symlink to a place git does not show: .cargo -> target/cfg"* ]]
+  [[ $output == *"symlink to a place git does not show: out.sh -> ../outside.sh"* ]]
+  [[ $output == *"symlink to a place git does not show: hooks -> .git/hooks"* ]]
+  mkdir -p "$REPO/.factory/run"
+  : >"$REPO/.factory/run/allow-protected" # the waiver is for what the branch's diff shows
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"symlink to a place git does not show: tool.sh"* ]]
+}
+
+@test "guard: a symlink to a directory fails unless protected paths are waived; one to a file passes" {
+  make_repo
+  mkdir -p "$REPO/conf"
+  printf '[build]\nrustflags = ["--cap-lints=allow"]\n' >"$REPO/conf/config.toml"
+  ln -s conf "$REPO/.cargo" # .cargo/config.toml, which a glob may protect, is conf/config.toml
+  printf 'notes\n' >"$REPO/AGENTS.md"
+  ln -s AGENTS.md "$REPO/CLAUDE.md"
+  commit_all links
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"symlink to a directory: .cargo -> conf"* ]]
+  [[ $output != *"CLAUDE.md"* ]]
+  mkdir -p "$REPO/.factory/run"
+  : >"$REPO/.factory/run/allow-protected"
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+}
+
 @test "guard: an ignored build artifact passes, and so does the run directory under a protected .factory" {
   make_repo
   printf '.factory\n' >"$REPO/.factory/protected"

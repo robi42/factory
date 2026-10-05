@@ -764,6 +764,19 @@ guard_check() {
     printf 'ignored file at a protected path: %s (read in this worktree, left out of the branch; remove it)\n' "$f"
     bad=1
   done < <(git -C "$wt" ls-files --others --ignored --exclude-standard -z -- "${globs[@]}" "${kept[@]}")
+  # A symlink the branch adds leads the gate where git's paths do not. Out of the worktree, into
+  # .git or an ignored place, it reads what no diff shows, waiver or not; to a directory, it
+  # gives the files there paths that no protected glob names, which the waiver lets through.
+  while IFS= read -r -d '' f; do
+    [[ -L $wt/$f ]] || continue
+    if ! in_view "$wt" "$(realpath -m --relative-to="$wt" "$wt/$f")"; then
+      printf 'symlink to a place git does not show: %s -> %s (the gate would read what no diff shows)\n' "$f" "$(readlink "$wt/$f")"
+      bad=1
+    elif [[ -d $wt/$f && ! -e $wt/$RUN_DIR/allow-protected ]]; then
+      printf 'symlink to a directory: %s -> %s (the paths under it escape the protected globs)\n' "$f" "$(readlink "$wt/$f")"
+      bad=1
+    fi
+  done < <(git -C "$wt" diff --name-only -z --diff-filter=AMT "$base...HEAD")
   local hits=0
   local rules patterns lines nul=0
   rules=$(guardrails_file "$wt")
@@ -793,6 +806,16 @@ guard_check() {
     bad=1
   fi
   return $bad
+}
+
+# in_view worktree path: 0 when git shows path, relative to the worktree: inside it, outside
+# .git, and not ignored. git check-ignore says 1 for such a path, 0 for an ignored one, and 128
+# for one it cannot tell, such as a path inside a submodule.
+in_view() {
+  local rc=0
+  [[ $2 != .. && $2 != ../* && $2 != .git && $2 != .git/* ]] || return 1
+  git -C "$1" check-ignore -q -- "$2" 2>/dev/null || rc=$?
+  ((rc == 1))
 }
 
 # added_lines worktree base path: the lines the branch adds to path, each with diff's + still
