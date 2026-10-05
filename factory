@@ -285,6 +285,9 @@ start_agent() {
 # ask name text: send a prompt and wait for the turn to settle, handing blocks to the human.
 ask() {
   local name=$1 text=$2 out status stalls=0
+  # a turn under way ends first, the agent's reply to the human or to a command typed in its
+  # pane: herdr's wait does not track turns and could match that turn's end instead
+  [[ $(agent_status "$name") != working ]] || wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked >/dev/null
   while :; do
     if out=$(herdr agent prompt "$name" "$text" --wait --timeout 60000 2>&1); then
       break
@@ -1093,6 +1096,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
         rm -f "$dir/reject.md"
         printf '\n' >&2
         log "note received via file"
+        pause_for_pane_reply
         take_note "$kind" "$agent" "$note" || return $?
         continue 2
       fi
@@ -1100,6 +1104,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
         rm -f "$dir/approved"
         printf '\n' >&2
         log "approved via file"
+        pause_for_pane_reply
         return 0
       fi
       if ((stdin_open)); then
@@ -1137,6 +1142,10 @@ await_human() { # plan|build agent dir: human_gate's waiting
     done
   done
 }
+
+# pause_for_pane_reply: Claude Code replies to a command typed after a ! in its pane once the
+# command ends; a moment for that reply to get under way, so that the next ask waits for it
+pause_for_pane_reply() { sleep 5; }
 
 role_of() { case $1 in plan) printf planner ;; *) printf builder ;; esac }
 
@@ -1229,6 +1238,7 @@ await_answers() { # questions-file run-dir: collect_answers' waiting
       answers=$(<"$dir/answers.md")
       rm -f "$dir/answers.md"
       log "answers received via file"
+      pause_for_pane_reply
       printf '%s' "$answers"
       return 0
     fi

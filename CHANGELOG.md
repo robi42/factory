@@ -13,6 +13,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   the planner alone, so after a last round that ended in REVISE no reviewer saw the plan
   again.
 
+### Fixed
+- Factory no longer prompts an agent in the middle of a turn. Claude Code replies to a
+  `!fy` command typed in its pane, and herdr's wait, which does not track turns, could
+  match the end of that reply instead, so the next step, a plan review round or the gate,
+  could start before the agent had acted on the note. Factory now lets the turn end
+  first, and after an approval, a note or answers that came by file it pauses a few
+  seconds for such a reply to start.
+
 ## [0.1.10] - 2026-10-04
 
 ### Added

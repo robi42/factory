@@ -10,8 +10,9 @@ setup() {
   source "$BATS_TEST_DIRNAME/../factory"
   FACTORY_REQUIRE_TESTS=0 # the fixtures below change code without tests on purpose
   TMP=$(mktemp -d)
-  toast() { :; }       # no desktop notifications from the tests
-  glow() { cat "$1"; } # nor this machine's glow and its config
+  toast() { :; }                # no desktop notifications from the tests
+  glow() { cat "$1"; }          # nor this machine's glow and its config
+  pause_for_pane_reply() { :; } # nor the pause for an agent's reply in its pane
 }
 
 teardown() {
@@ -382,6 +383,7 @@ context_of() {
     printf 'asked %s: %s\n' "$1" "$2"
     : >"$TMP/approved" # the human approves after the revision
   }
+  pause_for_pane_reply() { printf 'pause for the reply\n'; }
   # the human's reject arrives while the factory is already waiting
   (
     sleep 2
@@ -391,8 +393,8 @@ context_of() {
   wait
   [ "$status" -eq 0 ]
   [[ $output == *"no terminal"* ]]
-  [[ $output == *"asked planner: "*"too big, split it"* ]]
-  [[ $output == *"approved via file"* ]]
+  [[ $output == *"note received via file"*"pause for the reply"*"asked planner: "*"too big, split it"* ]]
+  [[ $output == *"approved via file"*"pause for the reply" ]]
   [ ! -e "$TMP/approved" ]
   [ ! -e "$TMP/waiting" ]
   # the gate names itself and this run while it waits; an abort file ends it with 3
@@ -755,10 +757,11 @@ IN
     if [[ -e $TMP/run/waiting ]]; then cp "$TMP/run/waiting" "$TMP/seen"; fi
     printf '1. CSV\n' >"$TMP/run/answers.md"
   ) &
+  pause_for_pane_reply() { printf 'pause for the reply\n' >&2; }
   run collect_answers "$TMP/run/questions.md" </dev/null
   wait
   [ "$status" -eq 0 ]
-  [[ $output == *"answers received via file"* ]]
+  [[ $output == *"answers received via file"*"pause for the reply"*"1. CSV" ]]
   [ "$(cat "$TMP/seen")" = "questions $$" ]
   [ ! -e "$TMP/run/waiting" ]
 }
@@ -1083,6 +1086,23 @@ JSON
   mkdir -p "$REPO/.factory/run" && printf 'plan\n' >"$REPO/.factory/run/plan.md"
   git -C "$REPO" checkout -q -- .
   planner_kept_hands_off planner # files under .factory/ are fine
+}
+
+@test "ask: a turn under way, such as the agent's reply in its pane, ends before the prompt goes in" {
+  herdr() {
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent get"*) printf '{"result":{"agent":{"agent_status":"%s"}}}' "$(cat "$TMP/state")" ;;
+      *) printf '{"result":{"agent":{"agent_status":"done"}}}' ;;
+    esac
+  }
+  printf working >"$TMP/state"
+  ask planner "the note"
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent wait,agent prompt" ]
+  printf 'done' >"$TMP/state"
+  : >"$TMP/herdr.log"
+  ask planner "the note"
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent prompt" ]
 }
 
 @test "ask_for_file: asks once more when the file is missing, then gives up" {
