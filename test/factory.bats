@@ -398,6 +398,43 @@ context_of() {
   [ "$status" -eq 0 ]
 }
 
+@test "guard: a file whose name git would quote, or read as a pathspec, has its lines checked" {
+  make_repo
+  # Build the bad strings at runtime so this file passes its own guard check.
+  local hash='#' pipe='||'
+  mkdir -p "$REPO/crates/core/tests"
+  printf '%s[allow(dead_code)]\nfn unused() {}\n' "$hash" >"$REPO/crates/core/tests/naïve.rs"
+  printf 'run_thing %s true\n' "$pipe" >"$REPO/:(exclude)hidden.sh"
+  commit_all names
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"crates/core/tests/naïve.rs: ${hash}[allow(dead_code)]"* ]]
+  [[ $output == *":(exclude)hidden.sh: run_thing $pipe true"* ]]
+}
+
+@test "guard: a name git would quote counts as code, test, build artifact and protected path" {
+  make_repo
+  printf 'docs/*\n' >"$REPO/.factory/protected"
+  commit_all "protect docs"
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  mkdir -p "$REPO/src/naïve" "$REPO/docs"
+  printf 'pub fn f() {}\n' >"$REPO/src/naïve/lib.rs"
+  printf 'x' >"$REPO/src/naïve/lib.o"
+  printf 'notes\n' >"$REPO/docs/café.md"
+  commit_all names
+  FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"source files changed but no test files did"* ]]
+  [[ $output == *"build artifact committed: src/naïve/lib.o"* ]]
+  [[ $output == *"protected path changed: docs/café.md"* ]]
+  printf '#[test]\nfn f() {}\n' >"$REPO/src/naïve/lib_test.rs"
+  commit_all test
+  FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+  [[ $output != *"no test files did"* ]]
+}
+
 @test "plan approval: terminal answers" {
   plan_ready
   human_gate plan planner "$TMP" <<<"a"

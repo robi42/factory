@@ -691,7 +691,10 @@ tree_state() { git -C "$1" status --porcelain --untracked-files=all -- . ":(excl
 # tree_dirty worktree: 0 when files outside Factory's run dir changed or appeared
 tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 
-# guard_check worktree base: mechanical guardrails on the branch. Prints violations.
+# guard_check worktree base: mechanical guardrails on the branch. Prints violations. Git lists
+# the paths NUL-terminated (-z), as it stores them: a name it would quote, such as one with a
+# non-ASCII character, would match no check, and :(literal) keeps a name from being read as
+# a pathspec.
 guard_check() {
   local wt=$1 base=$2 bad=0 f globs
   if tree_dirty "$wt"; then
@@ -702,10 +705,10 @@ guard_check() {
     printf 'no commits on the branch since %s\n' "$base"
     bad=1
   fi
-  while IFS= read -r f; do
+  while IFS= read -r -d '' f; do
     printf 'build artifact committed: %s\n' "$f"
     bad=1
-  done < <(git -C "$wt" diff --name-only --diff-filter=A "$base...HEAD" | grep -E '(^|/)(__pycache__/|node_modules/|\.DS_Store$|.*\.pyc$|.*\.class$|.*\.o$)')
+  done < <(git -C "$wt" diff --name-only -z --diff-filter=A "$base...HEAD" | LC_ALL=C grep -zE '(^|/)(__pycache__/|node_modules/|\.DS_Store$|.*\.pyc$|.*\.class$|.*\.o$)')
   if ((FACTORY_REQUIRE_TESTS)) && ! tests_changed_with_source "$wt" "$base"; then
     printf 'source files changed but no test files did; add or adjust a test\n'
     bad=1
@@ -714,20 +717,20 @@ guard_check() {
     log "guardrails: protected-path check waived by the human"
   else
     mapfile -t globs < <(protected_globs "$wt")
-    while IFS= read -r f; do
+    while IFS= read -r -d '' f; do
       printf 'protected path changed: %s\n' "$f"
       bad=1
-    done < <(git -C "$wt" diff --name-only "$base...HEAD" -- "${globs[@]}")
+    done < <(git -C "$wt" diff --name-only -z "$base...HEAD" -- "${globs[@]}")
   fi
   local hits=0
   local rules
   rules=$(guardrails_file "$wt")
-  while IFS= read -r f; do
-    if git -C "$wt" diff -U0 "$base...HEAD" -- "$f" | grep -E '^\+[^+]' \
-      | grep -E -f <(grep -vE '^\s*(#|$)' "$rules") | sed "s|^+|$f: |"; then
+  while IFS= read -r -d '' f; do
+    if git -C "$wt" diff -U0 "$base...HEAD" -- ":(literal)$f" | grep -E '^\+[^+]' \
+      | grep -E -f <(grep -vE '^\s*(#|$)' "$rules") | sed 's/^+//' | label "$f"; then
       hits=1
     fi
-  done < <(git -C "$wt" diff --name-only "$base...HEAD" -- . ':(exclude).factory')
+  done < <(git -C "$wt" diff --name-only -z "$base...HEAD" -- . ':(exclude).factory')
   if ((hits)); then
     printf 'the lines above match a forbidden pattern (see %s)\n' "$rules"
     bad=1
@@ -735,13 +738,22 @@ guard_check() {
   return $bad
 }
 
+# label path: each line on stdin after the path it comes from
+label() {
+  local line
+  while IFS= read -r line; do printf '%s: %s\n' "$1" "$line"; done
+}
+
 # tests_changed_with_source worktree base: true unless code changed and no test file did.
+# The names are matched as the bytes git keeps (LC_ALL=C), whatever their encoding.
 tests_changed_with_source() {
-  local files src tests
-  files=$(git -C "$1" diff --name-only "$2...HEAD" -- . ':(exclude).factory')
-  src=$(grep -E '\.(py|js|jsx|ts|tsx|go|rs|java|kt|kts|scala|sh|bash|rb|ex|exs|c|cc|cpp|h|hpp|cs|swift|php|lua|clj|el)$' <<<"$files" | grep -vE "$TEST_PATH_RE") || src=""
-  tests=$(grep -E "$TEST_PATH_RE" <<<"$files") || tests=""
-  [[ -z $src || -n $tests ]]
+  local LC_ALL=C f code=0
+  local code_re='\.(py|js|jsx|ts|tsx|go|rs|java|kt|kts|scala|sh|bash|rb|ex|exs|c|cc|cpp|h|hpp|cs|swift|php|lua|clj|el)$'
+  while IFS= read -r -d '' f; do
+    [[ $f =~ $TEST_PATH_RE ]] && return 0
+    [[ $f =~ $code_re ]] && code=1
+  done < <(git -C "$1" diff --name-only -z "$2...HEAD" -- . ':(exclude).factory')
+  return "$code"
 }
 
 verdict_of() { # review file -> APPROVE | REVISE | (empty)

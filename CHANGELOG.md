@@ -43,6 +43,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `factory answer` and the questions relay (`questions.md`, `answers.md`, the questions
   prompt in Factory's terminal): the planner asks in its dialog.
 
+### Fixed
+- The guardrails skipped a file whose name git quotes, such as `naïve.rs` with its
+  non-ASCII character: not one of its added lines was matched, and it counted as neither
+  code, test nor build artifact. A name that reads as a pathspec, such as
+  `:(exclude)x.sh`, hid the file's lines too. Git now hands over the names as it stores
+  them.
+
 ## [0.1.11] - 2026-10-05
 
 ### Changed
