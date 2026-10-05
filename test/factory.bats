@@ -762,12 +762,14 @@ IN
   [ "$(grep -c '^revise:' <<<"$output")" -eq 2 ]
   [[ $output == *"revise: Reviewers left notes on your plan in .factory/run/plan-review-2.md"*"the revision after round 2 goes on unreviewed"*"to the human" ]]
   [[ $output != *"round 3"* ]]
-  # one round: the old single revision, and no round-2 review of the last run left over
+  # one round: the old single revision, and no round-2 review or note summary of the last run left over
   : >"$TMP/n"
+  printf 'the last run'"'"'s note\n' >"$TMP/.factory/run/plan-changes.md"
   FACTORY_PLAN_ROUNDS=1 run plan_phase "$TMP"
   [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
   [[ $output != *"round 2"* ]]
   [ ! -e "$TMP/.factory/run/plan-review-2.md" ]
+  [ ! -e "$TMP/.factory/run/plan-changes.md" ]
   # and two approvals need none
   : >"$TMP/n"
   printf '%s\n' APPROVE APPROVE >"$TMP/verdicts"
@@ -832,7 +834,8 @@ IN
   PLAN_AGENT=planner BUILD_AGENT=builder REVIEW_AGENT=codex
   mkdir -p "$TMP/.factory/run"
   printf 'VERDICT: REVISE\n' >"$TMP/.factory/run/plan-review-2.md" # the rounds before were used up
-  : >"$TMP/.factory/run/plan-review-1.md"
+  printf 'VERDICT: APPROVE\n' >"$TMP/.factory/run/plan-review-2-build.md"
+  touch "$TMP/.factory/run/plan-review-1.md" "$TMP/.factory/run/plan-review-1-build.md"
   planner_kept_hands_off() { :; }
   ask() { printf 'asked %s: %.80s\n' "$1" "$2"; }
   ask_for_file() { # the reviewers approve this time
@@ -842,14 +845,42 @@ IN
   run take_note plan planner "keep the fetcher per epoch"
   [ "$status" -eq 0 ]
   [[ $output == *"asked planner: The human reviewed"*"plan review round 3"* ]]
-  [[ $output == *"review codex plan-review-3.md: "*"your notes from it are in .factory/run/plan-review-2.md"*"Then the human sent this note"*"keep the fetcher per epoch"* ]]
+  [[ $output == *"review codex plan-review-3.md: "*"The plan changed since the previous review round; your notes from it are in .factory/run/plan-review-2.md"*"The human sent this note"*"keep the fetcher per epoch"*"review builder plan-review-3-build.md: "* ]]
   [[ $output == *"review builder plan-review-3-build.md: "*"plan-review-2-build.md"*"keep the fetcher per epoch"* ]]
   [[ $output == *"plan verdicts: APPROVE APPROVE"* ]]
   [[ $output != *"plan revision"* ]]
   # an objection gets the planner's revision before the plan goes back to the human
   ask_for_file() { printf 'VERDICT: REVISE\n' >"$3"; }
   run take_note plan planner "keep the fetcher per epoch"
+  [ "$status" -eq 0 ]
   [[ $output == *"plan review round 4"*"plan revision"*"asked planner: Reviewers left notes on your plan in .factory/run/plan-review-4.md"* ]]
+  # that revision goes into the summary the human sees, which only a note's round has
+  [[ $(plan_fix_prompt 4 "keep the fetcher per epoch") == *"Add to .factory/run/plan-changes.md what you changed now and why, and where the plan no longer follows the note"* ]]
+  [[ $(plan_fix_prompt 4) != *"plan-changes.md"* ]]
+}
+
+@test "plan rounds: one cut off before the builder's notes does not count, and runs again" {
+  fake_task
+  WT=$TMP
+  TASK_DESC="" GATE=true
+  PLAN_AGENT=planner BUILD_AGENT=builder REVIEW_AGENT=codex
+  local run="$TMP/.factory/run"
+  mkdir -p "$run"
+  printf 'the plan\n' >"$run/plan.md"
+  printf 'VERDICT: APPROVE\n' >"$run/plan-review-1.md"
+  printf 'VERDICT: APPROVE\n' >"$run/plan-review-1-build.md"
+  touch -t 202001010000 "$run"/plan-review-1*.md      # a note changed the plan since
+  printf 'VERDICT: REVISE\n' >"$run/plan-review-2.md" # Codex's, then a Ctrl-C before the builder's
+  [ "$(plan_rounds "$run")" = 1 ]
+  run show_for_approval plan "$run"
+  [[ $output == *"plan review round 1: APPROVE APPROVE (plan changed since), notes in"* ]]
+  ask_for_file() { # what a reviewer finds of the cut-off round when asked
+    printf 'review %s %s: left over %s\n' "$1" "${3##*/}" "$([[ -e $3 ]] && printf yes || printf no)"
+    printf 'VERDICT: APPROVE\n' >"$3"
+  }
+  run plan_round 2
+  [ "$status" -eq 0 ]
+  [[ $output == *"review codex plan-review-2.md: left over no"*"review builder plan-review-2-build.md: left over no"*"plan verdicts: APPROVE APPROVE"* ]]
 }
 
 @test "answer subcommand writes answers.md into the task worktree, while questions wait" {

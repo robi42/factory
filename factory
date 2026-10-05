@@ -994,14 +994,14 @@ Once the file is written, reply with its content.
 P
 }
 
-# plan_recheck round notes [human's note]: from the second round on, a reviewer checks the
-# revision; after a note from the human, against that note too
+# plan_recheck round notes [human's note]: from the second round on, a reviewer checks what
+# changed since its notes; after a note from the human, against that note too
 plan_recheck() {
   if (($1 > 1)); then
-    printf '\nThe planner revised the plan after the previous review round; your notes from it are in %s. Check the revision against them and for anything it broke; ask for another revision only for a real problem, not for polish.' "$2"
+    printf '\nThe plan changed since the previous review round; your notes from it are in %s. Check the changes against them and for anything they broke; ask for another revision only for a real problem, not for polish.' "$2"
   fi
   if [[ -n ${3:-} ]]; then
-    printf '\nThen the human sent this note, and the planner revised the plan for it (%s says what changed): %s\nCheck the plan against the note as well.' "$RUN_DIR/plan-changes.md" "$3"
+    printf '\nThe human sent this note, and the planner revised the plan for it (%s says what changed): %s\nCheck the plan against the note as well.' "$RUN_DIR/plan-changes.md" "$3"
   fi
   return 0
 }
@@ -1031,9 +1031,9 @@ Commit. Reply with just DONE.
 P
 }
 
-plan_fix_prompt() { # round
+plan_fix_prompt() { # round [human's note]: after a note, its summary covers this revision too
   cat <<P
-Reviewers left notes on your plan in $RUN_DIR/plan-review-$1.md and $RUN_DIR/plan-review-$1-build.md. Update $RUN_DIR/plan.md where they are right; ignore what is not.
+Reviewers left notes on your plan in $RUN_DIR/plan-review-$1.md and $RUN_DIR/plan-review-$1-build.md. Update $RUN_DIR/plan.md where they are right; ignore what is not.$([[ -z ${2:-} ]] || printf '\nAdd to %s what you changed now and why, and where the plan no longer follows the note.' "$RUN_DIR/plan-changes.md")
 Then reply with the plan's content.
 P
 }
@@ -1207,10 +1207,11 @@ show_md() {
   if command -v glow >/dev/null 2>&1; then glow "$1" </dev/null >&2; else sed 's/^/    /' "$1" >&2; fi
 }
 
-# plan_rounds dir -> how many plan review rounds left their notes in dir
+# plan_rounds dir -> how many plan review rounds left both reviewers' notes in dir; a round
+# cut off before the second, by a Ctrl-C or an error, does not count
 plan_rounds() {
   local n=0
-  while [[ -e $1/plan-review-$((n + 1)).md ]]; do n=$((n + 1)); done
+  while [[ -e $1/plan-review-$((n + 1)).md && -e $1/plan-review-$((n + 1))-build.md ]]; do n=$((n + 1)); done
   printf '%s' "$n"
 }
 
@@ -1460,6 +1461,7 @@ stop_task() {
 # revises it once when either objects. Sets PLAN_VERDICT.
 plan_round() {
   local round=$1
+  rm -f "$WT/$RUN_DIR/plan-review-$round.md" "$WT/$RUN_DIR/plan-review-$round-build.md" # a cut-off round's would pass for this one's
   log "plan review round $round: $REVIEW_AGENT and $BUILD_AGENT"
   ask_for_file "$REVIEW_AGENT" "$(plan_review_prompt "$round" "${2:-}")" "$WT/$RUN_DIR/plan-review-$round.md"
   ask_for_file "$BUILD_AGENT" "$(plan_build_check_prompt "$round" "${2:-}")" "$WT/$RUN_DIR/plan-review-$round-build.md"
@@ -1467,7 +1469,7 @@ plan_round() {
   log "plan verdicts: $PLAN_VERDICT"
   [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] && return 0
   log "plan revision"
-  ask "$PLAN_AGENT" "$(plan_fix_prompt "$round")"
+  ask "$PLAN_AGENT" "$(plan_fix_prompt "$round" "${2:-}")"
   planner_kept_hands_off "$PLAN_AGENT"
 }
 
@@ -1477,7 +1479,7 @@ plan_round() {
 plan_phase() {
   local round=1
   log "planning"
-  rm -f "$WT/$RUN_DIR"/plan-review-*.md # reviews of an earlier plan would pass as fresh ones
+  rm -f "$WT/$RUN_DIR"/plan-review-*.md "$WT/$RUN_DIR/plan-changes.md" # an earlier plan's would pass as this one's
   plan_or_interview "$PLAN_AGENT" || stop_task "$1" "planner questions"
   planner_kept_hands_off "$PLAN_AGENT"
   while :; do
