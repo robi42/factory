@@ -41,7 +41,7 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
    planner revises and both check the revision, up to `FACTORY_PLAN_ROUNDS` rounds; an
    objection in the last round still gets its revision.
 3. **Your approval.** You see the plan and the last review's verdicts; approve, send a
-   note back, or abort.
+   note back for one more review round, or abort.
 4. **Build.** The builder implements the plan and commits.
 5. **Gate and guardrails.** Factory runs the gate itself and checks the branch.
 6. **Code review.** Codex and the planner each review the diff. Anything but two approvals
@@ -129,14 +129,14 @@ fy next    --pr --auto ~/src/app             # open a PR when approved; skip bot
 fy run     --fresh ~/src/app ap-k3x          # rerun from scratch instead of resuming
 
 # while a run waits for you (from any terminal)
-fy answer  ~/src/app ap-k3x "1. CSV  2. keep the old format"
+fy answer  ~/src/app ap-k3x '1. CSV  2. keep the old format'
 fy approve ~/src/app ap-k3x                  # add --allow-protected when the plan must touch protected files
-fy reject  ~/src/app ap-k3x "keep it in one module"
+fy reject  ~/src/app ap-k3x 'keep it in one module'
 fy abort   ~/src/app ap-k3x
 
 # ...or in any of the task's panes, where the task is the one there
 !fy approve
-!fy reject "keep it in one module"
+!fy reject 'keep it in one module'
 
 # afterwards
 fy pr      ~/src/app ap-k3x                  # open a PR for a branch a run left behind; needs its builder agent alive
@@ -162,12 +162,12 @@ second one pays for the overlap.
 Each gate takes your answer in three places. In Factory's terminal, at its prompt. In any
 of the task's panes, by typing the command after a `!`, which Claude Code and Codex run as
 a shell command rather than through the agent; there the task is the one whose worktree
-the pane is in: `!fy answer "<answers>"`, `!fy approve`, `!fy reject "<note>"`,
+the pane is in: `!fy answer '<answers>'`, `!fy approve`, `!fy reject '<note>'`,
 `!fy abort`. Or from any terminal, naming the repo and bead:
 `fy approve <repo> <bead-id>`. Either way a shell reads the line before Factory does, so
-keep a note or answers in double quotes; an apostrophe or a parenthesis breaks the
-command otherwise. Claude Code's agent replies to a command typed in its pane, and
-Factory lets that reply finish before it prompts the agent. A run without a terminal
+put a note or answers in single quotes, which keep backticks and `$` as typed; write an
+apostrophe in them as `'\''`. Claude Code's agent replies to a command typed in its pane,
+and Factory lets that reply finish before it prompts the agent. A run without a terminal
 waits for these commands. `approve`, `reject`, `abort` and `answer` say so when nothing
 waits for them. The agents point you to these commands when you tell them a decision in
 words, and never run them. `--auto` skips both approvals; the planner's questions still
@@ -182,7 +182,7 @@ stops and you talk to it in its pane.
 the plan changed since) and where its notes are, and waits. Answer in its terminal with a
 letter and Enter: `a` approve, `p` approve and allow protected paths, `r` revise with a
 note, `b` abort; any other answer asks again. Or with `fy approve` (`--allow-protected`
-for the `p` case), `fy reject <note>` and `fy abort`. A note goes to the planner and then
+for the `p` case), `fy reject '<note>'` and `fy abort`. A note goes to the planner and then
 through a plan review round of its own, past `FACTORY_PLAN_ROUNDS` if need be: both
 reviewers check the revision against your note, and the planner revises once more if
 either objects. The plan comes back with a short note on what changed and why and that
@@ -192,7 +192,7 @@ to the planner in its pane first; the builder reads the file.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
 the branch's commits and diff stat and waits the same way: `a` approve, `r` revise with a
-note, `b` abort, or `fy approve`, `fy reject <note>` and `fy abort`. A note goes to the
+note, `b` abort, or `fy approve`, `fy reject '<note>'` and `fy abort`. A note goes to the
 builder and costs one more round of gate, guardrails and reviews before you are asked
 again; in the last round it gets one more, past `FACTORY_ROUNDS`. Look at the worktree or
 talk to the builder in its pane first if you like.
