@@ -1129,6 +1129,8 @@ await_human() { # plan|build agent dir: human_gate's waiting
               fi
               ;;
             r | R)
+              # an answer a pane sent while this terminal waited for its key came first
+              [[ ! -e $dir/approved && ! -e $dir/aborted && ! -s $dir/reject.md ]] || continue
               printf 'typing %s\n' "$$" >"$dir/waiting" # the answer comes from this terminal now
               printf '%s note for the %s: ' "$TAG" "$(role_of "$kind")" >&2
               read -r note || return 3
@@ -1137,7 +1139,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
                 take_note "$kind" "$agent" "$note" || return $?
                 continue 2
               fi
-              open_gate "$kind" "$dir" # no note after all
+              printf '%s %s\n' "$kind" "$$" >"$dir/waiting" # no note after all: the gate listens again
               ;;
             b | B) return 3 ;;
           esac
@@ -1316,7 +1318,7 @@ planner_kept_hands_off() {
   new=$(changed_since "${2:-}")
   [[ -n $new ]] || return 0
   warn "the planner changed files; asking it to revert"
-  ask "$1" "You changed files in the worktree, but planning must leave the code untouched (only $RUN_DIR/ is yours). Revert these changes (git checkout -- <file>, or remove a new one), keep the plan, and reply DONE:
+  ask "$1" "You changed files in the worktree, but planning must leave the code untouched (only $RUN_DIR/ is yours). Revert these changes (git checkout -- <file>, or remove a new one), leave $RUN_DIR/ as it is, and reply DONE:
 $new"
   [[ -n $(changed_since "${2:-}") ]] || return 0
   die "the planner left changes in $WT; planning must not touch code"

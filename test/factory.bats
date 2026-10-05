@@ -370,15 +370,28 @@ context_of() {
   [[ $output == *"gate while typing: typing"*"asked planner: The human reviewed"*"split the module"*"gate in the round: note"*"plan round 1 on the note: split the module"* ]]
   # only the keys shown mean anything: y, n and an empty note ask again, without re-rendering;
   # after the empty note the gate listens to the panes again
-  open_gate() {
-    printf 'gate opens\n' >&2
-    printf '%s %s\n' "$1" "$$" >"$2/waiting"
+  no_terminal_hint() { # the terminal is gone; a pane answers
+    printf 'gate after the note: %s\n' "$(gate_waiting "$TMP" || printf closed)" >&2
+    : >"$TMP/approved"
   }
-  run human_gate plan planner "$TMP" <<<$'y\nn\nr\n\na'
+  run human_gate plan planner "$TMP" <<<$'y\nn\nr\n'
   [ "$status" -eq 0 ]
-  [[ $output == *"a, p, r or b?"*"a, p, r or b?"*"gate while typing: typing"*"gate opens"*"a, p, r or b?"* ]]
-  [ "$(grep -c 'gate opens' <<<"$output")" -eq 2 ]
+  [[ $output == *"a, p, r or b?"*"a, p, r or b?"*"gate while typing: typing"*"a, p, r or b?"*"gate after the note: plan"*"approved via file"* ]]
   [ "$(grep -c 'plan for toy-1' <<<"$output")" -eq 1 ]
+  # a pane's answer that came in while the terminal waited for its key goes before that r
+  read() { # every read in the script passes -r first
+    if [[ $* == "-r -t "* && ! -e $TMP/seeded ]]; then
+      : >"$TMP/seeded"
+      : >"$TMP/approved"
+    fi
+    shift
+    builtin read -r "$@"
+  }
+  run human_gate plan planner "$TMP" <<<$'r\nsplit it\na'
+  unset -f read
+  [ "$status" -eq 0 ]
+  [[ $output == *"approved via file"* ]]
+  [[ $output != *"note for the planner"* ]]
 }
 
 @test "an approval gate opens afresh: answers left from before go, and a plan waiver with them" {
@@ -459,7 +472,7 @@ context_of() {
   [[ $output == *"note received via file"*"pause for the reply, gate note"*"asked planner: "*"too big, split it"*"gate in the round: note"* ]]
   [ -e "$TMP/still-waiting" ]
   # the plan comes back after the note, and with it where to answer
-  [[ $output == *"note received via file"*"plan for toy-1"*"no terminal to answer from"*"approved via file"*"pause for the reply, gate closed" ]]
+  [[ $output == *"note received via file"*"plan for toy-1"*"no terminal to answer from; waiting for !fy approve, !fy reject '<note>' or !fy abort"*"approved via file"*"pause for the reply, gate closed" ]]
   [ "$(grep -c 'no terminal to answer from' <<<"$output")" -eq 2 ]
   [ ! -e "$TMP/approved" ]
   [ ! -e "$TMP/waiting" ]
@@ -860,12 +873,14 @@ IN
   : >"$TMP/n"
   printf 'the last run'"'"'s note\n' >"$TMP/.factory/run/plan-changes.md"
   printf 'the last run'"'"'s plan\n' >"$TMP/.factory/run/plan.md"
+  : >"$TMP/.factory/run/allow-protected"
   FACTORY_PLAN_ROUNDS=1 run plan_phase "$TMP"
   [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
   [[ $output != *"round 2"* ]]
   [ ! -e "$TMP/.factory/run/plan-review-2.md" ]
   [ ! -e "$TMP/.factory/run/plan-changes.md" ]
   [ ! -e "$TMP/.factory/run/plan.md" ] # plan_or_interview is stubbed here and writes none
+  [ ! -e "$TMP/.factory/run/allow-protected" ]
   # and two approvals need none
   : >"$TMP/n"
   printf '%s\n' APPROVE APPROVE >"$TMP/verdicts"
@@ -1814,7 +1829,13 @@ JSON
   run main help
   [ "$status" -eq 0 ]
   [[ $output == *"factory run"* ]]
+  [[ $output == *"factory reject  <repo> <bead-id> '<note>'"*"factory answer  <repo> <bead-id> ['<answers>' | -]"* ]]
   [[ $output == *"FACTORY_PLAN_EFFORT=max"*"FACTORY_BUILD_EFFORT=xhigh"*"FACTORY_REVIEW_EFFORT=xhigh"* ]]
+  cd "$TMP" # no task's worktree, so the usage
+  run main reject
+  [[ $output == *"usage: factory reject [<repo> <bead-id>] '<note>'"* ]]
+  run main answer
+  [[ $output == *"usage: factory answer [<repo> <bead-id>] ['<answers>' | -]"* ]]
   run main bogus
   [ "$status" -eq 1 ]
   [[ $output == *"unknown command"* ]]
