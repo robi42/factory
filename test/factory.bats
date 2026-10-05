@@ -442,6 +442,82 @@ context_of() {
   done
 }
 
+@test "guard: a NUL byte added to a text file fails, and the file's lines are checked all the same" {
+  make_repo
+  # Build the bad strings at runtime so this file passes its own guard check.
+  local hash='#' pipe='||' i f
+  # In the first 8000 bytes a NUL makes git call the file binary; further on, grep stops at it.
+  printf '// a NUL \0 in a comment\n%s[allow(dead_code)]\nfn unused() {}\n' "$hash" >"$REPO/early.rs"
+  for ((i = 0; i < 400; i++)); do printf '// line %03d of a file longer than 8000 bytes\n' "$i"; done >"$REPO/late.rs"
+  printf '// a NUL \0 in a comment\n%s[allow(dead_code)]\nfn unused() {}\n' "$hash" >>"$REPO/late.rs"
+  # A control byte as well, which rustc takes in a comment too: still UTF-8, so still text.
+  printf '// a NUL \0 and a \001 in a comment\n%s[allow(dead_code)]\nfn unused() {}\n' "$hash" >"$REPO/control.rs"
+  # Latin-1, not UTF-8, but without the control bytes of binary data: still text.
+  printf '# an e acute in Latin-1, \351, and a NUL \0\nrun_thing %s true\n' "$pipe" >"$REPO/latin1.sh"
+  commit_all nul
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  for f in early.rs late.rs control.rs latin1.sh; do
+    [[ $output == *"NUL byte added to a file not known as binary data: $f"* ]]
+  done
+  for f in early.rs late.rs control.rs; do
+    [[ $output == *"$f: ${hash}[allow(dead_code)]"* ]]
+  done
+  [[ $output == *"latin1.sh: run_thing $pipe true"* ]]
+}
+
+@test "guard: a script with the bytes of binary data is still text, its lines checked" {
+  make_repo
+  # Build the bad strings at runtime so this file passes its own guard check.
+  local pipe='||' marker=skip
+  mkdir -p "$REPO/test"
+  # bash and node take a NUL, a control byte and a byte that is not UTF-8 in a comment
+  printf '#!/bin/bash\n# \0 \001 \377\nrun_thing %s true\n' "$pipe" >"$REPO/run.sh"
+  printf '// \0 \001 \377\ndescribe.%s("suite", () => {});\n' "$marker" >"$REPO/test/x.test.js"
+  commit_all bad
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"NUL byte added to a file not known as binary data: run.sh"* ]]
+  [[ $output == *"run.sh: run_thing $pipe true"* ]]
+  [[ $output == *"NUL byte added to a file not known as binary data: test/x.test.js"* ]]
+  [[ $output == *"test/x.test.js: describe.$marker(\"suite\", () => {});"* ]]
+}
+
+@test "guard: an attribute that marks a file binary hides none of its lines" {
+  make_repo
+  local pipe='||'
+  printf '*.sh binary\n' >"$REPO/.gitattributes"
+  printf 'run_thing %s true\n' "$pipe" >"$REPO/run.sh"
+  commit_all bad
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"run.sh: run_thing $pipe true"* ]]
+}
+
+@test "guard: a binary file such as an image is not read as text, though its bytes match a pattern" {
+  make_repo
+  local pipe='||'
+  # A valid 1x1 grey PNG, whose tEXt chunk holds the pipe-true line of guardrails.txt
+  {
+    printf '\211PNG\r\n\032\n'
+    printf '\0\0\0\015IHDR\0\0\0\001\0\0\0\001\010\0\0\0\0\072\176\233\125'
+    printf '\0\0\0\024tEXtComment\0run \174\174 true\n\161\043\361\201'
+    printf '\0\0\0\012IDAT\170\234\143\140\0\0\0\002\0\001\110\257\244\161'
+    printf '\0\0\0\0IEND\256\102\140\202'
+  } >"$REPO/pixel.png"
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all image
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  git -C "$REPO" mv pixel.png pixel.sh # the same bytes under a name that is no binary type's
+  commit_all renamed
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"NUL byte added to a file not known as binary data: pixel.sh"* ]]
+  [[ $output == *"pixel.sh: "*"run $pipe true"* ]]
+}
+
 @test "guard: a file whose name git would quote, or read as a pathspec, has its lines checked" {
   make_repo
   # Build the bad strings at runtime so this file passes its own guard check.

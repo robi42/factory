@@ -57,6 +57,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   worktree can write, coloured the diff (`color.diff=always`), named an external diff
   tool, or gave a file a textconv filter. They read git's own diff now, whatever the
   config says.
+- A NUL byte hid a text file's lines from the guardrails, though rustc compiles a Rust
+  source with one in a comment: git shows a file with a NUL in its first 8000 bytes as
+  binary, and grep stops printing lines at one further on. A `binary` or `-diff`
+  attribute hid them the same way. A NUL added to a text file now fails the branch, and
+  the file's lines are checked all the same. A file with a NUL counts as binary, with no
+  lines to check, only when it is named as an image, a PDF, a font, an archive, audio or
+  video and its bytes agree, as an image's do; an added NUL in any other file fails the
+  branch.
 
 ## [0.1.11] - 2026-10-05
 

@@ -31,6 +31,8 @@ ENV_KNOBS=$(compgen -A variable FACTORY_)
 : "${FACTORY_FRESH:=0}"
 COPILOT_BOT='copilot-pull-request-reviewer[bot]'
 RUN_DIR=.factory/run
+# files that hold data, not code: only in one of them is an added NUL binary data rather than text
+BINARY_PATH_RE='\.(png|jpe?g|gif|webp|avif|ico|icns|bmp|tiff?|pdf|zip|jar|aar|tar|gz|tgz|xz|zst|bz2|7z|woff2?|ttf|otf|mp[34]|m4a|wav|ogg|webm|mov)$'
 # files that look like tests, for the tests-required guardrail
 TEST_PATH_RE='(^|/)(tests?|spec|specs|__tests__|bats)/|(^|/)test_[^/]*\.py$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|scala|cs|swift)$|_spec\.rb$|\.bats$'
 
@@ -723,13 +725,29 @@ guard_check() {
     done < <(git -C "$wt" diff --name-only -z "$base...HEAD" -- "${globs[@]}")
   fi
   local hits=0
-  local rules
+  local rules patterns lines nul=0
   rules=$(guardrails_file "$wt")
+  patterns=$(mktemp)
+  lines=$(mktemp)
+  sed -E '/^\s*(#|$)/d' "$rules" >"$patterns"
+  # a NUL is rare: each file is looked at for one only when the branch's diff holds one
+  if [[ $(git -C "$wt" diff --text --no-color --no-ext-diff --no-textconv --no-renames -U0 "$base...HEAD" -- . ':(exclude).factory' \
+    | LC_ALL=C tr -cd '\000' | wc -c) -gt 0 ]]; then
+    nul=1
+  fi
   while IFS= read -r -d '' f; do
-    if added_lines "$wt" "$base" "$f" | grep -E -f <(grep -vE '^\s*(#|$)' "$rules") | label "$f"; then
+    added_lines "$wt" "$base" "$f" >"$lines"
+    # an added NUL: binary data, which has no lines, or a file that git and grep take for binary
+    if ((nul)) && [[ $(LC_ALL=C tr -cd '\000' <"$lines" | wc -c) -gt 0 ]]; then
+      binary_data "$wt" "$f" && continue
+      printf 'NUL byte added to a file not known as binary data: %s (git and grep would skip its lines; remove the byte, or leave the file for a human to commit)\n' "$f"
+      bad=1
+    fi
+    if grep -a -E -f "$patterns" "$lines" | label "$f"; then
       hits=1
     fi
   done < <(git -C "$wt" diff --name-only -z "$base...HEAD" -- . ':(exclude).factory')
+  rm -f "$patterns" "$lines"
   if ((hits)); then
     printf 'the lines above match a forbidden pattern (see %s)\n' "$rules"
     bad=1
@@ -741,10 +759,24 @@ guard_check() {
 # on it, as a repo's rules may anchor on it (^\+). Above a hunk's @@ line are the file headers,
 # +++ among them; below it, each line that begins with a + is an added line, whatever comes
 # after the +. The diff is git's own whatever the config says, which an agent can write: no
-# colour codes, external diff tool or textconv filter.
+# colour codes, external diff tool or textconv filter. And it is text: no attribute or NUL
+# byte makes git print "Binary files differ" in its place.
 added_lines() {
-  git -C "$1" diff --no-color --no-ext-diff --no-textconv -U0 "$2...HEAD" -- ":(literal)$3" \
+  git -C "$1" diff --text --no-color --no-ext-diff --no-textconv -U0 "$2...HEAD" -- ":(literal)$3" \
     | sed -n '/^@@/,/^diff /{/^+/p;}'
+}
+
+# binary_data worktree path: 0 when the branch's file at path, which holds a NUL byte, is
+# binary data such as an image rather than text: it is named as an image, a PDF, a font, an
+# archive, audio or video (BINARY_PATH_RE), and its bytes agree, as they hold control bytes
+# besides the NUL and are not UTF-8. The bytes alone cannot tell, as bash, node and gcc take
+# all three in a comment; they keep a text file under such a name from passing for data.
+binary_data() {
+  local LC_ALL=C
+  [[ ${2,,} =~ $BINARY_PATH_RE ]] || return 1
+  need iconv
+  [[ -n $(git -C "$1" cat-file blob "HEAD:$2" | tr -cd '\001-\006\016-\032\034-\037' | head -c 1) ]] \
+    && ! git -C "$1" cat-file blob "HEAD:$2" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1
 }
 
 # label path: each added line on stdin after the path it comes from, without diff's +

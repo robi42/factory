@@ -336,7 +336,14 @@ after the gate passes and before review:
   [AI Guardrails](https://github.com/florianbuetow/ai-guardrails). A repo can ship its own
   `.factory/guardrails.txt`, which replaces Factory's list for that repo and is protected
   like the gate; copy the default and edit it. A pattern sees each added line with diff's
-  `+` in front, so `^\+` anchors it at the line's start.
+  `+` in front, so `^\+` anchors it at the line's start. Every added line of a text file is
+  read; a binary file, such as an image, has none.
+- No NUL byte added to a file that is not binary data: git and grep would take the file for
+  binary and skip its lines. Binary data is a file named as an image, a PDF, a font, an
+  archive, audio or video, whose bytes agree: they hold control bytes besides the NUL and
+  are not UTF-8. This fails closed: UTF-16 text, a binary type not on that list, such as
+  an SQLite database, and a binary format whose bytes are all ASCII, such as a tar of text
+  files, have to be committed by hand.
 - A change to code files must also touch a test file (`FACTORY_REQUIRE_TESTS=0` to relax).
 - No committed build artifacts, no uncommitted changes, at least one commit.
 - Protected paths untouched: `.factory/gate`, `.factory/protected`, `.factory/guardrails.txt`,
