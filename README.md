@@ -350,6 +350,11 @@ after the gate passes and before review:
   `.factory/env`, and every glob listed in `.factory/protected`. A task that legitimately
   must change them, such as adding the gate, gets a one-task waiver from you at plan
   approval (`p`, or `--allow-protected`); the pull request body records it.
+- No ignored file at a protected path, waiver or not: git leaves it out of the branch and
+  its diff, but the gate reads it, as mise reads an ignored `.mise.local.toml` in a repo
+  that protects mise's configs. Factory's own `.factory/run/` is exempt, and so is your
+  own `.factory/env` in the repo's main checkout, where `fy check` may run but no agent
+  works.
 - The planner must leave the code untouched; what one of its turns changes is sent back once.
 
 ## Knobs

@@ -65,6 +65,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   lines to check, only when it is named as an image, a PDF, a font, an archive, audio or
   video and its bytes agree, as an image's do; an added NUL in any other file fails the
   branch.
+- An ignored file at a protected path steered the gate unseen. Ignored by the repository's
+  `.gitignore` or by your global excludes, it escaped both the uncommitted-changes check
+  and the guardrails, yet the gate read it: an ignored `.mise.local.toml` could set
+  `CARGO_ENCODED_RUSTFLAGS="--cap-lints=allow"` for every mise shim, and clippy passed. Such
+  a file now fails the guardrails, waiver or not. Exempt are `.factory/run/`, and your own
+  `.factory/env` in the repo's main checkout, where no agent works.
 
 ## [0.1.11] - 2026-10-05
 

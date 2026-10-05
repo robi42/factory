@@ -1088,6 +1088,73 @@ IN
   [[ $output == *"passed (gate-2)"*"review-2: APPROVE"*"review-2-plan: REVISE"*"waived by the human"* ]]
 }
 
+@test "guard: an ignored file at a protected path fails, whether the repo or the user ignores it" {
+  make_repo
+  printf ':(glob)**/.mise*.toml\n.cargo/config*\n' >"$REPO/.factory/protected"
+  printf '/.cargo/\n' >"$REPO/.gitignore"
+  commit_all "protect mise's and cargo's configs, ignore .cargo"
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  # Through mise's shims a local config's [env] reaches cargo, and clippy then warns of nothing.
+  printf '[env]\nCARGO_ENCODED_RUSTFLAGS = "--cap-lints=allow"\n' >"$REPO/.mise.local.toml"
+  mkdir -p "$REPO/.cargo"
+  printf '[build]\nrustflags = ["--cap-lints=allow"]\n' >"$REPO/.cargo/config.toml"
+  printf '.mise.local.toml\n' >"$TMP/ignore"
+  printf '[core]\n\texcludesFile = %s\n' "$TMP/ignore" >"$TMP/gitconfig"
+  GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
+  [[ $output == *"ignored file at a protected path: .cargo/config.toml"* ]]
+  mkdir -p "$REPO/.factory/run"
+  : >"$REPO/.factory/run/allow-protected" # the waiver is for what the branch changes
+  GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+}
+
+@test "guard: the human's own .factory/env may lie ignored in the main checkout, not in a task's worktree" {
+  make_repo
+  printf '/.factory/env\n' >"$REPO/.gitignore"
+  commit_all "ignore the knobs file"
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  printf 'FACTORY_PR=1\n' >"$REPO/.factory/env" # the human's knobs, which fy check reads here
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  task_worktree
+  printf 'echo hello\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam change
+  printf 'FACTORY_GATE=true\n' >"$TMP/wt-9/.factory/env" # an agent's, which fy check would read there
+  run guard_check "$TMP/wt-9" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"ignored file at a protected path: .factory/env"* ]]
+}
+
+@test "guard: an ignored build artifact passes, and so does the run directory under a protected .factory" {
+  make_repo
+  printf '.factory\n' >"$REPO/.factory/protected"
+  printf '/target/\n' >"$REPO/.gitignore"
+  commit_all "protect .factory, ignore target"
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  mkdir -p "$REPO/target/debug" "$REPO/.factory/run"
+  printf 'built\n' >"$REPO/target/debug/app"
+  printf '.factory/run/\n' >>"$REPO/.git/info/exclude" # as open_task_workspace adds it
+  printf 'the plan\n' >"$REPO/.factory/run/plan.md"
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 @test "guard: waiver skips only the protected-path check" {
   make_repo
   printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"

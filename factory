@@ -686,6 +686,16 @@ run_gate() { # worktree gate logfile
   return 1
 }
 
+# kept_out worktree: pathspecs for what may lie in the worktree outside git: the run directory,
+# which is Factory's, and in a repo's main working tree, where no agent works, the human's own
+# .factory/env
+kept_out() {
+  printf '%s\n' ":(exclude)$RUN_DIR"
+  if [[ $(git -C "$1" rev-parse --absolute-git-dir) == "$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)" ]]; then
+    printf '%s\n' ':(exclude).factory/env'
+  fi
+}
+
 # tree_state worktree -> git's status line for each file changed or added outside Factory's
 # own run dir; the rest of .factory/, the gate among it, is the repo's
 tree_state() { git -C "$1" status --porcelain --untracked-files=all -- . ":(exclude)$RUN_DIR"; }
@@ -698,7 +708,7 @@ tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 # non-ASCII character, would match no check, and :(literal) keeps a name from being read as
 # a pathspec.
 guard_check() {
-  local wt=$1 base=$2 bad=0 f globs
+  local wt=$1 base=$2 bad=0 f globs kept
   if tree_dirty "$wt"; then
     printf 'uncommitted changes in the worktree; commit your work (ignore build artifacts, do not commit them)\n'
     bad=1
@@ -715,15 +725,22 @@ guard_check() {
     printf 'source files changed but no test files did; add or adjust a test\n'
     bad=1
   fi
+  mapfile -t globs < <(protected_globs "$wt")
+  mapfile -t kept < <(kept_out "$wt")
   if [[ -e $wt/$RUN_DIR/allow-protected ]]; then
     log "guardrails: protected-path check waived by the human"
   else
-    mapfile -t globs < <(protected_globs "$wt")
     while IFS= read -r -d '' f; do
       printf 'protected path changed: %s\n' "$f"
       bad=1
     done < <(git -C "$wt" diff --name-only -z "$base...HEAD" -- "${globs[@]}")
   fi
+  # A protected path is one that steers the gate, and an ignored file there steers it unseen:
+  # git leaves it out of the branch and its diff, so the waiver, which is for those, has no say.
+  while IFS= read -r -d '' f; do
+    printf 'ignored file at a protected path: %s (read in this worktree, left out of the branch; remove it)\n' "$f"
+    bad=1
+  done < <(git -C "$wt" ls-files --others --ignored --exclude-standard -z -- "${globs[@]}" "${kept[@]}")
   local hits=0
   local rules patterns lines nul=0
   rules=$(guardrails_file "$wt")
