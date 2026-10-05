@@ -392,9 +392,10 @@ context_of() {
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 0 ]
-  [[ $output == *"no terminal"* ]]
   [[ $output == *"note received via file"*"pause for the reply"*"asked planner: "*"too big, split it"* ]]
   [[ $output == *"approved via file"*"pause for the reply" ]]
+  # the plan comes back after the note, and with it where to answer
+  [ "$(grep -c 'no terminal to answer from' <<<"$output")" -eq 2 ]
   [ ! -e "$TMP/approved" ]
   [ ! -e "$TMP/waiting" ]
   # the gate names itself and this run while it waits; an abort file ends it with 3

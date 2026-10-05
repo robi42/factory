@@ -1084,6 +1084,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
   while :; do
     toast "$TASK_ID $kind ready" "$TASK_TITLE. Approve it in the Factory terminal, or type !fy approve in one of its panes" request
     show_for_approval "$kind" "$dir"
+    ((stdin_open)) || no_terminal_hint
     while :; do
       if [[ -e $dir/aborted ]]; then
         rm -f "$dir/aborted"
@@ -1133,14 +1134,19 @@ await_human() { # plan|build agent dir: human_gate's waiting
           printf '%s %s? ' "$TAG" "$keys" >&2 # only the keys shown mean anything; ask again in place
         elif ((rc <= 128)); then
           stdin_open=0
-          printf '\n' >&2
-          log "no terminal to answer from; waiting for !fy approve, reject or abort in one of the task's panes (or factory approve <repo> $TASK_ID)"
+          no_terminal_hint
         fi
       else
         sleep "$FACTORY_POLL_SECONDS"
       fi
     done
   done
+}
+
+# no_terminal_hint: where a gate takes its answer when this run has no terminal
+no_terminal_hint() {
+  printf '\n' >&2
+  log "no terminal to answer from; waiting for !fy approve, reject or abort in one of the task's panes (or factory approve <repo> $TASK_ID)"
 }
 
 # pause_for_pane_reply: Claude Code replies to a command typed after a ! in its pane once the

@@ -23,6 +23,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `!fy reject <note>` failed on a note with an apostrophe or a parenthesis, since the
   pane's shell reads the line first. The agents and the README now show a note and
   answers in double quotes.
+- In a run without a terminal, an approval that comes back after a note says again where
+  to answer.
 
 ## [0.1.10] - 2026-10-04
 
