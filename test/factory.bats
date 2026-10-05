@@ -752,10 +752,43 @@ IN
     fi
     : >"$TMP/asked"
   }
+  planner_kept_hands_off() { :; }
+  tree_state() { :; } # its snapshot of the tree, which is no git repo here
   run plan_or_interview planner <<<$'1. CSV\n.'
   [ "$status" -eq 0 ]
   [[ $output == *"asked planner: Task toy-1"*"planner has questions (round 1)"*"1. Which format?"*"asked planner: Answers to your questions"*"1. CSV"* ]]
   [ ! -e "$TMP/.factory/run/questions.md" ]
+}
+
+@test "plan_or_interview: each planner turn is checked, and a file the human adds while questions wait is not the planner's" {
+  make_repo
+  fake_task
+  WT=$REPO
+  TASK_DESC="" GATE=true MEMORY=""
+  mkdir -p "$REPO/.factory/run"
+  ask() {
+    case $2 in
+      Answers*) # the plan, and a change to the code that is the planner's to revert
+        printf 'the plan\n' >"$WT/$RUN_DIR/plan.md"
+        printf 'sneaky\n' >>"$REPO/run.sh"
+        ;;
+      "You changed files"*)
+        printf 'revert asked: %s\n' "$2"
+        git -C "$REPO" checkout -q -- run.sh
+        ;;
+      *) printf '1. Where is a sample input?\n' >"$WT/$RUN_DIR/questions.md" ;;
+    esac
+  }
+  collect_answers() { # the human answers, and drops the sample in meanwhile
+    printf 'id,n\n' >"$REPO/sample.csv"
+    printf 'in the root'
+  }
+  run plan_or_interview planner
+  [ "$status" -eq 0 ]
+  [[ $output == *"revert asked: You changed files"*" M run.sh"* ]]
+  [[ $output != *"sample.csv"* ]]
+  [ -e "$REPO/sample.csv" ]
+  [ "$(cat "$REPO/run.sh")" = "echo hi" ]
 }
 
 @test "plan_or_interview: one nudge when the planner wrote nothing; three question rounds at most" {
@@ -764,6 +797,8 @@ IN
   TASK_DESC="" GATE=true MEMORY=""
   FACTORY_POLL_SECONDS=1
   mkdir -p "$TMP/.factory/run"
+  planner_kept_hands_off() { :; }
+  tree_state() { :; } # its snapshot of the tree, which is no git repo here
   ask() { :; }
   run plan_or_interview planner </dev/null
   [ "$status" -eq 1 ]
@@ -797,7 +832,7 @@ IN
   run plan_phase "$TMP"
   [ "$status" -eq 0 ]
   [[ $output == *"plan review round 1"*"plan verdicts: REVISE APPROVE"*"revise: Reviewers left notes on your plan in .factory/run/plan-review-1.md and .factory/run/plan-review-1-build.md"* ]]
-  [[ $output == *"review codex plan-review-2.md: "*"your notes from it are in .factory/run/plan-review-1.md"*"review builder plan-review-2-build.md: "*"your notes from it are in .factory/run/plan-review-1-build.md"*"plan verdicts: APPROVE APPROVE"*"to the human" ]]
+  [[ $output == *"review codex plan-review-2.md: "*"Your notes from the previous review round are in .factory/run/plan-review-1.md"*"review builder plan-review-2-build.md: "*"Your notes from the previous review round are in .factory/run/plan-review-1-build.md"*"plan verdicts: APPROVE APPROVE"*"to the human" ]]
   [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
   [[ $output != *"review codex plan-review-1.md: "*"your notes from it"*"review builder plan-review-1-build.md"* ]]
   [[ $output != *"unreviewed"* ]]
@@ -811,11 +846,13 @@ IN
   # one round: the old single revision, and no round-2 review or note summary of the last run left over
   : >"$TMP/n"
   printf 'the last run'"'"'s note\n' >"$TMP/.factory/run/plan-changes.md"
+  printf 'the last run'"'"'s plan\n' >"$TMP/.factory/run/plan.md"
   FACTORY_PLAN_ROUNDS=1 run plan_phase "$TMP"
   [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
   [[ $output != *"round 2"* ]]
   [ ! -e "$TMP/.factory/run/plan-review-2.md" ]
   [ ! -e "$TMP/.factory/run/plan-changes.md" ]
+  [ ! -e "$TMP/.factory/run/plan.md" ] # plan_or_interview is stubbed here and writes none
   # and two approvals need none
   : >"$TMP/n"
   printf '%s\n' APPROVE APPROVE >"$TMP/verdicts"
@@ -874,16 +911,17 @@ IN
 }
 
 @test "plan approval: a note gets a plan round of its own, its reviewers told of the note" {
+  make_repo
   fake_task
-  WT=$TMP
+  WT=$REPO
   TASK_DESC="" GATE=true
   PLAN_AGENT=planner BUILD_AGENT=builder REVIEW_AGENT=codex
-  mkdir -p "$TMP/.factory/run"
-  printf 'VERDICT: REVISE\n' >"$TMP/.factory/run/plan-review-2.md" # the rounds before were used up
-  printf 'VERDICT: APPROVE\n' >"$TMP/.factory/run/plan-review-2-build.md"
-  touch "$TMP/.factory/run/plan-review-1.md" "$TMP/.factory/run/plan-review-1-build.md"
-  planner_kept_hands_off() { :; }
-  tree_state() { :; } # its snapshot of the tree, which is no git repo here
+  local run="$REPO/.factory/run"
+  mkdir -p "$run"
+  printf 'VERDICT: REVISE\n' >"$run/plan-review-2.md" # the rounds before were used up
+  printf 'VERDICT: APPROVE\n' >"$run/plan-review-2-build.md"
+  touch "$run/plan-review-1.md" "$run/plan-review-1-build.md"
+  printf 'the human'"'"'s\n' >"$REPO/fixture.csv" # added while the gate waited
   ask() { printf 'asked %s: %.80s\n' "$1" "$2"; }
   ask_for_file() { # the reviewers approve this time
     printf 'review %s %s: %s\n' "$1" "${3##*/}" "$2"
@@ -892,18 +930,27 @@ IN
   run take_note plan planner "keep the fetcher per epoch"
   [ "$status" -eq 0 ]
   [[ $output == *"asked planner: The human reviewed"*"plan review round 3"* ]]
-  [[ $output == *"review codex plan-review-3.md: "*"The plan changed since the previous review round; your notes from it are in .factory/run/plan-review-2.md"*"The human sent this note"*"keep the fetcher per epoch"*"review builder plan-review-3-build.md: "* ]]
+  [[ $output != *"asking it to revert"* ]] # the human's file is not the planner's
+  [[ $output == *"review codex plan-review-3.md: "*"Your notes from the previous review round are in .factory/run/plan-review-2.md"*"The human sent this note on the plan: keep the fetcher per epoch"*"review builder plan-review-3-build.md: "* ]]
   [[ $output == *"review builder plan-review-3-build.md: "*"plan-review-2-build.md"*"keep the fetcher per epoch"* ]]
   [[ $output == *"plan verdicts: APPROVE APPROVE"* ]]
   [[ $output != *"plan revision"* ]]
-  # an objection gets the planner's revision before the plan goes back to the human
+  # an objection gets the planner's revision before the plan goes back to the human, added to
+  # its summary; a change to the code in that turn is the planner's to revert, the human's is not
   ask_for_file() { printf 'VERDICT: REVISE\n' >"$3"; }
+  ask() {
+    printf 'asked %s: %s\n' "$1" "$2"
+    case $2 in
+      Reviewers*) printf 'sneaky\n' >>"$REPO/run.sh" ;;
+      "You changed files"*) git -C "$REPO" checkout -q -- run.sh ;;
+    esac
+  }
   run take_note plan planner "keep the fetcher per epoch"
   [ "$status" -eq 0 ]
-  [[ $output == *"plan review round 4"*"plan revision"*"asked planner: Reviewers left notes on your plan in .factory/run/plan-review-4.md"* ]]
-  # that revision goes into the summary the human sees, which only a note's round has
-  [[ $(plan_fix_prompt 4 "keep the fetcher per epoch") == *"Add to .factory/run/plan-changes.md what you changed now and why, and where the plan no longer follows the note"* ]]
-  [[ $(plan_fix_prompt 4) != *"plan-changes.md"* ]]
+  [[ $output == *"plan review round 4"*"plan revision"*"asked planner: Reviewers left notes on your plan in .factory/run/plan-review-4.md"*"Add to .factory/run/plan-changes.md what you changed now and why, and where the plan no longer follows the note"*"asking it to revert"*" M run.sh"* ]]
+  [[ $output != *"fixture.csv"* ]]
+  [ -e "$REPO/fixture.csv" ]
+  [[ $(plan_fix_prompt 4) != *"plan-changes.md"* ]] # only a note's round has a summary
 }
 
 @test "plan rounds: one cut off before the builder's notes does not count, and runs again" {

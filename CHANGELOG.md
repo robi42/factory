@@ -31,6 +31,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   everything as typed, and the README says how to write an apostrophe there.
 - In a run without a terminal, an approval that comes back after a note says again where
   to answer.
+- The planner's hands-off check looks at what each of its turns changed. Files you add or
+  change in the worktree while its questions or the plan approval wait, or before a rerun,
+  were blamed on it, and it was told to discard them or the run died.
+- Planning afresh (`--fresh`, or a rerun after planning was cut off) no longer starts from
+  the last run's plan.md, which let the planner's questions go unasked and a turn that
+  wrote nothing go unnoticed while the old plan was reviewed and offered as the new one.
 - The protected-path waiver (`p`, or `approve --allow-protected`) goes with the plan
   approval it came with: when that approval does not stand, because the plan is shown
   again or planned afresh, neither does the waiver.

@@ -315,7 +315,7 @@ after the gate passes and before review:
   `.factory/env`, and every glob listed in `.factory/protected`. A task that legitimately
   must change them, such as adding the gate, gets a one-task waiver from you at plan
   approval (`p`, or `--allow-protected`); the pull request body records it.
-- The planner must leave the code untouched; a dirty tree after planning is sent back once.
+- The planner must leave the code untouched; what one of its turns changes is sent back once.
 
 ## Knobs
 
