@@ -53,6 +53,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   patch file the build applies: the filter that dropped the `+++` file header dropped it
   as well. Only the headers above each hunk are skipped now, and a pattern still sees
   each added line with diff's `+` in front, as one anchored with `^\+` expects.
+- The guardrails read no line at all when the repository's git config, which an agent in a
+  worktree can write, coloured the diff (`color.diff=always`), named an external diff
+  tool, or gave a file a textconv filter. They read git's own diff now, whatever the
+  config says.
 
 ## [0.1.11] - 2026-10-05
 

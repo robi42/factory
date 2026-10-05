@@ -425,6 +425,23 @@ context_of() {
   [[ $output == *"src/lib.rs:     allow(dead_code)"* ]]
 }
 
+@test "guard: the repo's git config, which an agent can write, does not change the diff it reads" {
+  make_repo
+  # Build the bad strings at runtime so this file passes its own guard check.
+  local pipe='||' setting
+  printf 'run_thing %s true\n' "$pipe" >"$REPO/run.sh"
+  printf '*.sh diff=hide\n' >"$REPO/.gitattributes"
+  commit_all bad
+  for setting in color.diff=always diff.external=true diff.hide.textconv=true; do
+    git -C "$REPO" config "${setting%%=*}" "${setting#*=}"
+    run guard_check "$REPO" main
+    printf 'with %s:\n%s\n' "$setting" "$output"
+    [ "$status" -eq 1 ]
+    [[ $output == *"run.sh: run_thing $pipe true"* ]]
+    git -C "$REPO" config --unset "${setting%%=*}"
+  done
+}
+
 @test "guard: a file whose name git would quote, or read as a pathspec, has its lines checked" {
   make_repo
   # Build the bad strings at runtime so this file passes its own guard check.

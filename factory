@@ -740,9 +740,11 @@ guard_check() {
 # added_lines worktree base path: the lines the branch adds to path, each with diff's + still
 # on it, as a repo's rules may anchor on it (^\+). Above a hunk's @@ line are the file headers,
 # +++ among them; below it, each line that begins with a + is an added line, whatever comes
-# after the +.
+# after the +. The diff is git's own whatever the config says, which an agent can write: no
+# colour codes, external diff tool or textconv filter.
 added_lines() {
-  git -C "$1" diff -U0 "$2...HEAD" -- ":(literal)$3" | sed -n '/^@@/,/^diff /{/^+/p;}'
+  git -C "$1" diff --no-color --no-ext-diff --no-textconv -U0 "$2...HEAD" -- ":(literal)$3" \
+    | sed -n '/^@@/,/^diff /{/^+/p;}'
 }
 
 # label path: each added line on stdin after the path it comes from, without diff's +
