@@ -186,8 +186,9 @@ for the `p` case), `fy reject <note>` and `fy abort`. A note goes to the planner
 through a plan review round of its own, past `FACTORY_PLAN_ROUNDS` if need be: both
 reviewers check the revision against your note, and the planner revises once more if
 either objects. The plan comes back with a short note on what changed and why and that
-round's verdicts, and you are asked again. For a change no reviewer needs to see, edit
-`plan.md` or talk to the planner in its pane first; the builder reads the file.
+round's verdicts, and you are asked again; until then `fy approve`, `reject` and `abort`
+say the plan is in review. For a change no reviewer needs to see, edit `plan.md` or talk
+to the planner in its pane first; the builder reads the file.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
 the branch's commits and diff stat and waits the same way: `a` approve, `r` revise with a

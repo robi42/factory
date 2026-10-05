@@ -386,11 +386,18 @@ context_of() {
 @test "plan approval: files from factory approve / reject, no terminal" {
   plan_ready
   FACTORY_POLL_SECONDS=1
-  ask() {
+  ask() { # the note's turn: the gate is closed meanwhile, and an approval sent anyway is dropped
     printf 'asked %s: %s\n' "$1" "$2"
-    : >"$TMP/approved" # the human approves after the revision
+    printf 'gate in the round: %s\n' "$(gate_waiting "$TMP" || printf closed)"
+    : >"$TMP/approved"
+    ( # the human approves once the plan is back, and the gate must still be waiting then
+      until grep -qs '^plan ' "$TMP/waiting"; do sleep 0.2; done
+      sleep 1.5
+      if [[ -e $TMP/waiting ]]; then : >"$TMP/still-waiting"; fi
+      : >"$TMP/approved"
+    ) >/dev/null 2>&1 &
   }
-  pause_for_pane_reply() { printf 'pause for the reply\n'; }
+  pause_for_pane_reply() { printf 'pause for the reply, gate %s\n' "$(gate_waiting "$TMP" || printf closed)"; }
   # the human's reject arrives while the factory is already waiting
   (
     sleep 2
@@ -399,9 +406,10 @@ context_of() {
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 0 ]
-  [[ $output == *"note received via file"*"pause for the reply"*"asked planner: "*"too big, split it"* ]]
-  [[ $output == *"approved via file"*"pause for the reply" ]]
+  [[ $output == *"note received via file"*"pause for the reply, gate note"*"asked planner: "*"too big, split it"*"gate in the round: note"* ]]
+  [ -e "$TMP/still-waiting" ]
   # the plan comes back after the note, and with it where to answer
+  [[ $output == *"note received via file"*"plan for toy-1"*"no terminal to answer from"*"approved via file"*"pause for the reply, gate closed" ]]
   [ "$(grep -c 'no terminal to answer from' <<<"$output")" -eq 2 ]
   [ ! -e "$TMP/approved" ]
   [ ! -e "$TMP/waiting" ]
@@ -434,8 +442,19 @@ context_of() {
   [ -e "$run/approved" ]
   cmd_reject "$REPO" toy-9 "use argparse"
   [ "$(cat "$run/reject.md")" = "use argparse" ]
+  run cmd_reject "$REPO" toy-9 " "
+  [ "$status" -eq 1 ]
+  [[ $output == *"empty note"* ]]
   cmd_abort "$REPO" toy-9
   [ -e "$run/aborted" ]
+  rm -f "$run/approved" "$run/reject.md" "$run/aborted"
+  printf 'note %s\n' "$$" >"$run/waiting" # the review round after a plan note
+  for c in "cmd_approve $REPO toy-9" "cmd_reject $REPO toy-9 later" "cmd_abort $REPO toy-9"; do
+    run $c
+    [ "$status" -eq 1 ]
+    [[ $output == *"the plan of toy-9 is in the review round after your note; answer once it is back"* ]]
+  done
+  [ ! -e "$run/approved" ] && [ ! -e "$run/reject.md" ] && [ ! -e "$run/aborted" ]
   printf 'build %s\n' "$$" >"$run/waiting"
   run cmd_approve "$REPO" toy-9 --allow-protected
   [ "$status" -eq 1 ]
@@ -619,11 +638,13 @@ IN
     sleep 2
     printf 'use a table\n' >"$TMP/reject.md"
   ) &
+  pause_for_pane_reply() { gate_waiting "$TMP" >"$TMP/paused" || printf closed >"$TMP/paused"; }
   rc=0
   human_gate build builder "$TMP" </dev/null || rc=$?
   wait
   [ "$rc" -eq 4 ]
   [ "$HUMAN_NOTE" = "use a table" ]
+  [ "$(cat "$TMP/paused")" = closed ]
   run human_gate build builder "$TMP" <<<"b"
   [ "$status" -eq 3 ]
 }
@@ -765,11 +786,11 @@ IN
     if [[ -e $TMP/run/waiting ]]; then cp "$TMP/run/waiting" "$TMP/seen"; fi
     printf '1. CSV\n' >"$TMP/run/answers.md"
   ) &
-  pause_for_pane_reply() { printf 'pause for the reply\n' >&2; }
+  pause_for_pane_reply() { printf 'pause for the reply, gate %s\n' "$(gate_waiting "$TMP/run" || printf closed)" >&2; }
   run collect_answers "$TMP/run/questions.md" </dev/null
   wait
   [ "$status" -eq 0 ]
-  [[ $output == *"answers received via file"*"pause for the reply"*"1. CSV" ]]
+  [[ $output == *"answers received via file"*"pause for the reply, gate closed"*"1. CSV" ]]
   [ "$(cat "$TMP/seen")" = "questions $$" ]
   [ ! -e "$TMP/run/waiting" ]
 }
