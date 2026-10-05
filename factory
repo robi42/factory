@@ -1079,8 +1079,9 @@ human_gate() {
 }
 
 await_human() { # plan|build agent dir: human_gate's waiting
-  local kind=$1 agent=$2 dir=$3 answer note stdin_open=1 rc keys='a, p, r or b'
-  [[ $kind == plan ]] || keys='a, r or b'
+  local kind=$1 agent=$2 dir=$3 answer note stdin_open=1 rc keys
+  keys="$(key a), $(key p), $(key r) or $(key b)"
+  [[ $kind == plan ]] || keys="$(key a), $(key r) or $(key b)"
   while :; do
     toast "$TASK_ID $kind ready" "$TASK_TITLE. Approve it in the Factory terminal, or type !fy approve in one of its panes" request
     show_for_approval "$kind" "$dir"
@@ -1155,6 +1156,18 @@ pause_for_pane_reply() { sleep 5; }
 
 role_of() { case $1 in plan) printf planner ;; *) printf builder ;; esac }
 
+# key letter: an approval key, coloured by what it does for a human at a terminal: approving
+# green, revising yellow, aborting red
+key() {
+  local c=32
+  case $1 in r) c=33 ;; b) c=31 ;; esac
+  if [[ -t 2 ]]; then
+    printf '\033[1;%sm%s\033[0m' "$c" "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 # take_note kind agent note: a plan note goes to the planner and then through a plan round of
 # its own, past FACTORY_PLAN_ROUNDS if need be; a build note ends the gate with 4 so the
 # caller runs another round
@@ -1187,7 +1200,8 @@ plan_rounds() {
 }
 
 show_for_approval() { # kind dir
-  local n v color=never width=80
+  local n v color=never width=80 a p r b
+  a=$(key a) p=$(key p) r=$(key r) b=$(key b)
   printf '\n%s ' "$TAG" >&2
   if [[ $1 == plan ]]; then
     printf 'plan for %s (%s):\n\n' "$TASK_ID" "$2/plan.md" >&2
@@ -1203,7 +1217,7 @@ show_for_approval() { # kind dir
       [[ $2/plan.md -nt $2/plan-review-$n-build.md ]] && v+=" (plan changed since)" # the last revision, a note or a hand edit
       printf '\n%s plan review round %s: %s, notes in %s and %s\n' "$TAG" "$n" "$v" "$2/plan-review-$n.md" "$2/plan-review-$n-build.md" >&2
     fi
-    printf '\n%s [a]pprove (edit the file or talk to the planner first if you like), a[p]prove and allow protected paths, [r]evise with a note, a[b]ort? (a/p/r/b) ' "$TAG" >&2
+    printf '\n%s [%s]pprove (edit the file or talk to the planner first if you like), a[%s]prove and allow protected paths, [%s]evise with a note, a[%s]ort? (%s/%s/%s/%s) ' "$TAG" "$a" "$p" "$r" "$b" "$a" "$p" "$r" "$b" >&2
   else
     printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2
     if [[ -t 2 ]]; then # git sees only the indenting sed, so it gets the colours and width here
@@ -1215,7 +1229,7 @@ show_for_approval() { # kind dir
       git -C "$WT" log --oneline --color="$color" "$(base_ref)..HEAD"
       git -C "$WT" diff --stat="$((width - 4))" --color="$color" "$(base_ref)...HEAD"
     } 2>/dev/null | sed 's/^/    /' >&2 || warn "could not show the branch"
-    printf '\n%s [a]pprove (look at the worktree or talk to the builder first if you like), [r]evise with a note, a[b]ort? (a/r/b) ' "$TAG" >&2
+    printf '\n%s [%s]pprove (look at the worktree or talk to the builder first if you like), [%s]evise with a note, a[%s]ort? (%s/%s/%s) ' "$TAG" "$a" "$r" "$b" "$a" "$r" "$b" >&2
   fi
 }
 

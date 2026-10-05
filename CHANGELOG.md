@@ -12,6 +12,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   you with that round's verdicts, past `FACTORY_PLAN_ROUNDS` if need be. It used to reach
   the planner alone, so after a last round that ended in REVISE no reviewer saw the plan
   again.
+- In a terminal, the approval prompts colour their keys by what they do: approving green,
+  revising yellow, aborting red.
 
 ### Fixed
 - Factory no longer prompts an agent in the middle of a turn. Claude Code replies to a

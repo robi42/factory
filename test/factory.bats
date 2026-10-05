@@ -376,6 +376,13 @@ context_of() {
   [[ $output == *"plan review round 2: APPROVE APPROVE (plan changed since), notes in"* ]]
 }
 
+@test "approval keys: coloured by what they do at a terminal, plain otherwise" {
+  [ "$(key a)$(key p)$(key r)$(key b)" = aprb ] # the tests' stderr is no terminal
+  run script -qec "bash -c 'source \"$BATS_TEST_DIRNAME/../factory\"; key a; key p; key r; key b'" /dev/null
+  [ "$status" -eq 0 ]
+  [[ $output == *$'\033[1;32ma\033[0m\033[1;32mp\033[0m\033[1;33mr\033[0m\033[1;31mb\033[0m'* ]]
+}
+
 @test "plan approval: files from factory approve / reject, no terminal" {
   plan_ready
   FACTORY_POLL_SECONDS=1
