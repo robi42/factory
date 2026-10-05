@@ -336,6 +336,7 @@ context_of() {
   ask() { printf 'asked %s: %s\n' "$1" "$2"; }
   run human_gate plan planner "$TMP" <<<$'r\nsplit the module\na'
   [ "$status" -eq 0 ]
+  [[ $output != *"no terminal"* ]]
   [[ $output == *"asked planner: The human reviewed"*"split the module"*"plan round 1 on the note: split the module"* ]]
   # only the keys shown mean anything: y, n and an empty note ask again, without re-rendering
   run human_gate plan planner "$TMP" <<<$'y\nn\nr\n\na'
@@ -1174,10 +1175,33 @@ JSON
   printf working >"$TMP/state"
   ask planner "the note"
   [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent wait,agent prompt" ]
+  grep -q '^agent wait planner --until idle --until done --until blocked ' "$TMP/herdr.log"
   printf 'done' >"$TMP/state"
   : >"$TMP/herdr.log"
   ask planner "the note"
   [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent prompt" ]
+  # a state it cannot read stops it before any prompt, also inside $(...), where errexit is off
+  herdr() {
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent get"*)
+        printf '{"error":{"code":"not_found","message":"no such agent"}}'
+        return 1
+        ;;
+      *) printf '{"result":{"agent":{"agent_status":"done"}}}' ;;
+    esac
+  }
+  : >"$TMP/herdr.log"
+  run ask planner "the note"
+  [ "$status" -eq 1 ]
+  [[ $output == *"no such agent"* ]]
+  local out=""
+  out=$(
+    ask planner "the note" 2>/dev/null
+    printf 'went on'
+  ) || [ -z "$out" ]
+  [[ $out != *"went on"* ]]
+  [ "$(grep -c 'agent prompt' "$TMP/herdr.log")" -eq 0 ]
 }
 
 @test "ask_for_file: asks once more when the file is missing, then gives up" {

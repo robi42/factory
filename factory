@@ -286,8 +286,10 @@ start_agent() {
 ask() {
   local name=$1 text=$2 out status stalls=0
   # a turn under way ends first, the agent's reply to the human or to a command typed in its
-  # pane: herdr's wait does not track turns and could match that turn's end instead
-  [[ $(agent_status "$name") != working ]] || wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked >/dev/null
+  # pane: herdr's wait does not track turns and could match that turn's end instead. When the
+  # state cannot be read, h has said why; exit also ends a $(...) caller, where errexit is off.
+  status=$(agent_status "$name") || exit 1
+  [[ $status != working ]] || wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked >/dev/null
   while :; do
     if out=$(herdr agent prompt "$name" "$text" --wait --timeout 60000 2>&1); then
       break
