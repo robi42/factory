@@ -60,6 +60,7 @@ plan_ready() {
   WT=$TMP
   printf 'the plan\n' >"$TMP/plan.md"
   planner_kept_hands_off() { :; }
+  tree_state() { :; } # its snapshot of the tree, which is no git repo here
   plan_round() { printf 'plan round %s on the note: %s\n' "$1" "$2"; }
 }
 
@@ -738,6 +739,7 @@ IN
   mkdir -p "$TMP/.factory/run"
   plan_or_interview() { :; }
   planner_kept_hands_off() { :; }
+  tree_state() { :; } # its snapshot of the tree, which is no git repo here
   mark() { :; }
   approve_plan() { printf 'to the human\n'; }
   ask() { printf 'revise: %s\n' "$2"; }
@@ -837,6 +839,7 @@ IN
   printf 'VERDICT: APPROVE\n' >"$TMP/.factory/run/plan-review-2-build.md"
   touch "$TMP/.factory/run/plan-review-1.md" "$TMP/.factory/run/plan-review-1-build.md"
   planner_kept_hands_off() { :; }
+  tree_state() { :; } # its snapshot of the tree, which is no git repo here
   ask() { printf 'asked %s: %.80s\n' "$1" "$2"; }
   ask_for_file() { # the reviewers approve this time
     printf 'review %s %s: %s\n' "$1" "${3##*/}" "$2"
@@ -1146,6 +1149,18 @@ JSON
   mkdir -p "$REPO/.factory/run" && printf 'plan\n' >"$REPO/.factory/run/plan.md"
   git -C "$REPO" checkout -q -- .
   planner_kept_hands_off planner # files under .factory/ are fine
+  # given the tree before its turn, only what the turn changed is the planner's
+  printf 'the human'"'"'s\n' >"$REPO/fixture.csv"
+  local before
+  before=$(tree_state "$REPO")
+  planner_kept_hands_off planner "$before"
+  printf 'sneaky\n' >"$REPO/run.sh"
+  ask() { printf 'asked %s: %s\n' "$1" "$2"; }
+  run planner_kept_hands_off planner "$before"
+  [ "$status" -eq 1 ]
+  [[ $output == *"Revert these changes"*" M run.sh"* ]]
+  [[ $output != *"fixture.csv"* ]]
+  [ -e "$REPO/fixture.csv" ]
 }
 
 @test "ask: a turn under way, such as the agent's reply in its pane, ends before the prompt goes in" {
