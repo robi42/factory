@@ -24,7 +24,7 @@ The CLI is `factory`; `fy` is the alias used below.
   Factory's own checks on the branch: no suppressions, skipped tests or swallowed errors
   added, no code change without a test, no build artifacts, no protected files touched.
 - **You stay in the loop** where it counts: the planner may ask you questions, you
-  approve every plan and every build, and you merge.
+  approve every plan and every build, in dialogs in the agents' panes, and you merge.
 
 ![A Herdr workspace during the dual code review: the builder (Opus 5, left, cyan prompt line) has finished and shows its diff; the planner (Fable 5.1, top right) has checked the branch against its plan, Factory's prompt with the verdict-line contract visible above its answer; the Codex reviewer (GPT 6 Astra, bottom right) has written its review](assets/screenshot.png)
 
@@ -128,8 +128,7 @@ fy queue   ~/src/app                         # work through everything that is r
 fy next    --pr --auto ~/src/app             # open a PR when approved; skip both approvals
 fy run     --fresh ~/src/app ap-k3x          # rerun from scratch instead of resuming
 
-# while a run waits for you (from any terminal)
-fy answer  ~/src/app ap-k3x '1. CSV  2. keep the old format'
+# while a run waits for your approval: its dialog in the agent's pane, or from any terminal
 fy approve ~/src/app ap-k3x                  # add --allow-protected when the plan must touch protected files
 fy reject  ~/src/app ap-k3x 'keep it in one module'
 fy abort   ~/src/app ap-k3x
@@ -159,30 +158,42 @@ second one pays for the overlap.
 
 ### The human gates
 
-Each gate takes your answer in three places. In Factory's terminal, at its prompt. In any
-of the task's panes, by typing the command after a `!`, which Claude Code and Codex run as
-a shell command rather than through the agent; there the task is the one whose worktree
-the pane is in: `!fy answer '<answers>'`, `!fy approve`, `!fy reject '<note>'`,
-`!fy abort`. Or from any terminal, naming the repo and bead:
-`fy approve <repo> <bead-id>`. Either way a shell reads the line before Factory does, so
-put a note or answers in single quotes, which keep backticks and `$` as typed; write an
-apostrophe in them as `'\''`. Claude Code's agent replies to a command typed in its pane,
-and Factory lets that reply finish before it prompts the agent. A run without a terminal
-waits for these commands. `approve`, `reject`, `abort` and `answer` say so when nothing
-waits for them. The agents point you to these commands when you tell them a decision in
-words, and never run them. `--auto` skips both approvals; the planner's questions still
-wait for your answer.
+Each approval asks you in a question dialog in the agent's pane, the planner's for the
+plan and the builder's for the build: pick Approve or Abort (for the plan also Approve,
+allow protected paths), or type a note to have it revised. The note arrives as you typed
+it, with no shell in between, and ctrl+g opens your editor for a longer one. A hook that
+Factory gives the agent when it starts takes your answer to the run, so the agent never
+relays it. Agents an older Factory started have no hook and show no dialog.
 
-**Questions.** When the planner asks, Factory prints the questions in its terminal and
-waits: answer there (finish with a line containing only `.`, or Ctrl-D), or with
-`fy answer`. Up to three rounds; if the planner still has questions after that, the run
-stops and you talk to it in its pane.
+The gate also takes your answer in two more places, whichever comes first, and closes
+the dialog when it does. In Factory's terminal, at its prompt. Or as a command: from any
+terminal, naming the repo and bead, `fy approve <repo> <bead-id>`; or in any of the
+task's panes after a `!`, which Claude Code and Codex run as a shell command rather than
+through the agent, for the task whose worktree the pane is in: `!fy approve`,
+`!fy reject '<note>'`, `!fy abort`. A shell reads that line before Factory does, so put a
+note in single quotes, which keep backticks and `$` as typed; write an apostrophe in them
+as `'\''`. Claude Code's agent replies to a command typed in its pane, and Factory lets
+that reply finish before it prompts the agent. A run without a terminal waits for the
+dialog or these commands. `approve`, `reject` and `abort` say so when nothing waits for
+them. The agents point you to these commands when you tell them a decision in words, and
+never run them. `--auto` skips both approvals; the planner's questions still wait for
+your answer.
+
+Every answer you give on a task, the planner's questions included, is recorded: in
+`.factory/run/decisions.md`, as a comment on the bead, and in the pull request's
+description.
+
+**Questions.** When the task is ambiguous in a way that changes the design, the planner
+asks you in its own question dialog, with options where they help, and goes on with your
+answers; a toast tells you it waits for your input, and it waits as long as you need. If
+you dismiss the dialog, it decides with stated assumptions.
 
 **Plan approval.** Factory prints the plan, the last plan review's verdicts (marked when
-the plan changed since) and where its notes are, and waits. Answer in its terminal with a
-letter and Enter: `a` approve, `p` approve and allow protected paths, `r` revise with a
-note, `b` abort; any other answer asks again. Or with `fy approve` (`--allow-protected`
-for the `p` case), `fy reject '<note>'` and `fy abort`. A note goes to the planner and then
+the plan changed since) and where its notes are, and waits. Answer in the planner's
+dialog, or in Factory's terminal with a letter and Enter: `a` approve, `p` approve and
+allow protected paths, `r` revise with a note, `b` abort; any other answer asks again. Or
+with `fy approve` (`--allow-protected` for the `p` case), `fy reject '<note>'` and
+`fy abort`. A note goes to the planner and then
 through a plan review round of its own, past `FACTORY_PLAN_ROUNDS` if need be: both
 reviewers check the revision against your note, and the planner revises once more if
 either objects. The plan comes back with a short note on what changed and why and that
@@ -191,8 +202,9 @@ say the plan is in review. For a change no reviewer needs to see, edit `plan.md`
 to the planner in its pane first; the builder reads the file.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
-the branch's commits and diff stat and waits the same way: `a` approve, `r` revise with a
-note, `b` abort, or `fy approve`, `fy reject '<note>'` and `fy abort`. A note goes to the
+the branch's commits and diff stat and waits the same way: the builder's dialog, `a`
+approve, `r` revise with a note, `b` abort, or `fy approve`, `fy reject '<note>'` and
+`fy abort`. A note goes to the
 builder and costs one more round of gate, guardrails and reviews before you are asked
 again; in the last round it gets one more, past `FACTORY_ROUNDS`. Look at the worktree or
 talk to the builder in its pane first if you like.
@@ -225,7 +237,8 @@ without changing anything. Copilot never approves formally, only in its review t
 ### Run artifacts
 
 They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
-`questions.md` (only when asked), `plan-review-N.md` (Codex), `plan-review-N-build.md`
+`decisions.md` (your answers, with the time), `hooks-plan.json` and `hooks-build.json`
+(the agents' dialog hooks), `plan-review-N.md` (Codex), `plan-review-N-build.md`
 (builder), `review-N.md` (Codex), `review-N-plan.md` (planner), `response-N.md`
 (builder's pushback), `plan-changes.md` (what the planner changed after your note; shown
 once at the approval prompt, then removed), `copilot-N.md` and `copilot-N-response.md`
@@ -458,7 +471,7 @@ any other as the title of a new task. Untrack `.beads/interactions.jsonl` yourse
 `git status` quiet.
 
 **Rendered Markdown at the prompts.** With [glow](https://github.com/charmbracelet/glow) on
-your PATH, the plan and the planner's questions are rendered in the terminal instead of
+your PATH, the plan is rendered in the terminal instead of
 printed as-is. The look is glow's own: its config (`glow config`) picks the style, a
 built-in one or a JSON of your own, for example a Nord one to match your terminal theme.
 

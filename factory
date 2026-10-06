@@ -76,7 +76,6 @@ usage() {
   row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the plan or build; --allow-protected (plan only) waives protected paths'
   row "factory reject  <repo> <bead-id> '<note>'" 'send a note back; the plan or build comes back revised'
   row 'factory abort   <repo> <bead-id>' 'abort the task at its waiting plan or build'
-  row "factory answer  <repo> <bead-id> ['<answers>' | -]" 'answer the planner'"'"'s questions from any terminal'
   row '  in a task'"'"'s worktree: no <repo> <bead-id>' 'the task is the one there: !fy approve in an agent'"'"'s pane'
   row 'factory pr      <repo> <bead-id> [--no-copilot]' 'push an existing task branch and open a pull request'
   row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
@@ -150,11 +149,16 @@ wait_for() {
     waited=$((waited + chunk))
     status=$(agent_status "$name")
     if ((waited >= timeout)); then
-      # a turn that is visibly working is a long build, not a stall: tell the human once and keep waiting
-      [[ $status == working ]] || die "$name: no ${*} within $((timeout / 60000)) min and it is $status; look at its pane"
+      # a turn that is visibly working is a long build, and a blocked one waits for the human,
+      # not a stall: tell the human once and keep waiting
+      [[ $status == working || $status == blocked ]] || die "$name: no ${*} within $((timeout / 60000)) min and it is $status; look at its pane"
       if ((! nagged)); then
         nagged=1
-        attention "$name" "is still working after $((timeout / 60000)) min; fine for a long build, Ctrl-C the run if it is stuck"
+        if [[ $status == blocked ]]; then
+          attention "$name" "is still waiting for your input after $((timeout / 60000)) min"
+        else
+          attention "$name" "is still working after $((timeout / 60000)) min; fine for a long build, Ctrl-C the run if it is stuck"
+        fi
       fi
     fi
     [[ $status == idle || $status == "done" ]] || settle_dialogs "$name" quiet
@@ -171,6 +175,8 @@ settle_dialogs() {
   local name=$1 quiet=${2:-} i txt status
   for i in 1 2 3 4 5 6; do
     txt=$(herdr agent read "$name" --source visible 2>/dev/null) || txt=""
+    # a question the agent asks the human, which no key of ours may answer, whatever it says
+    grep -qE 'Enter to select · .*Esc to cancel' <<<"$txt" && break
     if grep -qE 'Yes, I (trust|accept)' <<<"$txt"; then
       log "$name: accepting startup dialog (attempt $i)"
       herdr agent send-keys "$name" down >/dev/null
@@ -206,6 +212,13 @@ settle_dialogs() {
       ;;
   esac
   die "$name: still $status after startup; look at its pane"
+}
+
+# dialog_hooks plan|build -> Claude Code settings for the planner or the builder: each answered
+# question dialog goes to factory dialog-answer, run in the agent's worktree
+dialog_hooks() {
+  jq -n --arg cmd "$(printf '%q dialog-answer %s' "$FACTORY_HOME/factory" "$1")" \
+    '{hooks: {PostToolUse: [{matcher: "AskUserQuestion", hooks: [{type: "command", command: $cmd}]}]}}'
 }
 
 # set_color agent colour: Claude Code's /color tints the session's prompt line, which is how
@@ -316,15 +329,18 @@ ask() {
   return 0
 }
 
-# unblock name: a blocked agent gets the dialog settler first; only an unknown dialog
-# goes to the human. Returns once the agent is idle or done.
+# unblock name: a blocked agent gets the dialog settler first; an unknown dialog, or a question
+# the agent asks the human, goes to the human, each time it asks. Returns once the agent is
+# idle or done.
 unblock() {
   local name=$1 status
   settle_dialogs "$name" quiet
   status=$(agent_status "$name")
   while [[ $status == blocked ]]; do
     attention "$name" "is waiting for your input"
-    status=$(wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done")
+    # once answered, its turn goes on to its end, or it asks again
+    wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" working idle "done" >/dev/null
+    status=$(wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked)
   done
 }
 
@@ -714,7 +730,14 @@ $(pr_checks)
 $(cat "$WT/$RUN_DIR/plan.md" 2>/dev/null || printf 'no plan file')
 
 </details>
+$(decisions_block)
 B
+}
+
+# decisions_block: the human's answers on the task, for the pull request, if there were any
+decisions_block() {
+  [[ -s $WT/$RUN_DIR/decisions.md ]] || return 0
+  printf '\n<details>\n<summary>Decisions</summary>\n\n%s\n\n</details>\n' "$(<"$WT/$RUN_DIR/decisions.md")"
 }
 
 # gh_wt gh-args...: gh in the worktree, so {owner}/{repo} and the branch resolve from its origin.
@@ -924,8 +947,8 @@ $TASK_DESC
 
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
 Do not write the code itself and do not change any file outside $RUN_DIR/; the factory checks.
-The human answers your questions and approves, revises or aborts the plan by typing !fy answer '<answers>', !fy approve (--allow-protected to waive protected paths), !fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
-If the task is ambiguous in a way that would change the design, do not plan yet: write your numbered questions to $RUN_DIR/questions.md and reply with those questions. Prefer a plan with stated assumptions over questions when the ambiguity is minor.
+If the task is ambiguous in a way that would change the design, ask the human first with your AskUserQuestion tool (up to four questions, with options where they help); prefer a plan with stated assumptions when the ambiguity is minor.$([[ ! -s $WT/$RUN_DIR/decisions.md ]] || printf ' The human'"'"'s answers and decisions on this task so far are in %s; read them before asking again.' "$RUN_DIR/decisions.md")
+The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected to waive protected paths), !fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 $MEMORY
 Once the file is written, reply with its content.
 P
@@ -938,7 +961,7 @@ Task $TASK_ID: $TASK_TITLE
 Re-read $RUN_DIR/plan.md now; it is final and may have changed since you checked it. Implement it on this branch ($BRANCH) in this worktree. Run the gate until it passes: $GATE
 Commit when done; do not push. The factory tracks and closes bead $TASK_ID itself. Files under $RUN_DIR/ are ignored by git. Do not change: $(protected_globs "$WT" | tr '\n' ' ')
 No skipped tests, suppressed warnings, or swallowed errors; fix things properly.
-The human approves, revises or aborts the build by typing !fy approve, !fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
+The human approves, revises or aborts the build in a dialog Factory has you show, or by typing !fy approve, !fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 $MEMORY
 Reply with just DONE when finished.
 P
@@ -1010,16 +1033,6 @@ plan_recheck() {
   return 0
 }
 
-answers_prompt() { # answers
-  cat <<P
-Answers to your questions:
-
-$1
-
-Now write $RUN_DIR/plan.md as described before and reply with its content. If something is still unclear, write the remaining questions to $RUN_DIR/questions.md and reply with them.
-P
-}
-
 plan_note_prompt() { # note
   cat <<P
 The human reviewed $RUN_DIR/plan.md and says: $1
@@ -1073,12 +1086,14 @@ P
 # through a plan review round of its own, then the plan is shown again; a build note is
 # left in HUMAN_NOTE and 4 is returned for another round. 3 aborts. While the gate listens,
 # dir/waiting names it and this run for those commands; it says typing while this terminal
-# takes a note, and note while a plan note's round runs.
+# takes a note, and note while a plan note's round runs. The agent also asks the human in a
+# question dialog in its pane, whose hook answers the gate as the commands do (show_dialog).
 human_gate() {
   local rc=0
   [[ $FACTORY_APPROVAL == ask ]] || return 0
   await_human "$@" || rc=$?
   rm -f "$3/waiting"
+  dismiss_dialog "$1" "$2" "$3"
   return "$rc"
 }
 
@@ -1087,23 +1102,26 @@ await_human() { # plan|build agent dir: human_gate's waiting
   keys="$(key a), $(key p), $(key r) or $(key b)"
   [[ $kind == plan ]] || keys="$(key a), $(key r) or $(key b)"
   while :; do
-    toast "$TASK_ID $kind ready" "$TASK_TITLE. Approve it in the Factory terminal, or type !fy approve in one of its panes" request
+    toast "$TASK_ID $kind ready" "$TASK_TITLE. Answer in the $(role_of "$kind")'s pane or the Factory terminal" request
     show_for_approval "$kind" "$dir"
     open_gate "$kind" "$dir"
-    ((stdin_open)) || no_terminal_hint
+    show_dialog "$kind" "$agent" "$dir"
+    ((stdin_open)) || no_terminal_hint "$kind" "$dir"
     while :; do
       if [[ -e $dir/aborted ]]; then
         rm -f "$dir/aborted" "$dir/waiting"
         printf '\n' >&2
         log "aborted via file"
+        record_answer "$dir" "$kind aborted"
         return 3
       fi
       if [[ -s $dir/reject.md ]]; then
         note=$(<"$dir/reject.md")
         rm -f "$dir/reject.md"
-        close_gate "$kind" "$dir"
+        close_gate "$kind" "$dir" "$agent"
         printf '\n' >&2
         log "note received via file"
+        record_answer "$dir" "note on the $kind: $note"
         pause_for_pane_reply
         take_note "$kind" "$agent" "$note" || return $?
         continue 2
@@ -1112,6 +1130,11 @@ await_human() { # plan|build agent dir: human_gate's waiting
         rm -f "$dir/approved" "$dir/waiting"
         printf '\n' >&2
         log "approved via file"
+        if [[ $kind == plan && -e $dir/allow-protected ]]; then
+          record_answer "$dir" "plan approved, protected paths allowed"
+        else
+          record_answer "$dir" "$kind approved"
+        fi
         pause_for_pane_reply
         return 0
       fi
@@ -1120,11 +1143,15 @@ await_human() { # plan|build agent dir: human_gate's waiting
         read -r -t "$FACTORY_POLL_SECONDS" answer || rc=$?
         if ((rc == 0)); then
           case $answer in
-            a | A) return 0 ;;
+            a | A)
+              record_answer "$dir" "$kind approved"
+              return 0
+              ;;
             p | P)
               if [[ $kind == plan ]]; then
                 : >"$dir/allow-protected"
                 log "protected-path check waived for this task"
+                record_answer "$dir" "plan approved, protected paths allowed"
                 return 0
               fi
               ;;
@@ -1133,20 +1160,27 @@ await_human() { # plan|build agent dir: human_gate's waiting
               [[ ! -e $dir/approved && ! -e $dir/aborted && ! -s $dir/reject.md ]] || continue
               printf 'typing %s\n' "$$" >"$dir/waiting" # the answer comes from this terminal now
               printf '%s note for the %s: ' "$TAG" "$(role_of "$kind")" >&2
-              read -r note || return 3
+              if ! read -r note; then
+                record_answer "$dir" "$kind aborted"
+                return 3
+              fi
               if [[ -n $note ]]; then
-                close_gate "$kind" "$dir"
+                close_gate "$kind" "$dir" "$agent"
+                record_answer "$dir" "note on the $kind: $note"
                 take_note "$kind" "$agent" "$note" || return $?
                 continue 2
               fi
               printf '%s %s\n' "$kind" "$$" >"$dir/waiting" # no note after all: the gate listens again
               ;;
-            b | B) return 3 ;;
+            b | B)
+              record_answer "$dir" "$kind aborted"
+              return 3
+              ;;
           esac
           printf '%s %s? ' "$TAG" "$keys" >&2 # only the keys shown mean anything; ask again in place
         elif ((rc <= 128)); then
           stdin_open=0
-          no_terminal_hint
+          no_terminal_hint "$kind" "$dir"
         fi
       else
         sleep "$FACTORY_POLL_SECONDS"
@@ -1163,7 +1197,7 @@ open_gate() {
   printf '%s %s\n' "$1" "$$" >"$2/waiting"
 }
 
-# close_gate kind dir: a note was taken. A build note ends the gate; while a plan note's
+# close_gate kind dir agent: a note was taken. A build note ends the gate; while a plan note's
 # round runs, the commands say so instead of taking answers about a plan still changing.
 close_gate() {
   if [[ $1 == plan ]]; then
@@ -1171,12 +1205,51 @@ close_gate() {
   else
     rm -f "$2/waiting"
   fi
+  dismiss_dialog "$1" "$3" "$2"
 }
 
-# no_terminal_hint: where a gate takes its answer when this run has no terminal
+# show_dialog kind agent dir: the approval also as a question dialog in the agent's pane, whose
+# hook answers the gate (cmd_dialog_answer). Agents started without the hook show none.
+show_dialog() {
+  local out
+  [[ -e $3/hooks-$1.json ]] || return 0
+  out=$(herdr agent prompt "$2" "$(gate_dialog_prompt "$1")" 2>&1) || warn "$2: no approval dialog: $(herr_msg "$out")"
+}
+
+# gate_dialog_prompt kind: the approval dialog the agent is to show. Its header tells the hook
+# Factory's dialog from the agent's own questions, and its labels are the hook's choices.
+gate_dialog_prompt() {
+  local options='"Approve" and "Abort"'
+  [[ $1 == build ]] || options='"Approve", "Approve, allow protected paths" and "Abort"'
+  printf 'Ask the human with your AskUserQuestion tool: one question, header "fy %s", text "Approve the %s for %s, or type a note to have it revised?", options %s, in that order. Factory takes the answer from the dialog itself, so do not act on it or run anything; once it is answered or dismissed, reply with just DONE.' "$1" "$1" "$TASK_ID" "$options"
+}
+
+# dismiss_dialog kind agent dir: once the gate has its answer, an approval dialog the agent
+# still shows goes with Esc, and Claude Code tells the agent the human declined it. A turn
+# still on its way to showing it gets a minute.
+dismiss_dialog() {
+  local out
+  [[ -e $3/hooks-$1.json ]] || return 0
+  out=$(herdr agent wait "$2" --until blocked --until idle --until "done" --timeout 60000 2>&1) || return 0
+  [[ $(jq -r '.result.agent.agent_status' <<<"$out") == blocked ]] || return 0
+  herdr agent read "$2" --source visible 2>/dev/null | grep -qE "☐ fy $1\b" || return 0
+  herdr agent send-keys "$2" esc >/dev/null
+  log "$2: dismissed its approval dialog, answered elsewhere"
+}
+
+# record_answer run-dir text: one of the human's answers on the task, into its decisions log
+# in the run dir, which the pull request shows, and as a comment on its bead
+record_answer() {
+  printf -- '- %s %s\n' "$(date '+%F %R')" "${2//$'\n'/$'\n'  }" >>"$1/decisions.md"
+  bd_note "$(dirname "$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)")" "$TASK_ID" "$2"
+}
+
+# no_terminal_hint kind dir: where a gate takes its answer when this run has no terminal
 no_terminal_hint() {
+  local where="in one of the task's panes"
+  [[ ! -e $2/hooks-$1.json ]] || where="in the $(role_of "$1")'s dialog, or with these in one of the task's panes"
   printf '\n' >&2
-  log "no terminal to answer from; waiting for !fy approve, !fy reject '<note>' or !fy abort in one of the task's panes (or factory approve <repo> $TASK_ID)"
+  log "no terminal to answer from; waiting for your answer $where: !fy approve, !fy reject '<note>' or !fy abort (or factory approve <repo> $TASK_ID)"
 }
 
 # pause_for_pane_reply: Claude Code replies to a command typed after a ! in its pane once the
@@ -1262,54 +1335,6 @@ show_for_approval() { # kind dir
   fi
 }
 
-# collect_answers questions-file: show the planner's questions and wait for the human.
-# Answers come from this terminal (lines until one containing only ".", or Ctrl-D) or from
-# `factory answer`, which writes answers.md next to the questions. Prints the answers.
-# While it waits, waiting next to the questions says so and names this run, for answer.
-collect_answers() {
-  local dir rc=0
-  dir=$(dirname "$1")
-  rm -f "$dir/answers.md"
-  printf 'questions %s\n' "$$" >"$dir/waiting"
-  await_answers "$1" "$dir" || rc=$?
-  rm -f "$dir/waiting"
-  return "$rc"
-}
-
-await_answers() { # questions-file run-dir: collect_answers' waiting
-  local q=$1 dir=$2 line stdin_open=1 rc answers=""
-  toast "$TASK_ID has questions" "$TASK_TITLE. Answer in the Factory terminal, or type !fy answer '...' in the planner's pane" request
-  printf '\n%s the planner asks (%s):\n\n' "$TAG" "$q" >&2
-  show_md "$q"
-  printf '\n%s answer below; a line containing only "." or Ctrl-D ends it  (or type %s in the planner'"'"'s pane)\n' "$TAG" "!fy answer '...'" >&2
-  while :; do
-    if [[ -s $dir/answers.md ]]; then
-      answers=$(<"$dir/answers.md")
-      rm -f "$dir/answers.md" "$dir/waiting"
-      log "answers received via file"
-      pause_for_pane_reply
-      printf '%s' "$answers"
-      return 0
-    fi
-    if ((stdin_open)); then
-      rc=0
-      read -r -t "$FACTORY_POLL_SECONDS" line || rc=$?
-      if ((rc == 0)); then
-        [[ $line == . ]] && break
-        answers+="${answers:+$'\n'}$line"
-      elif ((rc <= 128)); then
-        stdin_open=0
-        [[ -n $answers ]] && break
-        log "no terminal to answer from; waiting for !fy answer '...' in the planner's pane (or factory answer <repo> $TASK_ID '...')"
-      fi
-    else
-      sleep "$FACTORY_POLL_SECONDS"
-    fi
-  done
-  [[ -n $answers ]] || return 3
-  printf '%s' "$answers"
-}
-
 # planner_kept_hands_off planner-agent [tree_state before its turn]: the planner must not
 # change code; what its turn changed gets one chance to be reverted. Changes there before it,
 # the human's while a gate waited or a reviewer's, are not the planner's.
@@ -1328,34 +1353,26 @@ $new"
 changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "$WT" | LC_ALL=C sort); }
 
 # planner_turn planner-agent prompt: one turn of the planner, then the check that it left the
-# code alone; what changed before the turn, such as the human's while its questions waited, is
-# not the planner's
+# code alone. What changed before the turn is not the planner's, nor what the human changed
+# while answering its questions: the dialog hook records the tree as it was at each answer.
 planner_turn() {
   local before
+  rm -f "$WT/$RUN_DIR/tree-at-answer"
   before=$(tree_state "$WT")
   ask "$1" "$2"
+  [[ ! -s $WT/$RUN_DIR/tree-at-answer ]] || before+=$'\n'$(<"$WT/$RUN_DIR/tree-at-answer")
   planner_kept_hands_off "$1" "$before"
 }
 
-# plan_or_interview planner-agent: ask for a plan; relay questions and answers until one exists.
-plan_or_interview() {
-  local plan_agent=$1 q="$WT/$RUN_DIR/questions.md" file="$WT/$RUN_DIR/plan.md" rounds=0 answers
-  rm -f "$q"
-  planner_turn "$plan_agent" "$(plan_prompt)"
-  while [[ ! -s $file ]]; do
-    if [[ -s $q ]]; then
-      rounds=$((rounds + 1))
-      ((rounds <= 3)) || die "planner still has questions after 3 rounds; talk to it in its pane"
-      log "planner has questions (round $rounds)"
-      answers=$(collect_answers "$q") || return 3
-      rm -f "$q"
-      planner_turn "$plan_agent" "$(answers_prompt "$answers")"
-    else
-      warn "$plan_agent replied but wrote neither plan.md nor questions.md; asking again"
-      planner_turn "$plan_agent" "You replied, but neither $RUN_DIR/plan.md nor $RUN_DIR/questions.md exists. Write one of them and reply again."
-      [[ -s $file || -s $q ]] || die "$plan_agent never wrote $RUN_DIR/plan.md"
-    fi
-  done
+# write_plan planner-agent: ask for a plan; the planner asks the human its questions in its own
+# dialog meanwhile. A turn that ends without a plan gets one nudge.
+write_plan() {
+  local file="$WT/$RUN_DIR/plan.md"
+  planner_turn "$1" "$(plan_prompt)"
+  [[ ! -s $file ]] || return 0
+  warn "$1 replied but wrote no $RUN_DIR/plan.md; asking again"
+  planner_turn "$1" "You replied, but $RUN_DIR/plan.md does not exist. If something is unclear, ask the human with your AskUserQuestion tool; then write the plan and reply with its content."
+  [[ -s $file ]] || die "$1 never wrote $RUN_DIR/plan.md"
 }
 
 # ------------------------------------------------------------- workspace ----
@@ -1459,8 +1476,10 @@ start_or_adopt_agents() {
     prime_shell "$pane"
   done
   repo_root=$(git -C "$repo" rev-parse --show-toplevel)
-  start_agent "$PLAN_AGENT" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --effort "$FACTORY_PLAN_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name plan
-  start_agent "$BUILD_AGENT" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --effort "$FACTORY_BUILD_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --name build
+  dialog_hooks plan >"$WT/$RUN_DIR/hooks-plan.json"
+  dialog_hooks build >"$WT/$RUN_DIR/hooks-build.json"
+  start_agent "$PLAN_AGENT" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --effort "$FACTORY_PLAN_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --settings "$WT/$RUN_DIR/hooks-plan.json" --name plan
+  start_agent "$BUILD_AGENT" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --effort "$FACTORY_BUILD_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --settings "$WT/$RUN_DIR/hooks-build.json" --name build
   set_color "$PLAN_AGENT" purple
   set_color "$BUILD_AGENT" cyan
   start_agent "$REVIEW_AGENT" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
@@ -1510,7 +1529,7 @@ plan_phase() {
   local round=1
   log "planning"
   rm -f "$WT/$RUN_DIR/plan.md" "$WT/$RUN_DIR"/plan-review-*.md "$WT/$RUN_DIR/plan-changes.md" "$WT/$RUN_DIR/allow-protected" # an earlier plan's would pass as this one's
-  plan_or_interview "$PLAN_AGENT" || stop_task "$1" "planner questions"
+  write_plan "$PLAN_AGENT"
   while :; do
     plan_round "$round"
     [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] && break
@@ -1897,8 +1916,8 @@ task_run_dir() {
   printf '%s/%s' "$wt" "$RUN_DIR"
 }
 
-# gate_waiting run-dir -> plan, build, questions, typing (a note at Factory's terminal) or note
-# (a plan note's review round): what a live run waits for there, else 1
+# gate_waiting run-dir -> plan, build, typing (a note at Factory's terminal) or note (a plan
+# note's review round): what a live run waits for there, else 1
 gate_waiting() {
   local kind pid
   read -r kind pid 2>/dev/null <"$1/waiting" || return 1
@@ -1967,15 +1986,51 @@ task_args() {
   TARGS=("$(dirname "$(git -C "$top" rev-parse --path-format=absolute --git-common-dir)")" "$id" "$@")
 }
 
-cmd_answer() { # repo bead-id [text | -]
-  local dir text=${3:-} kind
-  dir=$(task_run_dir "$1" "$2") || return 1
-  kind=$(gate_waiting "$dir") || kind=""
-  [[ $kind == questions ]] || die "no questions of $2 wait for answers"
-  if [[ -z $text || $text == - ]]; then text=$(cat); fi
-  [[ -n $text ]] || die "empty answer"
-  printf '%s\n' "$text" >"$dir/answers.md"
-  log "sent your answers to the planner of $2"
+# cmd_dialog_answer plan|build: Claude Code runs this, with the dialog on stdin, once the human
+# answered a question dialog of the planner or the builder (see dialog_hooks). The answer to
+# Factory's approval dialog goes to the gate as approve, reject or abort would send it; any
+# other answer goes into the task's decisions.
+cmd_dialog_answer() {
+  local role=$1 in dir n i header q a kind
+  in=$(cat)
+  cd "$(jq -r '.cwd' <<<"$in")" || die "no worktree for the dialog's answer"
+  task_args || die "$PWD is no task's worktree"
+  TASK_ID=${TARGS[1]}
+  dir=$(task_run_dir "${TARGS[0]}" "$TASK_ID") || return 1
+  [[ $role != plan ]] || tree_state "$PWD" >"$dir/tree-at-answer" # what the human changed while answering is theirs
+  n=$(jq '.tool_input.questions | length' <<<"$in")
+  for ((i = 0; i < n; i++)); do
+    header=$(jq -r --argjson i "$i" '.tool_input.questions[$i].header // ""' <<<"$in")
+    q=$(jq -r --argjson i "$i" '.tool_input.questions[$i].question' <<<"$in")
+    a=$(jq -r --arg q "$q" '.tool_response.answers[$q] // ""' <<<"$in")
+    [[ -n $a ]] || continue
+    kind=${header,,}
+    case $kind in
+      "fy plan" | "fy build")
+        gate_dialog_answer "${TARGS[0]}" "$dir" "${kind#fy }" "$a" "$(jq -r --argjson i "$i" '.tool_input.questions[$i].options[].label' <<<"$in")" || return 1
+        ;;
+      *) record_answer "$dir" "the $(role_of "$role") asked: $q Answer: $a" ;;
+    esac
+  done
+}
+
+# gate_dialog_answer repo run-dir kind answer option-labels: Factory's approval dialog answered.
+# A choice goes to the gate as its command would send it; what the human typed is the note.
+gate_dialog_answer() {
+  local repo=$1 dir=$2 kind=$3 a=$4 waiting label
+  waiting=$(gate_open "$dir" "$TASK_ID") || return 1
+  [[ $waiting == "$kind" ]] || die "that dialog was about the $kind of $TASK_ID, whose $waiting waits now"
+  case $a in
+    Approve) cmd_approve "$repo" "$TASK_ID" ;;
+    "Approve, allow protected paths") cmd_approve "$repo" "$TASK_ID" --allow-protected ;;
+    Abort) cmd_abort "$repo" "$TASK_ID" ;;
+    *)
+      while IFS= read -r label; do
+        [[ $a != "$label" ]] || die "the $kind dialog's choice \"$a\" is none Factory knows; answer in Factory's terminal or with fy"
+      done <<<"$5"
+      cmd_reject "$repo" "$TASK_ID" "$a"
+      ;;
+  esac
 }
 
 cmd_pr() { # repo bead-id: open a pull request for an existing task branch
@@ -2188,11 +2243,7 @@ main() {
       (($# == 2)) || die "$u"
       cmd_abort "$1" "$2"
       ;;
-    answer)
-      task_args "$@" || die "usage: factory answer [<repo> <bead-id>] ['<answers>' | -]  (stdin when omitted or -; without them in a task's worktree)"
-      set -- "${TARGS[@]}"
-      cmd_answer "$1" "$2" "${*:3}"
-      ;;
+    dialog-answer) cmd_dialog_answer "$@" ;; # Claude Code's hook, see dialog_hooks
     pr)
       take_flags "$@"
       ((${#ARGS[@]} == 2)) || die "usage: factory pr [--no-copilot] <repo> <bead-id>"
