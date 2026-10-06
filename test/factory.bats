@@ -451,11 +451,15 @@ context_of() {
 
 @test "approval dialog: shown in the agent's pane when the gate opens, dismissed once answered elsewhere" {
   plan_ready
-  herdr() {
+  herdr() { # the dialog shows once the prompt for it went in; Herdr reads the agent as idle
     printf '%s\n' "$*" >>"$TMP/herdr.log"
     case "$*" in
-      "agent wait"*) printf '{"result":{"agent":{"agent_status":"blocked"}}}' ;;
-      "agent read"*) printf ' ☐ fy plan\nApprove the plan for toy-1, or type a note to have it revised?\nEnter to select · ↑/↓ to navigate · Esc to cancel\n' ;;
+      "agent wait"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+      "agent read"*)
+        if grep -q '^agent prompt' "$TMP/herdr.log"; then
+          printf ' ☐ fy plan\nApprove the plan for toy-1, or type a note to have it revised?\nEnter to select · ↑/↓ to navigate · Esc to cancel\n'
+        fi
+        ;;
       *) printf '{"result":{}}' ;;
     esac
   }
@@ -482,6 +486,24 @@ context_of() {
   [ "$status" -eq 0 ]
   [ "$(grep -c 'send-keys' "$TMP/herdr.log")" -eq 0 ]
   [ "$(grep -c '^plan approved$' "$TMP/recorded")" -eq 3 ]
+}
+
+@test "approval dialog: never typed over a question the agent asks already, nor that one dismissed" {
+  plan_ready
+  printf '{}' >"$TMP/hooks-plan.json"
+  herdr() {
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent read"*) printf ' ☐ Format\nWhich format?\nEnter to select · ↑/↓ to navigate · Esc to cancel\n' ;;
+      "agent wait"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  run human_gate plan planner "$TMP" <<<"a"
+  [ "$status" -eq 0 ]
+  [[ $output == *"planner asks you something already"* ]]
+  [ "$(grep -c 'agent prompt' "$TMP/herdr.log")" -eq 0 ]
+  [ "$(grep -c 'send-keys' "$TMP/herdr.log")" -eq 0 ]
 }
 
 @test "plan approval: files from factory approve / reject, no terminal" {
@@ -1337,12 +1359,12 @@ JSON
   }
   printf working >"$TMP/state"
   ask planner "the note"
-  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent wait,agent prompt" ]
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent wait,agent read,agent prompt,agent read" ]
   grep -q '^agent wait planner --until idle --until done --until blocked ' "$TMP/herdr.log"
   printf 'done' >"$TMP/state"
   : >"$TMP/herdr.log"
   ask planner "the note"
-  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent prompt" ]
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent prompt,agent read" ]
   # a state it cannot read stops it before any prompt, also inside $(...), where errexit is off
   herdr() {
     printf '%s\n' "$*" >>"$TMP/herdr.log"
@@ -1365,6 +1387,47 @@ JSON
   ) || [ -z "$out" ]
   [[ $out != *"went on"* ]]
   [ "$(grep -c 'agent prompt' "$TMP/herdr.log")" -eq 0 ]
+}
+
+@test "ask: an open question dialog is never typed into, nor taken for the end of a turn" {
+  fake_task
+  FACTORY_POLL_SECONDS=0
+  : >"$TMP/reads"
+  herdr() { # a dialog on the screen for the first two looks; Herdr reads the agent as idle
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent get"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+      "agent read"*)
+        printf 'x' >>"$TMP/reads"
+        if (($(wc -c <"$TMP/reads") <= 2)); then printf '☐ Format\nEnter to select · ↑/↓ to navigate · Esc to cancel\n'; fi
+        ;;
+      *) printf '{"result":{"agent":{"agent_status":"done"}}}' ;;
+    esac
+  }
+  run ask planner "the plan, please"
+  [ "$status" -eq 0 ]
+  [[ $output == *"planner is waiting for your input"* ]]
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent read,agent read,agent wait,agent read,agent prompt,agent read" ]
+  # a question asked in the turn, which Herdr takes for its end: the human is told, and ask waits
+  : >"$TMP/herdr.log"
+  : >"$TMP/reads"
+  herdr() {
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent get"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+      "agent read"*)
+        if grep -q '^agent prompt' "$TMP/herdr.log"; then
+          printf 'x' >>"$TMP/reads"
+          if (($(wc -c <"$TMP/reads") <= 2)); then printf '☐ Format\nEnter to select · ↑/↓ to navigate · Esc to cancel\n'; fi
+        fi
+        ;;
+      *) printf '{"result":{"agent":{"agent_status":"done"}}}' ;;
+    esac
+  }
+  run ask planner "the plan, please"
+  [ "$status" -eq 0 ]
+  [[ $output == *"planner is waiting for your input"* ]]
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent prompt,agent read,agent read,agent read,agent wait,agent read" ]
 }
 
 @test "ask_for_file: asks once more when the file is missing, then gives up" {
