@@ -9,9 +9,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 - The approvals ask you in a question dialog in the agent's pane, the planner's for the
   plan and the builder's for the build: Approve, Abort, for the plan also Approve, allow
   protected paths, or a typed note to have it revised, which arrives as typed, with no
-  shell in between. A hook Factory installs when it starts the agent hands your answer
-  to the gate, so the agent never relays it. Factory's terminal prompt and the `fy`
-  commands still answer too, and Factory closes the dialog when they do.
+  shell in between. Hooks Factory installs when it starts the agent hand your answer to
+  the gate, so the agent never relays it, and mark the dialog as open meanwhile, so that
+  Factory neither types into it nor takes it for the end of the agent's turn. Factory's
+  terminal prompt and the `fy` commands still answer too, `!fy` typed in a pane that shows
+  no dialog (keys typed into the dialog go to it), and Factory closes the dialog when they
+  do.
 - Every answer you give on a task, the planner's questions included, goes into
   `.factory/run/decisions.md`, onto the bead as a comment, and into the pull request's
   description. A planner that starts over reads it before asking again.
@@ -20,7 +23,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 - The planner asks its questions in its own question dialog, with options where they
   help, instead of through `questions.md` and Factory's terminal. A question waits as long
   as you need: a wait on your input no longer times out, and each new question gets a
-  toast.
+  toast. A dismissed question gets the planner to plan with stated assumptions.
 - Factory's startup-dialog settler leaves question dialogs alone, whatever their options
   say.
 

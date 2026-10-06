@@ -473,6 +473,7 @@ context_of() {
   grep -q '^agent prompt planner Ask the human with your AskUserQuestion tool: one question, header "fy plan"' "$TMP/herdr.log"
   grep -qx 'agent send-keys planner esc' "$TMP/herdr.log"
   [[ $output == *"planner: dismissed its approval dialog, answered elsewhere"* ]]
+  [[ $output == *"talk to the planner, after Esc on its dialog, first if you like"* ]]
   # answered in the dialog itself, it is gone by then: no Esc
   : >"$TMP/herdr.log"
   herdr() {
@@ -504,6 +505,27 @@ context_of() {
   [[ $output == *"planner asks you something already"* ]]
   [ "$(grep -c 'agent prompt' "$TMP/herdr.log")" -eq 0 ]
   [ "$(grep -c 'send-keys' "$TMP/herdr.log")" -eq 0 ]
+  # its approval dialog still open from before, as after a resume, answers this gate too
+  : >"$TMP/herdr.log"
+  herdr() {
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent read"*) printf ' ☐ fy plan\nApprove the plan for toy-1?\nEnter to select · ↑/↓ to navigate · Esc to cancel\n' ;;
+      "agent wait"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  FACTORY_POLL_SECONDS=1
+  (
+    gate_opens
+    : >"$TMP/approved"
+  ) 3>&- &
+  run human_gate plan planner "$TMP" </dev/null
+  wait
+  [ "$status" -eq 0 ]
+  [[ $output == *"planner shows the plan's approval dialog already"* ]]
+  [[ $output == *"waiting for your answer in the planner's dialog, or with these in another of the task's panes"* ]]
+  [ "$(grep -c 'agent prompt' "$TMP/herdr.log")" -eq 0 ]
 }
 
 @test "plan approval: files from factory approve / reject, no terminal" {
@@ -600,53 +622,78 @@ context_of() {
   [[ $output == *"no worktree"* ]]
 }
 
-@test "dialog_hooks: the planner's and the builder's answered dialogs go to factory dialog-answer" {
+@test "dialog_hooks: the agents' question dialogs report to factory dialog-hook as they open, when answered, and as each turn ends" {
   FACTORY_HOME="$TMP/my factory"
   run dialog_hooks plan
   [ "$status" -eq 0 ]
-  [ "$(jq -r '.hooks.PostToolUse[0].matcher' <<<"$output")" = AskUserQuestion ]
-  [ "$(jq -r '.hooks.PostToolUse[0].hooks[0].command' <<<"$output")" = "$TMP/my\\ factory/factory dialog-answer plan" ]
+  [ "$(jq -r '.hooks.PreToolUse[0].matcher, .hooks.PostToolUse[0].matcher' <<<"$output" | paste -sd,)" = AskUserQuestion,AskUserQuestion ]
+  [ "$(jq -r '.hooks.Stop[0].matcher // "every turn"' <<<"$output")" = "every turn" ]
+  [ "$(jq -r '[.hooks[][0].hooks[0].command] | unique | .[]' <<<"$output")" = "$TMP/my\\ factory/factory dialog-hook plan" ]
 }
 
-@test "dialog-answer: Factory's approval dialog answers the gate as approve, reject and abort do; other answers are recorded" {
+@test "dialog-hook: Factory's approval dialog answers the gate as approve, reject and abort do; other answers are recorded" {
   make_repo
   task_worktree
   local run="$TMP/wt-9/.factory/run" opts='[{"label":"Approve"},{"label":"Approve, allow protected paths"},{"label":"Abort"}]'
   local q="Approve the plan for toy-9, or type a note to have it revised?"
-  dialog() { # header question options answer -> the hook's input, as Claude Code sends it
-    jq -n --arg cwd "$TMP/wt-9" --arg h "$1" --arg q "$2" --argjson o "$3" --arg a "$4" \
-      '{cwd: $cwd, hook_event_name: "PostToolUse", tool_name: "AskUserQuestion", tool_input: {questions: [{header: $h, question: $q, options: $o}]}, tool_response: {answers: {($q): $a}}}'
+  hook() { # event [cwd] -> a hook's input with no answer in it
+    jq -n --arg e "$1" --arg cwd "${2:-$TMP/wt-9}" '{cwd: $cwd, hook_event_name: $e, tool_name: "AskUserQuestion"}'
   }
-  # the planner's own question goes into the decisions, with the tree as the human left it
-  dialog Format "Which format?" '[{"label":"CSV"},{"label":"JSON"}]' CSV | cmd_dialog_answer plan
-  [ "$(cat "$TMP/recorded")" = "the planner asked: Which format? Answer: CSV" ]
-  [ -e "$run/tree-at-answer" ]
+  dialog() { # header question options answer [notes] -> the answered dialog's hook input, as Claude Code sends it
+    jq -n --arg cwd "${CWD:-$TMP/wt-9}" --arg h "$1" --arg q "$2" --argjson o "$3" --arg a "$4" --arg n "${5:-}" \
+      '{cwd: $cwd, hook_event_name: "PostToolUse", tool_name: "AskUserQuestion", tool_input: {questions: [{header: $h, question: $q, options: $o}]}, tool_response: ({answers: {($q): $a}} + if $n == "" then {} else {annotations: {($q): {notes: $n}}} end)}'
+  }
+  # the planner's own question: asking from the dialog's opening to its answer. What changed
+  # meanwhile is the human's, what the planner changed before is not, wherever its cwd.
+  mkdir "$TMP/wt-9/src"
+  printf 'sneaky\n' >>"$TMP/wt-9/run.sh"
+  hook PreToolUse "$TMP/wt-9/src" | cmd_dialog_hook plan
+  [ -e "$run/asking-plan" ]
+  printf 'id,n\n' >"$TMP/wt-9/sample.csv"
+  CWD=$TMP/wt-9/src dialog Format "Which format?" '[{"label":"CSV"},{"label":"JSON"}]' CSV "keep the header" | cmd_dialog_hook plan
+  [ ! -e "$run/asking-plan" ]
+  [ "$(cat "$run/tree-at-answer")" = "?? sample.csv" ]
+  [ "$(cat "$TMP/recorded")" = "the planner asked: Which format? Answer: CSV Notes: keep the header" ]
+  dialog Format "Which?" '[{"label":"CSV"}]' "(notes only)" "either works" | cmd_dialog_hook plan
+  [ "$(tail -1 "$TMP/recorded")" = "the planner asked: Which? Answer: (no option) Notes: either works" ]
+  git -C "$TMP/wt-9" checkout -q -- run.sh
+  rm -f "$TMP/wt-9/sample.csv"
+  # Esc on a dialog runs no hook at all; the turn's end clears the mark
+  hook PreToolUse | cmd_dialog_hook build
+  [ -e "$run/asking-build" ]
+  hook Stop | cmd_dialog_hook build
+  [ ! -e "$run/asking-build" ]
+  # outside a task's worktree there is nothing to mark, and an answer says so
+  hook PreToolUse "$TMP" | cmd_dialog_hook plan
+  run cmd_dialog_hook plan < <(CWD=$TMP dialog Format "Which format?" '[{"label":"CSV"}]' CSV)
+  [ "$status" -eq 1 ]
+  [[ $output == *"is no task's worktree; the answer went to the agent only"* ]]
   # Factory's own dialog, while the plan waits
   printf 'plan %s\n' "$$" >"$run/waiting"
-  dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_answer plan
+  dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan
   [ -e "$run/approved" ] && [ ! -e "$run/allow-protected" ]
   rm -f "$run/approved"
-  dialog "fy plan" "$q" "$opts" "Approve, allow protected paths" | cmd_dialog_answer plan
+  dialog "fy plan" "$q" "$opts" "Approve, allow protected paths" | cmd_dialog_hook plan
   [ -e "$run/approved" ] && [ -e "$run/allow-protected" ]
   rm -f "$run/approved" "$run/allow-protected"
-  dialog "fy plan" "$q" "$opts" Abort | cmd_dialog_answer plan
+  dialog "fy plan" "$q" "$opts" Abort | cmd_dialog_hook plan
   [ -e "$run/aborted" ]
   rm -f "$run/aborted"
   local note=$'keep `x` as is, don\'t touch $HOME\nand split it'
-  dialog "fy plan" "$q" "$opts" "$note" | cmd_dialog_answer plan
+  dialog "fy plan" "$q" "$opts" "$note" | cmd_dialog_hook plan
   [ "$(cat "$run/reject.md")" = "$note" ]
   rm -f "$run/reject.md"
   # a dialog for another gate, a closed gate, or a choice Factory did not offer: nothing sent
   printf 'build %s\n' "$$" >"$run/waiting"
-  run cmd_dialog_answer plan < <(dialog "fy plan" "$q" "$opts" Approve)
+  run cmd_dialog_hook plan < <(dialog "fy plan" "$q" "$opts" Approve)
   [ "$status" -eq 1 ]
   [[ $output == *"that dialog was about the plan of toy-9, whose build waits now"* ]]
   rm -f "$run/waiting"
-  run cmd_dialog_answer plan < <(dialog "fy plan" "$q" "$opts" Approve)
+  run cmd_dialog_hook plan < <(dialog "fy plan" "$q" "$opts" Approve)
   [ "$status" -eq 1 ]
   [[ $output == *"nothing of toy-9 waits for approval"* ]]
   printf 'plan %s\n' "$$" >"$run/waiting"
-  run cmd_dialog_answer plan < <(dialog "fy plan" "$q" '[{"label":"Approve"},{"label":"Maybe"}]' Maybe)
+  run cmd_dialog_hook plan < <(dialog "fy plan" "$q" '[{"label":"Approve"},{"label":"Maybe"}]' Maybe)
   [ "$status" -eq 1 ]
   [[ $output == *'choice "Maybe" is none Factory knows'* ]]
   [ ! -e "$run/approved" ] && [ ! -e "$run/reject.md" ] && [ ! -e "$run/aborted" ]
@@ -858,6 +905,7 @@ IN
 
 @test "prompts: agents reply with what they write; reviews name their step and round" {
   fake_task
+  WT=$TMP
   TASK_DESC="" GATE=true MEMORY=""
   base_ref() { printf main; }
   [[ $(review_prompt 2) == *"review-2.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
@@ -866,14 +914,13 @@ IN
   [[ $(plan_build_check_prompt 1) == *"plan-review-1-build.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_prompt) == *"reply with its content"* ]]
   # the planner asks in its own dialog; the approvals are the human's, in Factory's dialog or typed
-  WT=$TMP
-  [[ $(plan_prompt) == *"ask the human first with your AskUserQuestion tool"*"The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected"*"!fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
+  [[ $(plan_prompt) == *"ask the human first with your AskUserQuestion tool"*"The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected"*"!fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
   [[ $(plan_prompt) != *"decisions.md"* ]]
   mkdir -p "$TMP/.factory/run" && printf -- '- the planner asked: Which format? Answer: CSV\n' >"$TMP/.factory/run/decisions.md"
   [[ $(plan_prompt) == *"answers and decisions on this task so far are in .factory/run/decisions.md; read them before asking again"* ]]
   protected_globs() { :; }
   BRANCH=work
-  [[ $(build_prompt) == *"The human approves, revises or aborts the build in a dialog Factory has you show, or by typing !fy approve, !fy reject '<note>' or !fy abort in a pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
+  [[ $(build_prompt) == *"The human approves, revises or aborts the build in a dialog Factory has you show, or by typing !fy approve, !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
   TASK_ID=toy-1
   [[ $(gate_dialog_prompt plan) == *'header "fy plan", text "Approve the plan for toy-1, or type a note to have it revised?", options "Approve", "Approve, allow protected paths" and "Abort", in that order'*"do not act on it or run anything"* ]]
   [[ $(gate_dialog_prompt build) == *'header "fy build"'*'options "Approve" and "Abort", in that order'* ]]
@@ -892,7 +939,7 @@ IN
   TASK_DESC="" GATE=true MEMORY=""
   mkdir -p "$TMP/.factory/run"
   ask() { # nothing the first time, the plan the second
-    printf 'asked %s: %.60s\n' "$1" "$2"
+    printf 'asked %s: %.100s\n' "$1" "$2"
     if [[ -e $TMP/asked ]]; then printf 'the plan\n' >"$WT/.factory/run/plan.md"; fi
     : >"$TMP/asked"
   }
@@ -900,7 +947,7 @@ IN
   tree_state() { :; } # its snapshot of the tree, which is no git repo here
   run write_plan planner
   [ "$status" -eq 0 ]
-  [[ $output == *"asked planner: Task toy-1"*"wrote no .factory/run/plan.md; asking again"*"asked planner: You replied, but .factory/run/plan.md does not exist"* ]]
+  [[ $output == *"asked planner: Task toy-1"*"wrote no .factory/run/plan.md; asking again"*"asked planner: You replied, but .factory/run/plan.md does not exist. Do not ask the human"* ]]
   rm -f "$TMP/asked" "$TMP/.factory/run/plan.md"
   ask() { :; }
   run write_plan planner
@@ -908,23 +955,27 @@ IN
   [[ $output == *"planner never wrote .factory/run/plan.md"* ]]
 }
 
-@test "write_plan: each planner turn is checked, and what the human changes while answering its dialog is not the planner's" {
+@test "write_plan: each planner turn is checked; what the human changes while its dialog is open is theirs, what it changed before asking is not" {
   make_repo
+  task_worktree
   fake_task
-  WT=$REPO
+  WT=$TMP/wt-9
   TASK_DESC="" GATE=true MEMORY=""
-  mkdir -p "$REPO/.factory/run"
+  hook() {
+    jq -n --arg e "$1" --arg cwd "$WT" '{cwd: $cwd, hook_event_name: $e, tool_name: "AskUserQuestion", tool_input: {questions: [{header: "Fmt", question: "Which?", options: [{label: "A"}]}]}, tool_response: {answers: {"Which?": "A"}}}'
+  }
   ask() {
     case $2 in
       "You changed files"*)
         printf 'revert asked: %s\n' "$2"
-        git -C "$REPO" checkout -q -- run.sh
+        git -C "$WT" checkout -q -- run.sh
         ;;
-      *) # the planner asks; the human drops a sample in and answers, which the hook records
-        printf 'id,n\n' >"$REPO/sample.csv"
-        tree_state "$REPO" >"$WT/$RUN_DIR/tree-at-answer"
-        printf 'the plan\n' >"$WT/$RUN_DIR/plan.md" # then the plan, and a change to the code that is the planner's
-        printf 'sneaky\n' >>"$REPO/run.sh"
+      *)
+        printf 'sneaky\n' >>"$WT/run.sh"       # the planner's change, before it asks
+        hook PreToolUse | cmd_dialog_hook plan # its dialog opens
+        printf 'id,n\n' >"$WT/sample.csv"      # the human drops a sample in while answering
+        hook PostToolUse | cmd_dialog_hook plan
+        printf 'the plan\n' >"$WT/$RUN_DIR/plan.md"
         ;;
     esac
   }
@@ -932,8 +983,8 @@ IN
   [ "$status" -eq 0 ]
   [[ $output == *"revert asked: You changed files"*" M run.sh"* ]]
   [[ $output != *"sample.csv"* ]]
-  [ -e "$REPO/sample.csv" ]
-  [ "$(cat "$REPO/run.sh")" = "echo hi" ]
+  [ -e "$WT/sample.csv" ]
+  [ "$(cat "$WT/run.sh")" = "echo hi" ]
 }
 
 @test "plan_phase: a revised plan goes back to both reviewers, up to FACTORY_PLAN_ROUNDS" {
@@ -1428,6 +1479,76 @@ JSON
   [ "$status" -eq 0 ]
   [[ $output == *"planner is waiting for your input"* ]]
   [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent prompt,agent read,agent read,agent read,agent wait,agent read" ]
+  # a retry after Herdr refused the prompt waits for an open question too
+  : >"$TMP/herdr.log"
+  : >"$TMP/reads"
+  herdr() {
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent get"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+      "agent prompt"*)
+        if (($(grep -c '^agent prompt' "$TMP/herdr.log") == 1)); then
+          printf '{"error":{"code":"agent_blocked","message":"blocked"}}'
+          return 1
+        fi
+        printf '{"result":{"agent":{"agent_status":"done"}}}'
+        ;;
+      "agent read"*)
+        if grep -q '^agent prompt' "$TMP/herdr.log"; then
+          printf 'x' >>"$TMP/reads"
+          if (($(wc -c <"$TMP/reads") <= 2)); then printf '☐ Format\nEnter to select · ↑/↓ to navigate · Esc to cancel\n'; fi
+        fi
+        ;;
+      *) printf '{"result":{"agent":{"agent_status":"done"}}}' ;;
+    esac
+  }
+  run ask planner "the plan, please"
+  [ "$status" -eq 0 ]
+  [[ $output == *"planner is waiting for your input"* ]]
+  [ "$(grep -c '^agent prompt' "$TMP/herdr.log")" -eq 2 ]
+  [[ $(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,) == *"agent prompt"*"agent wait"*"agent prompt"* ]]
+}
+
+@test "asking: a question dialog, its review step, or its mark while an editor hides it; not once the prompt is back" {
+  WT=$TMP PLAN_AGENT=t-plan
+  mkdir -p "$TMP/.factory/run"
+  herdr() { cat "$TMP/screen"; }
+  printf ' ☐ Fmt\nWhich?\n❯ 1. CSV\n  2. JSON\nEnter to select · ↑/↓ to\nnavigate · Esc to cancel\n' >"$TMP/screen" # wrapped in a narrow pane
+  asking t-plan
+  printf 'Review your answers\nReady to submit your answers?\n❯ 1. Submit answers\n  2. Cancel\n' >"$TMP/screen"
+  asking t-plan
+  printf '~\n~\n-- INSERT --\n' >"$TMP/screen" # the editor ctrl+g opened over the dialog
+  run asking t-plan
+  [ "$status" -eq 1 ] # the screen alone cannot tell
+  : >"$TMP/.factory/run/asking-plan"
+  asking t-plan
+  printf '● User declined to answer questions\n────\n❯ \n────\n' >"$TMP/screen" # Esc: no hook, but the prompt is back
+  run asking t-plan
+  [ "$status" -eq 1 ]
+  [ ! -e "$TMP/.factory/run/asking-plan" ]
+}
+
+@test "await_answer: Factory's own approval dialog, left from a gate that has ended, goes with Esc" {
+  fake_task
+  : >"$TMP/keys"
+  herdr() {
+    case "$*" in
+      "agent read"*)
+        if [[ -s $TMP/keys ]]; then
+          printf '❯ \n'
+        else
+          printf ' ☐ fy build\nApprove the build for toy-1?\n❯ 1. Approve\nEnter to select · ↑/↓ to navigate · Esc to cancel\n'
+        fi
+        ;;
+      "agent send-keys"*) printf '%s\n' "$*" >>"$TMP/keys" ;;
+      *) printf '{"result":{"agent":{"agent_status":"done"}}}' ;;
+    esac
+  }
+  run await_answer t-build
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMP/keys")" = "agent send-keys t-build esc" ]
+  [[ $output == *"t-build: dismissed an approval dialog no gate waits for"* ]]
+  [[ $output != *"waiting for your input"* ]]
 }
 
 @test "ask_for_file: asks once more when the file is missing, then gives up" {

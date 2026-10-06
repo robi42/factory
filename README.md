@@ -58,12 +58,14 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
 There is no daemon and no protocol: one foreground Bash process per task talks to Herdr
 over its socket CLI. It creates the worktree workspace and panes, starts `claude` and
 `codex` in them, sends each prompt with `herdr agent prompt`, and waits on Herdr's agent
-lifecycle (`working`, `idle`, `blocked`) rather than parsing screens. Handoffs between
-roles are files in the worktree's `.factory/run/`: the plan, the reviews with a verdict
-line, the gate log. Each agent also replies with what it wrote, so its pane shows the plan
-or the review; a review ends with its step and round (`PLAN REVIEW round 1`,
-`CODE REVIEW round 2`) above the verdict. Factory never trusts an agent's word for
-"done": it checks the file exists, runs the gate itself, and inspects the diff.
+lifecycle (`working`, `idle`, `blocked`). It reads an agent's screen only for dialogs: the
+startup dialogs it clears, and Claude Code's question dialogs, which Herdr can take for an
+idle agent, so that it neither types into one nor counts it as the end of a turn. Handoffs
+between roles are files in the worktree's `.factory/run/`: the plan, the reviews with a
+verdict line, the gate log. Each agent also replies with what it wrote, so its pane shows
+the plan or the review; a review ends with its step and round (`PLAN REVIEW round 1`,
+`CODE REVIEW round 2`) above the verdict. Factory never trusts an agent's word for "done":
+it checks the file exists, runs the gate itself, and inspects the diff.
 
 Because the state is the worktree plus Beads, the orchestrator is disposable. Kill it or
 Ctrl-C it: the agents, worktree and workspace stay, the bead gets a note saying at which
@@ -76,8 +78,8 @@ Known startup dialogs (trust prompts, Codex's hook review and transcript overlay
 cleared from the screen automatically, and a pane whose shell swallowed the startup command
 gets a Ctrl-C and a retry; a block it does not recognise becomes a toast, and long waits
 print a heartbeat every five minutes so a thirty-minute gate is visibly a wait, not a hang.
-An agent still working when `FACTORY_TURN_TIMEOUT_MS` runs out gets you a toast and more
-time; only a turn that has stopped working by then fails the run.
+An agent still working, or waiting for your answer, when `FACTORY_TURN_TIMEOUT_MS` runs out
+gets you a toast and more time; only a turn that has stalled by then fails the run.
 
 ## Requirements
 
@@ -133,7 +135,7 @@ fy approve ~/src/app ap-k3x                  # add --allow-protected when the pl
 fy reject  ~/src/app ap-k3x 'keep it in one module'
 fy abort   ~/src/app ap-k3x
 
-# ...or in any of the task's panes, where the task is the one there
+# ...or in any of the task's panes that shows no dialog, where the task is the one there
 !fy approve
 !fy reject 'keep it in one module'
 
@@ -163,14 +165,17 @@ plan and the builder's for the build: pick Approve or Abort (for the plan also A
 allow protected paths), or type a note to have it revised. The note arrives as you typed
 it, with no shell in between, and ctrl+g opens your editor for a longer one. A hook that
 Factory gives the agent when it starts takes your answer to the run, so the agent never
-relays it. Agents an older Factory started have no hook and show no dialog.
+relays it, and tells Factory while a dialog is open. Agents an older Factory started have
+no hook and show no dialog.
 
 The gate also takes your answer in two more places, whichever comes first, and closes
 the dialog when it does. In Factory's terminal, at its prompt. Or as a command: from any
-terminal, naming the repo and bead, `fy approve <repo> <bead-id>`; or in any of the
-task's panes after a `!`, which Claude Code and Codex run as a shell command rather than
-through the agent, for the task whose worktree the pane is in: `!fy approve`,
-`!fy reject '<note>'`, `!fy abort`. A shell reads that line before Factory does, so put a
+terminal, naming the repo and bead, `fy approve <repo> <bead-id>`; or after a `!` in one
+of the task's panes that shows no dialog, which Claude Code and Codex run as a shell
+command rather than through the agent, for the task whose worktree the pane is in:
+`!fy approve`, `!fy reject '<note>'`, `!fy abort`. Keys typed in the pane that shows the
+dialog go to the dialog: Enter picks the highlighted option, Approve until you move. Press
+Esc on the dialog first to type there or to talk to the agent. A shell reads that line before Factory does, so put a
 note in single quotes, which keep backticks and `$` as typed; write an apostrophe in them
 as `'\''`. Claude Code's agent replies to a command typed in its pane, and Factory lets
 that reply finish before it prompts the agent. A run without a terminal waits for the
@@ -186,28 +191,30 @@ description.
 **Questions.** When the task is ambiguous in a way that changes the design, the planner
 asks you in its own question dialog, with options where they help, and goes on with your
 answers; a toast tells you it waits for your input, and it waits as long as you need. If
-you dismiss the dialog, it decides with stated assumptions.
+you dismiss the dialog, Factory has the planner plan with stated assumptions, which you
+see at approval; its Chat about this option does not wait for a chat either, so discuss
+the plan at approval or revise it with a note.
 
 **Plan approval.** Factory prints the plan, the last plan review's verdicts (marked when
 the plan changed since) and where its notes are, and waits. Answer in the planner's
 dialog, or in Factory's terminal with a letter and Enter: `a` approve, `p` approve and
 allow protected paths, `r` revise with a note, `b` abort; any other answer asks again. Or
 with `fy approve` (`--allow-protected` for the `p` case), `fy reject '<note>'` and
-`fy abort`. A note goes to the planner and then
-through a plan review round of its own, past `FACTORY_PLAN_ROUNDS` if need be: both
-reviewers check the revision against your note, and the planner revises once more if
-either objects. The plan comes back with a short note on what changed and why and that
-round's verdicts, and you are asked again; until then `fy approve`, `reject` and `abort`
-say the plan is in review. For a change no reviewer needs to see, edit `plan.md` or talk
-to the planner in its pane first; the builder reads the file.
+`fy abort`. A note goes to the planner and then through a plan review round of its own,
+past `FACTORY_PLAN_ROUNDS` if need be: both reviewers check the revision against your
+note, and the planner revises once more if either objects. The plan comes back with a
+short note on what changed and why and that round's verdicts, and you are asked again;
+until then `fy approve`, `reject` and `abort` say the plan is in review. For a change no
+reviewer needs to see, edit `plan.md`, or talk to the planner in its pane after Esc on its
+dialog, first; the builder reads the file.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
 the branch's commits and diff stat and waits the same way: the builder's dialog, `a`
 approve, `r` revise with a note, `b` abort, or `fy approve`, `fy reject '<note>'` and
-`fy abort`. A note goes to the
-builder and costs one more round of gate, guardrails and reviews before you are asked
-again; in the last round it gets one more, past `FACTORY_ROUNDS`. Look at the worktree or
-talk to the builder in its pane first if you like.
+`fy abort`. A note goes to the builder and costs one more round of gate, guardrails and
+reviews before you are asked again; in the last round it gets one more, past
+`FACTORY_ROUNDS`. Look at the worktree, or talk to the builder in its pane after Esc on its
+dialog, first if you like.
 
 **Merge.** On approval the bead is closed and you get a toast; the branch, named
 `factory/<bead-id>-<title-slug>` and checked out under Herdr's worktree directory as
@@ -238,7 +245,8 @@ without changing anything. Copilot never approves formally, only in its review t
 
 They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
 `decisions.md` (your answers, with the time), `hooks-plan.json` and `hooks-build.json`
-(the agents' dialog hooks), `plan-review-N.md` (Codex), `plan-review-N-build.md`
+(the agents' dialog hooks, which keep `asking-plan` or `asking-build` while a dialog is
+open, and the planner's `tree-at-ask` and `tree-at-answer`), `plan-review-N.md` (Codex), `plan-review-N-build.md`
 (builder), `review-N.md` (Codex), `review-N-plan.md` (planner), `response-N.md`
 (builder's pushback), `plan-changes.md` (what the planner changed after your note; shown
 once at the approval prompt, then removed), `copilot-N.md` and `copilot-N-response.md`
@@ -343,11 +351,11 @@ after the gate passes and before review:
 | `FACTORY_PLAN_ROUNDS` | `2` plan review rounds (always at least one); a note of yours gets one more |
 | `FACTORY_ROUNDS` | `3` build / review rounds; a note of yours at the last gets one more |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
-| `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h); a stalled turn fails then, a working one toasts you and goes on |
+| `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h); a stalled turn fails then, one working or waiting for your answer toasts you and goes on |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
 | `FACTORY_REQUIRE_TESTS` | `1`: code changes must also touch a test file |
 | `FACTORY_APPROVAL` | `ask`; `auto` skips the plan and build approvals (`--auto`) |
-| `FACTORY_POLL_SECONDS` | `5` seconds between checks for the approve, reject, abort and answer files |
+| `FACTORY_POLL_SECONDS` | `5` seconds between checks for the approve, reject and abort files, and on an open question |
 | `FACTORY_PR` | `0`; `1` opens a pull request (`--pr`) |
 | `FACTORY_COPILOT` | `1`; `0` skips the Copilot review loop (`--no-copilot`) |
 | `FACTORY_COPILOT_ROUNDS` | `3` Copilot review rounds |
@@ -459,7 +467,7 @@ notification service so an approval request reaches you on another workspace. Se
 **Herdr agent integrations.** `herdr integration install claude` and `codex` switch
 Herdr from screen heuristics to hook-based agent state, which makes idle and blocked
 detection more reliable. Factory handles the known startup dialogs either way, and hands
-one it cannot clear to you, waiting up to `FACTORY_TURN_TIMEOUT_MS` for your answer.
+one it cannot clear to you, waiting for your answer as long as you need.
 
 **Beads housekeeping.** `fy init` sets `beads.role` so Beads stops warning, and gives the
 beads a short prefix from the repo's name: the initials of several words (AllesBuien
@@ -493,8 +501,9 @@ a year ago assumed. So Factory bets on a few things:
   different mistakes, at the cost of one extra turn. Beyond two, returns diminish and
   dialogs multiply.
 - **Your own tools over a toolbox.** The agents are plain `claude` and `codex` sessions;
-  every skill, MCP server and hook you already use applies. Factory itself installs
-  nothing.
+  every skill, MCP server and hook you already use applies. Factory itself adds only its
+  dialog hooks to the planner's and the builder's sessions (`--settings`), which take your
+  answers in their question dialogs to the run.
 - **Humans at the points that matter.** Approving the plan, approving the build, and
   merging. Everything in between runs on its own, and every stop becomes a toast.
 - **State in the repo's orbit.** Tasks and memories live in Beads beside the code and
