@@ -491,6 +491,7 @@ context_of() {
 
 @test "approval dialog: never typed over a question the agent asks already, nor that one dismissed" {
   plan_ready
+  PLAN_AGENT=planner
   printf '{}' >"$TMP/hooks-plan.json"
   herdr() {
     printf '%s\n' "$*" >>"$TMP/herdr.log"
@@ -1418,6 +1419,7 @@ JSON
 }
 
 @test "ask: a turn under way, such as the agent's reply in its pane, ends before the prompt goes in" {
+  PLAN_AGENT=planner
   herdr() {
     printf '%s\n' "$*" >>"$TMP/herdr.log"
     case "$*" in
@@ -1459,6 +1461,7 @@ JSON
 
 @test "ask: an open question dialog is never typed into, nor taken for the end of a turn" {
   fake_task
+  PLAN_AGENT=planner
   FACTORY_POLL_SECONDS=0
   : >"$TMP/reads"
   herdr() { # a dialog on the screen for the first two looks; Herdr reads the agent as idle
@@ -1526,7 +1529,7 @@ JSON
   [[ $(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,) == *"agent prompt"*"agent wait"*"agent prompt"* ]]
 }
 
-@test "asking: the transcript tells whether a marked question is open; without a mark, the last lines of the screen" {
+@test "asking: the transcript tells whether a marked question is open; without one, the screen: a dialog in the prompt box's place" {
   WT=$TMP PLAN_AGENT=t-plan
   local run="$TMP/.factory/run" tp="$TMP/transcript.jsonl"
   mkdir -p "$run"
@@ -1543,14 +1546,34 @@ JSON
   asking t-plan
   printf 'Review your answers\nReady to submit your answers?\n❯ 1. Submit answers\n  2. Cancel\n' >"$TMP/screen"
   asking t-plan
-  # the agent's own text quoting a footer, above its prompt, asks nothing
+  # the agent's own text quoting a footer or the review step, above its prompt box, asks
+  # nothing, with a status line below the box or not, and a draft typed in it or not
   printf 'It reads Enter to select · ↑/↓ to navigate\n\n✻ Done\n────\n❯ \n────\n  Opus 5.5\n  ⏵⏵ auto mode on\n' >"$TMP/screen"
   run asking t-plan
   [ "$status" -eq 1 ]
+  printf '● Then: Ready to submit your answers?\n\n✻ Worked for 5s · done 9:41 PM\n── plan ─\n❯ 2 more\n──\n  ⏵⏵ auto mode on\n' >"$TMP/screen"
+  run asking t-plan
+  [ "$status" -eq 1 ]
+  # the reviewer, Codex, asks in no such dialog, whatever its screen quotes
+  printf 'Enter to select · ↑/↓ to navigate\n' >"$TMP/screen"
+  run asking t-review
+  [ "$status" -eq 1 ]
+  # a session that keeps no transcript: its mark holds until the agent's prompt is back
+  printf 'toolu_2\t%s\n' "$TMP/none.jsonl" >"$run/asking-plan"
+  : >"$TMP/screen" # the editor
+  asking t-plan
+  printf '❯ Ask me which format\n──\n  dialog waiting · Showing detailed transcript · ctrl+o to toggle\n' >"$TMP/screen"
+  asking t-plan # the transcript view, its sticky prompt above
+  [ -e "$run/asking-plan" ]
+  printf '✻ Done\n────\n❯ \n────\n' >"$TMP/screen"
+  run asking t-plan
+  [ "$status" -eq 1 ]
+  [ ! -e "$run/asking-plan" ]
 }
 
 @test "await_answer: Factory's own approval dialog, left from a gate that has ended, goes with Esc" {
   fake_task
+  BUILD_AGENT="t-build"
   : >"$TMP/keys"
   herdr() {
     case "$*" in

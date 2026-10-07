@@ -335,31 +335,47 @@ ask() {
   return 0
 }
 
-# QUESTION_SCREEN: a Claude Code question dialog at the foot of the screen: a question's footer,
-# whose first hint survives a wrap in a narrow pane, or the review step of several questions,
-# which has none
-QUESTION_SCREEN='Enter to select · |Ready to submit your answers\?'
+# QUESTION_SCREEN: a Claude Code question dialog: a question's footer, whose first hint survives
+# a wrap in a narrow pane, the review step of several questions, which has none, or the note of
+# the transcript view (ctrl+o) that a dialog waits under it
+QUESTION_SCREEN='Enter to select · |Ready to submit your answers[?]|dialog waiting · '
 
-# question_on_screen [text]: the last lines of an agent's screen (on stdin) show a question
-question_on_screen() { grep -v '^\s*$' | tail -n 6 | grep -qE "$QUESTION_SCREEN"; }
+# screen_ends_in question|prompt: an agent's screen (on stdin) ends in a question dialog, a
+# question's footer or the review step, or in Claude Code's prompt box, empty or with a draft.
+# The dialog takes the box's place: the agent's own text quoting one sits above the box, and
+# the dialog's ❯ marks a numbered option. An editor opened from the dialog shows neither.
+screen_ends_in() {
+  Q=$QUESTION_SCREEN awk -v want="$1" '$0 ~ ENVIRON["Q"] {last = "question"; next}
+    /^[[:space:]]*❯/ && !/^[[:space:]]*❯[[:space:]]*[0-9]+\./ {last = "prompt"} END {exit last != want}'
+}
+
+question_on_screen() { screen_ends_in question; }
 
 # asking name: the agent waits for the human's answer in a question dialog. Herdr can read such
 # an agent as idle (in Factory's panes Claude Code draws a rule below the dialog's footer, and
 # Herdr looks for the footer below the last rule), so Factory looks itself. The mark the
 # dialog's hook left names the tool call: the question is open until the session's transcript
 # has the call's result, which an answer, Esc and Chat about this all write, whatever the screen
-# shows meanwhile (an editor, the transcript view). An agent without the hook goes by its screen.
+# shows meanwhile (an editor, the transcript view). Without a transcript (Claude Code keeps
+# none with CLAUDE_CODE_SKIP_PROMPT_HISTORY) a mark holds until the agent's prompt is back; an
+# agent without the hook goes by its screen alone. Codex, the reviewer, asks in no such dialog.
 asking() {
-  local mark id tp
-  if mark=$(asking_mark "$1") && [[ -s $mark ]]; then
+  local mark id="" tp="" txt
+  mark=$(asking_mark "$1") || return 1
+  if [[ -s $mark ]]; then
     IFS=$'\t' read -r id tp <"$mark"
-    if [[ -n $id && -f $tp ]]; then
-      grep -qF "\"tool_use_id\":\"$id\"" "$tp" || return 0
-      question_closed "${mark##*/asking-}" "$(dirname "$mark")" # with no hook, as by Esc
-      return 1
-    fi
   fi
-  herdr agent read "$1" --source visible 2>/dev/null | question_on_screen
+  if [[ -n $id && -f $tp ]]; then
+    grep -qF "\"tool_use_id\":\"$id\"" "$tp" || return 0
+    question_closed "${mark##*/asking-}" "$(dirname "$mark")" # with no hook, as by Esc
+    return 1
+  fi
+  txt=$(herdr agent read "$1" --source visible 2>/dev/null) || return 1
+  question_on_screen <<<"$txt" && return 0
+  [[ -e $mark ]] || return 1
+  screen_ends_in prompt <<<"$txt" || return 0
+  question_closed "${mark##*/asking-}" "$(dirname "$mark")"
+  return 1
 }
 
 # question_closed role run-dir: the agent's question dialog closed, answered or not. Its mark
