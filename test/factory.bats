@@ -451,12 +451,12 @@ context_of() {
 
 @test "approval dialog: shown in the agent's pane when the gate opens, dismissed once answered elsewhere" {
   plan_ready
-  herdr() { # the dialog shows once the prompt for it went in; Herdr reads the agent as idle
+  herdr() { # the dialog shows once the prompt for it went in, until Esc; Herdr reads the agent as idle
     printf '%s\n' "$*" >>"$TMP/herdr.log"
     case "$*" in
       "agent wait"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
       "agent read"*)
-        if grep -q '^agent prompt' "$TMP/herdr.log"; then
+        if grep -q '^agent prompt' "$TMP/herdr.log" && ! grep -q '^agent send-keys' "$TMP/herdr.log"; then
           printf ' ☐ fy plan\nApprove the plan for toy-1, or type a note to have it revised?\nEnter to select · ↑/↓ to navigate · Esc to cancel\n'
         fi
         ;;
@@ -510,7 +510,7 @@ context_of() {
   herdr() {
     printf '%s\n' "$*" >>"$TMP/herdr.log"
     case "$*" in
-      "agent read"*) printf ' ☐ fy plan\nApprove the plan for toy-1?\nEnter to select · ↑/↓ to navigate · Esc to cancel\n' ;;
+      "agent read"*) grep -q '^agent send-keys' "$TMP/herdr.log" || printf ' ☐ fy plan\nApprove the plan for toy-1?\nEnter to select · ↑/↓ to navigate · Esc to cancel\n' ;;
       "agent wait"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
       *) printf '{"result":{}}' ;;
     esac
@@ -1571,6 +1571,37 @@ JSON
   [ "$(cat "$TMP/keys")" = "agent send-keys t-build esc" ]
   [[ $output == *"t-build: dismissed an approval dialog no gate waits for"* ]]
   [[ $output != *"waiting for your input"* ]]
+}
+
+@test "dismiss_dialog: waits for the session to record its Esc, so that the next ask finds no question open" {
+  fake_task
+  WT=$TMP BUILD_AGENT=t-build
+  local run="$TMP/.factory/run" tp="$TMP/transcript.jsonl"
+  mkdir -p "$run"
+  printf '{}' >"$run/hooks-build.json"
+  : >"$tp"
+  printf 'toolu_1\t%s\n' "$tp" >"$run/asking-build" # the approval dialog's hook marked it
+  herdr() {
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent wait"*) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+      "agent read"*) grep -q '^agent send-keys' "$TMP/herdr.log" || printf ' ☐ fy build\nApprove the build for toy-1?\nEnter to select · ↑/↓ to navigate · Esc to cancel\n' ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  sleep() { # time passes: the session writes the dismissed call's result a moment after the Esc
+    printf 's' >>"$TMP/slept"
+    (($(wc -c <"$TMP/slept") < 3)) || printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true}]}}\n' >>"$tp"
+  }
+  run dismiss_dialog build t-build "$run"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^agent send-keys t-build esc$' "$TMP/herdr.log")" -eq 1 ]
+  [[ $output == *"t-build: dismissed its approval dialog, answered elsewhere"* ]]
+  [ ! -e "$run/asking-build" ]
+  [ "$(cat "$TMP/slept")" = sss ]
+  run await_answer t-build
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 @test "ask_for_file: asks once more when the file is missing, then gives up" {

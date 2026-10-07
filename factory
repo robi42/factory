@@ -391,7 +391,7 @@ await_answer() {
   local name=$1 status
   while asking "$name"; do
     if gate_dialog_shown "$name"; then
-      herdr agent send-keys "$name" esc >/dev/null
+      esc_question "$name"
       log "$name: dismissed an approval dialog no gate waits for"
       pause_for_pane_reply # its reply to the dismissal gets under way, for wait_for to see it end
     else
@@ -1313,8 +1313,17 @@ dismiss_dialog() {
   [[ -e $3/hooks-$1.json ]] || return 0
   herdr agent wait "$2" --until blocked --until idle --until "done" --timeout 60000 >/dev/null 2>&1 || return 0
   gate_dialog_shown "$2" "$1" || return 0
-  herdr agent send-keys "$2" esc >/dev/null
+  esc_question "$2"
   log "$2: dismissed its approval dialog, answered elsewhere"
+}
+
+# esc_question agent: Esc on the agent's question dialog. Its session records the dismissal a
+# moment later, and until then asking takes the question for open still: the next ask would
+# tell the human that the agent waits for them. So this waits for it, ten seconds at most.
+esc_question() {
+  local t=$SECONDS
+  herdr agent send-keys "$1" esc >/dev/null
+  while asking "$1" && ((SECONDS - t < 10)); do sleep 1; done
 }
 
 # record_answer run-dir text: one of the human's answers on the task, into its decisions log
