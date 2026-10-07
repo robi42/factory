@@ -406,7 +406,9 @@ context_of() {
   run human_gate plan planner "$TMP" <<<"a"
   [ "$status" -eq 0 ]
   [[ $output != *"via file"* ]]
-  [ ! -e "$TMP/reject.md" ] && [ ! -e "$TMP/aborted" ] && [ ! -e "$TMP/allow-protected" ]
+  [ ! -e "$TMP/reject.md" ]
+  [ ! -e "$TMP/aborted" ]
+  [ ! -e "$TMP/allow-protected" ]
 }
 
 @test "plan approval: the planner's change note is shown once, below the revised plan" {
@@ -573,7 +575,8 @@ context_of() {
   [ "$status" -eq 3 ]
   [[ $output == *"aborted via file"* ]]
   [ "$(cat "$TMP/seen")" = "plan $$" ]
-  [ ! -e "$TMP/waiting" ] && [ ! -e "$TMP/aborted" ]
+  [ ! -e "$TMP/waiting" ]
+  [ ! -e "$TMP/aborted" ]
 }
 
 @test "approve, reject and abort find the task worktree and need a run waiting there" {
@@ -607,7 +610,9 @@ context_of() {
     [ "$status" -eq 1 ]
     [[ $output == *"Factory's terminal is taking a note on toy-9; finish it there"* ]]
   done
-  [ ! -e "$run/approved" ] && [ ! -e "$run/reject.md" ] && [ ! -e "$run/aborted" ]
+  [ ! -e "$run/approved" ]
+  [ ! -e "$run/reject.md" ]
+  [ ! -e "$run/aborted" ]
   printf 'build %s\n' "$$" >"$run/waiting"
   run cmd_approve "$REPO" toy-9 --allow-protected
   [ "$status" -eq 1 ]
@@ -654,7 +659,8 @@ context_of() {
   [ "$(cat "$run/asking-plan")" = "toolu_1	$TMP/transcript.jsonl" ]
   printf 'id,n\n' >"$TMP/wt-9/sample.csv"
   CWD=$TMP/wt-9/src dialog Format "Which format?" '[{"label":"CSV"},{"label":"JSON"}]' CSV "keep the header" | cmd_dialog_hook plan toy-9 "$run"
-  [ ! -e "$run/asking-plan" ] && [ ! -e "$run/tree-at-ask" ]
+  [ ! -e "$run/asking-plan" ]
+  [ ! -e "$run/tree-at-ask" ]
   [ "$(cat "$run/tree-at-answer")" = "?? sample.csv" ]
   [ "$(cat "$TMP/recorded")" = "the planner asked: Which format? Answer: CSV Notes: keep the header" ]
   dialog Format "Which?" '[{"label":"CSV"}]' "(notes only)" "either works" | cmd_dialog_hook plan toy-9 "$run"
@@ -686,10 +692,12 @@ context_of() {
   # Factory's own dialog, while the plan waits
   printf 'plan %s\n' "$$" >"$run/waiting"
   dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan toy-9 "$run"
-  [ -e "$run/approved" ] && [ ! -e "$run/allow-protected" ]
+  [ -e "$run/approved" ]
+  [ ! -e "$run/allow-protected" ]
   rm -f "$run/approved"
   dialog "fy plan" "$q" "$opts" "Approve, allow protected paths" | cmd_dialog_hook plan toy-9 "$run"
-  [ -e "$run/approved" ] && [ -e "$run/allow-protected" ]
+  [ -e "$run/approved" ]
+  [ -e "$run/allow-protected" ]
   rm -f "$run/approved" "$run/allow-protected"
   dialog "fy plan" "$q" "$opts" Abort | cmd_dialog_hook plan toy-9 "$run"
   [ -e "$run/aborted" ]
@@ -711,7 +719,9 @@ context_of() {
   run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" '[{"label":"Approve"},{"label":"Maybe"}]' Maybe)
   [ "$status" -eq 1 ]
   [[ $output == *'choice "Maybe" is none Factory knows'* ]]
-  [ ! -e "$run/approved" ] && [ ! -e "$run/reject.md" ] && [ ! -e "$run/aborted" ]
+  [ ! -e "$run/approved" ]
+  [ ! -e "$run/reject.md" ]
+  [ ! -e "$run/aborted" ]
 }
 
 @test "record_answer: each answer goes into the run dir's decisions and onto the bead" {
@@ -740,7 +750,8 @@ context_of() {
   [ "${TARGS[*]}" = "$REPO toy-9 --allow-protected" ]
   run main approve --allow-protected
   [ "$status" -eq 0 ]
-  [ -e "$run/approved" ] && [ -e "$run/allow-protected" ]
+  [ -e "$run/approved" ]
+  [ -e "$run/allow-protected" ]
   run main reject use argparse, not getopt
   [ "$(cat "$run/reject.md")" = "use argparse, not getopt" ]
   run main abort
@@ -1001,7 +1012,8 @@ IN
   [ "$status" -eq 0 ]
   [[ $output == *"revert asked: You changed files"*" M run.sh"* ]]
   [[ $output != *"sample.csv"* && $output != *"other.csv"* ]]
-  [ -e "$WT/sample.csv" ] && [ -e "$WT/other.csv" ]
+  [ -e "$WT/sample.csv" ]
+  [ -e "$WT/other.csv" ]
   [ "$(cat "$WT/run.sh")" = "echo hi" ]
 }
 
@@ -1078,14 +1090,16 @@ IN
   }
   printf 'APPROVE\n' >"$TMP/verdict"
   build_phase "$TMP" >"$TMP/out" 2>&1
-  [ "$VERDICT" = APPROVE ] && [ "$ROUND" -eq 2 ]
+  [ "$VERDICT" = APPROVE ]
+  [ "$ROUND" -eq 2 ]
   grep -q 'asked builder: The human reviewed the implementation' "$TMP/out"
   grep -q 'review round 2' "$TMP/out"
   # the reviewers asking for more in that extra round still end the run
   rm -f "$TMP/noted"
   human_gate() { HUMAN_NOTE="rename the flag" && printf 'REVISE\n' >"$TMP/verdict" && return 4; }
   build_phase "$TMP" >"$TMP/out" 2>&1
-  [ "$VERDICT" = REVISE ] && [ "$ROUND" -eq 2 ]
+  [ "$VERDICT" = REVISE ]
+  [ "$ROUND" -eq 2 ]
 }
 
 @test "plan approval: a note gets a plan round of its own, its reviewers told of the note" {
