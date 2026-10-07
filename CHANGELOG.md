@@ -18,6 +18,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 - Every answer you give on a task, the planner's questions included, goes into
   `.factory/run/decisions.md`, onto the bead as a comment, and into the pull request's
   description. A planner that starts over reads it before asking again.
+- A run that opens a pull request (`--pr`, `FACTORY_PR=1`) checks at its start, before it
+  claims a bead, that origin takes a push without a prompt, with a dry-run push that sends
+  nothing. A missing credential or write access stops the run there, with git's error,
+  instead of at the push after the work.
 
 ### Changed
 - The planner asks its questions in its own question dialog, with options where they

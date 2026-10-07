@@ -182,6 +182,32 @@ context_of() {
   [[ $output == *"(low, medium, high, xhigh, max, ultra)"* ]]
 }
 
+@test "check_push: a run that opens a pull request first checks that origin takes a push without a prompt, and pushes nothing" {
+  make_repo
+  gh() { :; } # installed
+  FACTORY_PR=0
+  run check_push "$REPO" # no pull request, no check, origin or not
+  [ "$status" -eq 0 ]
+  FACTORY_PR=1
+  run check_push "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"$REPO has no origin remote to push the pull request's branch to"* ]]
+  add_origin
+  git() { # the push may not ask for credentials
+    [[ $* != *" push "* ]] || printf '%s\n' "${GIT_TERMINAL_PROMPT:-unset}" >>"$TMP/prompt"
+    command git "$@"
+  }
+  run check_push "$REPO"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMP/prompt")" = 0 ]
+  [ -z "$(git -C "$TMP/origin.git" for-each-ref 'refs/heads/factory/')" ] # a dry run
+  # an origin that takes no push: git says why, then Factory what to do
+  git -C "$REPO" remote set-url origin "$TMP/gone.git"
+  run check_push "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"gone.git"*"origin takes no push from $REPO without a prompt"*"gh auth setup-git"*"FACTORY_PR=0"* ]]
+}
+
 @test "guard: clean committed change passes" {
   make_repo
   printf 'echo hello\n' >"$REPO/run.sh"

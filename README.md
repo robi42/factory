@@ -239,6 +239,11 @@ clean or recommends approval (its nits left open), or until the builder answers 
 without changing anything. Copilot never approves formally, only in its review text.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
 
+Such a run checks at its start, before it claims a bead, that origin takes a push without a
+prompt: a dry-run push, which sends nothing, has the remote check git's credentials and
+your write access. A missing credential stops the run there, with git's error, rather
+than at the push hours later.
+
 <br clear="all">
 
 ### Run artifacts

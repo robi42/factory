@@ -61,6 +61,21 @@ check_efforts() {
   done
 }
 
+# check_push repo: a run with FACTORY_PR=1 ends by pushing its branch, maybe hours later with
+# nobody at the terminal, so origin must take a push without a prompt; that is checked here,
+# before a bead is claimed. A dry run has the remote check the credentials and the write
+# access, and sends nothing.
+check_push() {
+  local out
+  ((FACTORY_PR)) || return 0
+  need gh
+  git -C "$1" remote get-url origin >/dev/null 2>&1 || die "$1 has no origin remote to push the pull request's branch to"
+  if ! out=$(GIT_TERMINAL_PROMPT=0 git -C "$1" push --dry-run --quiet origin HEAD:refs/heads/factory/push-check 2>&1); then
+    printf '%s\n' "$out" >&2
+    die "origin takes no push from $1 without a prompt, so the run could not open its pull request; fix git's credentials (for GitHub over https: gh auth setup-git), or run without --pr (FACTORY_PR=0)"
+  fi
+}
+
 row() { printf '  %-54s %s\n' "$1" "$2"; }
 
 usage() {
@@ -2321,6 +2336,7 @@ main() {
       ((${#ARGS[@]} == 2)) || die "usage: factory run [--pr] [--auto] [--no-copilot] [--fresh] <repo> <bead-id | \"task title\">"
       need_all "${RUN_TOOLS[@]}"
       check_efforts
+      check_push "${ARGS[0]}"
       run_task "${ARGS[0]}" "${ARGS[1]}"
       ;;
     next)
@@ -2328,6 +2344,7 @@ main() {
       ((${#ARGS[@]} == 1)) || die "usage: factory next [--pr] [--auto] [--no-copilot] [--fresh] <repo>"
       need_all "${RUN_TOOLS[@]}"
       check_efforts
+      check_push "${ARGS[0]}"
       cmd_next "${ARGS[0]}"
       ;;
     queue)
@@ -2335,6 +2352,7 @@ main() {
       ((${#ARGS[@]} >= 1)) || die "usage: factory queue [--pr] [--auto] [--no-copilot] [--fresh] <repo> [max]"
       need_all "${RUN_TOOLS[@]}"
       check_efforts
+      check_push "${ARGS[0]}"
       cmd_queue "${ARGS[@]}"
       ;;
     sync)
