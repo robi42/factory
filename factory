@@ -1552,6 +1552,9 @@ start_or_adopt_agents() {
     return 0
   fi
   [[ $live == 0 ]] || die "some agents of $TASK_ID are still alive in workspace $WS; run: factory clean $repo $TASK_ID --force"
+  # a question the old agents left open went with their sessions, whose transcripts will
+  # never close it: its marks would have the fresh agents wait for an answer forever
+  rm -f "$WT/$RUN_DIR/asking-plan" "$WT/$RUN_DIR/asking-build" "$WT/$RUN_DIR/tree-at-ask"
   close_extra_panes "$WS" "$BUILD_PANE"
   # builder left, planner over reviewer right; equal columns, the planner a little taller
   plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.5 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')

@@ -1813,6 +1813,47 @@ JSON
   [ "$(live_agents w2 t-plan)" = 0 ]
 }
 
+@test "start_or_adopt_agents: fresh agents drop the marks of questions their predecessors left open; live ones keep them" {
+  fake_task
+  PLAN_AGENT=toy-1-plan BUILD_AGENT=toy-1-build REVIEW_AGENT=toy-1-review
+  WS=w1 WT=$TMP BUILD_PANE=p0 FACTORY_HOME=$TMP/factory
+  local run="$TMP/$RUN_DIR" tp="$TMP/transcript.jsonl" f
+  mkdir -p "$run"
+  : >"$tp" # the dead session's: the call, never its result
+  printf 'toolu_1\t%s\n' "$tp" >"$run/asking-plan"
+  printf 'toolu_2\t%s\n' "$tp" >"$run/asking-build"
+  : >"$run/tree-at-ask"
+  herdr() {
+    case "$*" in
+      "agent list"*) printf '{"result":{"agents":[]}}' ;;
+      "pane list"*) printf '{"result":{"panes":[]}}' ;;
+      "pane split"*) printf '{"result":{"pane":{"pane_id":"p1"}}}' ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  prime_shell() { :; }
+  start_agent() { printf '%s\n' "$1" >>"$TMP/started"; }
+  run start_or_adopt_agents "$TMP/repo"
+  [ "$status" -eq 0 ]
+  [ "$(paste -sd, "$TMP/started")" = toy-1-plan,toy-1-build,toy-1-review ]
+  for f in asking-plan asking-build tree-at-ask; do
+    [ ! -e "$run/$f" ]
+  done
+  # the task's live agents are adopted with their questions, which may still be open
+  printf 'toolu_1\t%s\n' "$tp" >"$run/asking-plan"
+  herdr() {
+    case "$*" in
+      "agent list"*) printf '{"result":{"agents":[{"name":"toy-1-plan","workspace_id":"w1"},{"name":"toy-1-build","workspace_id":"w1"},{"name":"toy-1-review","workspace_id":"w1"}]}}' ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  settle_dialogs() { :; }
+  run start_or_adopt_agents "$TMP/repo"
+  [ "$status" -eq 0 ]
+  [[ $output == *"reusing the live agents of toy-1"* ]]
+  [ -e "$run/asking-plan" ]
+}
+
 @test "guard: a repo's own .factory/guardrails.txt replaces the default list" {
   make_repo
   printf 'FORBIDDEN_WORD\n' >"$REPO/.factory/guardrails.txt"
