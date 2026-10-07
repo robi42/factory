@@ -622,13 +622,14 @@ context_of() {
   [[ $output == *"no worktree"* ]]
 }
 
-@test "dialog_hooks: the agents' question dialogs report to factory dialog-hook as they open, when answered, and as each turn ends" {
-  FACTORY_HOME="$TMP/my factory"
+@test "dialog_hooks: the agents' question dialogs report to factory dialog-hook, told the task and its run dir, as they open, when answered, and as each turn ends" {
+  FACTORY_HOME="$TMP/my factory" TASK_ID=toy-9 WT=$TMP/wt-9
   run dialog_hooks plan
   [ "$status" -eq 0 ]
   [ "$(jq -r '.hooks.PreToolUse[0].matcher, .hooks.PostToolUse[0].matcher' <<<"$output" | paste -sd,)" = AskUserQuestion,AskUserQuestion ]
   [ "$(jq -r '.hooks.Stop[0].matcher // "every turn"' <<<"$output")" = "every turn" ]
-  [ "$(jq -r '[.hooks[][0].hooks[0].command] | unique | .[]' <<<"$output")" = "$TMP/my\\ factory/factory dialog-hook plan" ]
+  [ "$(jq -r '.hooks.Stop[0].hooks[0].command' <<<"$output")" = "$TMP/my\\ factory/factory dialog-hook plan toy-9 $TMP/wt-9/.factory/run" ]
+  [ "$(jq -r '[.hooks[][0].hooks[0].command] | unique | length' <<<"$output")" -eq 1 ]
 }
 
 @test "dialog-hook: Factory's approval dialog answers the gate as approve, reject and abort do; other answers are recorded" {
@@ -637,63 +638,76 @@ context_of() {
   local run="$TMP/wt-9/.factory/run" opts='[{"label":"Approve"},{"label":"Approve, allow protected paths"},{"label":"Abort"}]'
   local q="Approve the plan for toy-9, or type a note to have it revised?"
   hook() { # event [cwd] -> a hook's input with no answer in it
-    jq -n --arg e "$1" --arg cwd "${2:-$TMP/wt-9}" '{cwd: $cwd, hook_event_name: $e, tool_name: "AskUserQuestion"}'
+    jq -n --arg e "$1" --arg cwd "${2:-$TMP/wt-9}" --arg tp "$TMP/transcript.jsonl" \
+      '{cwd: $cwd, hook_event_name: $e, tool_name: "AskUserQuestion", tool_use_id: "toolu_1", transcript_path: $tp}'
   }
   dialog() { # header question options answer [notes] -> the answered dialog's hook input, as Claude Code sends it
     jq -n --arg cwd "${CWD:-$TMP/wt-9}" --arg h "$1" --arg q "$2" --argjson o "$3" --arg a "$4" --arg n "${5:-}" \
       '{cwd: $cwd, hook_event_name: "PostToolUse", tool_name: "AskUserQuestion", tool_input: {questions: [{header: $h, question: $q, options: $o}]}, tool_response: ({answers: {($q): $a}} + if $n == "" then {} else {annotations: {($q): {notes: $n}}} end)}'
   }
-  # the planner's own question: asking from the dialog's opening to its answer. What changed
-  # meanwhile is the human's, what the planner changed before is not, wherever its cwd.
+  # the planner's own question: its mark names the tool call. What changed while it was open is
+  # the human's, what the planner changed before is not, whatever the agent's cwd.
   mkdir "$TMP/wt-9/src"
   printf 'sneaky\n' >>"$TMP/wt-9/run.sh"
-  hook PreToolUse "$TMP/wt-9/src" | cmd_dialog_hook plan
-  [ -e "$run/asking-plan" ]
+  hook PreToolUse "$TMP/wt-9/src" | cmd_dialog_hook plan toy-9 "$run"
+  [ "$(cat "$run/asking-plan")" = "toolu_1	$TMP/transcript.jsonl" ]
   printf 'id,n\n' >"$TMP/wt-9/sample.csv"
-  CWD=$TMP/wt-9/src dialog Format "Which format?" '[{"label":"CSV"},{"label":"JSON"}]' CSV "keep the header" | cmd_dialog_hook plan
-  [ ! -e "$run/asking-plan" ]
+  CWD=$TMP/wt-9/src dialog Format "Which format?" '[{"label":"CSV"},{"label":"JSON"}]' CSV "keep the header" | cmd_dialog_hook plan toy-9 "$run"
+  [ ! -e "$run/asking-plan" ] && [ ! -e "$run/tree-at-ask" ]
   [ "$(cat "$run/tree-at-answer")" = "?? sample.csv" ]
   [ "$(cat "$TMP/recorded")" = "the planner asked: Which format? Answer: CSV Notes: keep the header" ]
-  dialog Format "Which?" '[{"label":"CSV"}]' "(notes only)" "either works" | cmd_dialog_hook plan
+  dialog Format "Which?" '[{"label":"CSV"}]' "(notes only)" "either works" | cmd_dialog_hook plan toy-9 "$run"
   [ "$(tail -1 "$TMP/recorded")" = "the planner asked: Which? Answer: (no option) Notes: either works" ]
+  # Chat about this closes a dialog with no answer: the turn's end clears the mark, and what the
+  # human changed meanwhile is still theirs
+  hook PreToolUse | cmd_dialog_hook plan toy-9 "$run"
+  printf 'more\n' >"$TMP/wt-9/notes.txt"
+  hook Stop | cmd_dialog_hook plan toy-9 "$run"
+  [ ! -e "$run/asking-plan" ]
+  [ "$(tail -1 "$run/tree-at-answer")" = "?? notes.txt" ]
   git -C "$TMP/wt-9" checkout -q -- run.sh
-  rm -f "$TMP/wt-9/sample.csv"
-  # Esc on a dialog runs no hook at all; the turn's end clears the mark
-  hook PreToolUse | cmd_dialog_hook build
+  rm -f "$TMP/wt-9/sample.csv" "$TMP/wt-9/notes.txt" "$run/tree-at-answer"
+  # the hook as Claude Code runs it, through main
+  run main dialog-hook build toy-9 "$run" < <(hook PreToolUse)
+  [ "$status" -eq 0 ]
   [ -e "$run/asking-build" ]
-  hook Stop | cmd_dialog_hook build
+  hook Stop | cmd_dialog_hook build toy-9 "$run"
   [ ! -e "$run/asking-build" ]
-  # outside a task's worktree there is nothing to mark, and an answer says so
-  hook PreToolUse "$TMP" | cmd_dialog_hook plan
-  run cmd_dialog_hook plan < <(CWD=$TMP dialog Format "Which format?" '[{"label":"CSV"}]' CSV)
+  # no run dir: nothing to mark, and an answer says so
+  hook PreToolUse | cmd_dialog_hook plan toy-9 "$TMP/gone"
+  run cmd_dialog_hook plan toy-9 "$TMP/gone" < <(dialog Format "Which format?" '[{"label":"CSV"}]' CSV)
   [ "$status" -eq 1 ]
-  [[ $output == *"is no task's worktree; the answer went to the agent only"* ]]
+  [[ $output == *"no run dir of a task for this dialog; the answer went to the agent only"* ]]
+  # an agent's hook from before it was told them finds the task by its cwd
+  hook PreToolUse | cmd_dialog_hook plan
+  [ -e "$run/asking-plan" ]
+  rm -f "$run/asking-plan" "$run/tree-at-ask"
   # Factory's own dialog, while the plan waits
   printf 'plan %s\n' "$$" >"$run/waiting"
-  dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan
+  dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan toy-9 "$run"
   [ -e "$run/approved" ] && [ ! -e "$run/allow-protected" ]
   rm -f "$run/approved"
-  dialog "fy plan" "$q" "$opts" "Approve, allow protected paths" | cmd_dialog_hook plan
+  dialog "fy plan" "$q" "$opts" "Approve, allow protected paths" | cmd_dialog_hook plan toy-9 "$run"
   [ -e "$run/approved" ] && [ -e "$run/allow-protected" ]
   rm -f "$run/approved" "$run/allow-protected"
-  dialog "fy plan" "$q" "$opts" Abort | cmd_dialog_hook plan
+  dialog "fy plan" "$q" "$opts" Abort | cmd_dialog_hook plan toy-9 "$run"
   [ -e "$run/aborted" ]
   rm -f "$run/aborted"
   local note=$'keep `x` as is, don\'t touch $HOME\nand split it'
-  dialog "fy plan" "$q" "$opts" "$note" | cmd_dialog_hook plan
+  dialog "fy plan" "$q" "$opts" "$note" | cmd_dialog_hook plan toy-9 "$run"
   [ "$(cat "$run/reject.md")" = "$note" ]
   rm -f "$run/reject.md"
   # a dialog for another gate, a closed gate, or a choice Factory did not offer: nothing sent
   printf 'build %s\n' "$$" >"$run/waiting"
-  run cmd_dialog_hook plan < <(dialog "fy plan" "$q" "$opts" Approve)
+  run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" "$opts" Approve)
   [ "$status" -eq 1 ]
   [[ $output == *"that dialog was about the plan of toy-9, whose build waits now"* ]]
   rm -f "$run/waiting"
-  run cmd_dialog_hook plan < <(dialog "fy plan" "$q" "$opts" Approve)
+  run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" "$opts" Approve)
   [ "$status" -eq 1 ]
   [[ $output == *"nothing of toy-9 waits for approval"* ]]
   printf 'plan %s\n' "$$" >"$run/waiting"
-  run cmd_dialog_hook plan < <(dialog "fy plan" "$q" '[{"label":"Approve"},{"label":"Maybe"}]' Maybe)
+  run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" '[{"label":"Approve"},{"label":"Maybe"}]' Maybe)
   [ "$status" -eq 1 ]
   [[ $output == *'choice "Maybe" is none Factory knows'* ]]
   [ ! -e "$run/approved" ] && [ ! -e "$run/reject.md" ] && [ ! -e "$run/aborted" ]
@@ -971,10 +985,13 @@ IN
         git -C "$WT" checkout -q -- run.sh
         ;;
       *)
-        printf 'sneaky\n' >>"$WT/run.sh"       # the planner's change, before it asks
-        hook PreToolUse | cmd_dialog_hook plan # its dialog opens
-        printf 'id,n\n' >"$WT/sample.csv"      # the human drops a sample in while answering
-        hook PostToolUse | cmd_dialog_hook plan
+        printf 'sneaky\n' >>"$WT/run.sh" # the planner's change, before it asks
+        hook PreToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR"
+        printf 'id,n\n' >"$WT/sample.csv" # the human drops a sample in while answering
+        hook PostToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR"
+        hook PreToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" # a second question
+        printf 'x,y\n' >"$WT/other.csv"
+        hook PostToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR"
         printf 'the plan\n' >"$WT/$RUN_DIR/plan.md"
         ;;
     esac
@@ -982,8 +999,8 @@ IN
   run write_plan planner
   [ "$status" -eq 0 ]
   [[ $output == *"revert asked: You changed files"*" M run.sh"* ]]
-  [[ $output != *"sample.csv"* ]]
-  [ -e "$WT/sample.csv" ]
+  [[ $output != *"sample.csv"* && $output != *"other.csv"* ]]
+  [ -e "$WT/sample.csv" ] && [ -e "$WT/other.csv" ]
   [ "$(cat "$WT/run.sh")" = "echo hi" ]
 }
 
@@ -1509,23 +1526,27 @@ JSON
   [[ $(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,) == *"agent prompt"*"agent wait"*"agent prompt"* ]]
 }
 
-@test "asking: a question dialog, its review step, or its mark while an editor hides it; not once the prompt is back" {
+@test "asking: the transcript tells whether a marked question is open; without a mark, the last lines of the screen" {
   WT=$TMP PLAN_AGENT=t-plan
-  mkdir -p "$TMP/.factory/run"
+  local run="$TMP/.factory/run" tp="$TMP/transcript.jsonl"
+  mkdir -p "$run"
   herdr() { cat "$TMP/screen"; }
-  printf ' ☐ Fmt\nWhich?\n❯ 1. CSV\n  2. JSON\nEnter to select · ↑/↓ to\nnavigate · Esc to cancel\n' >"$TMP/screen" # wrapped in a narrow pane
+  : >"$TMP/screen" # an editor or the transcript view: nothing of the dialog shows
+  : >"$tp"
+  printf 'toolu_1\t%s\n' "$tp" >"$run/asking-plan"
+  asking t-plan
+  printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true}]}}\n' >>"$tp"
+  run asking t-plan # Esc wrote the result, and ran no hook
+  [ "$status" -eq 1 ]
+  [ ! -e "$run/asking-plan" ]
+  printf ' ☐ Fmt\nWhich?\n❯ 1. CSV\nEnter to select · ↑/↓ to\nnavigate · Esc to cancel\n────\n' >"$TMP/screen" # wrapped in a narrow pane
   asking t-plan
   printf 'Review your answers\nReady to submit your answers?\n❯ 1. Submit answers\n  2. Cancel\n' >"$TMP/screen"
   asking t-plan
-  printf '~\n~\n-- INSERT --\n' >"$TMP/screen" # the editor ctrl+g opened over the dialog
-  run asking t-plan
-  [ "$status" -eq 1 ] # the screen alone cannot tell
-  : >"$TMP/.factory/run/asking-plan"
-  asking t-plan
-  printf '● User declined to answer questions\n────\n❯ \n────\n' >"$TMP/screen" # Esc: no hook, but the prompt is back
+  # the agent's own text quoting a footer, above its prompt, asks nothing
+  printf 'It reads Enter to select · ↑/↓ to navigate\n\n✻ Done\n────\n❯ \n────\n  Opus 5.5\n  ⏵⏵ auto mode on\n' >"$TMP/screen"
   run asking t-plan
   [ "$status" -eq 1 ]
-  [ ! -e "$TMP/.factory/run/asking-plan" ]
 }
 
 @test "await_answer: Factory's own approval dialog, left from a gate that has ended, goes with Esc" {
@@ -1534,7 +1555,8 @@ JSON
   herdr() {
     case "$*" in
       "agent read"*)
-        if [[ -s $TMP/keys ]]; then
+        printf 'x' >>"$TMP/reads"
+        if [[ -s $TMP/keys ]] || (($(wc -c <"$TMP/reads") > 20)); then # gone, or a regression gives up
           printf '❯ \n'
         else
           printf ' ☐ fy build\nApprove the build for toy-1?\n❯ 1. Approve\nEnter to select · ↑/↓ to navigate · Esc to cancel\n'
