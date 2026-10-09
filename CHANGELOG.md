@@ -71,6 +71,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   `CARGO_ENCODED_RUSTFLAGS="--cap-lints=allow"` for every mise shim, and clippy passed. Such
   a file now fails the guardrails, waiver or not. Exempt are `.factory/run/`, and your own
   `.factory/env` in the repo's main checkout, where no agent works.
+- Since 0.1.11 the check for uncommitted changes counted your own `.factory/env` in the
+  repo's main checkout, where you may keep it untracked and `fy check` reads it, so
+  `fy check` failed there. It is left out there again, as the ignored-file check leaves it
+  out; in a task's worktree it still counts.
 
 ## [0.1.11] - 2026-10-05
 

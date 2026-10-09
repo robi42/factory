@@ -1088,6 +1088,23 @@ IN
   [[ $output == *"passed (gate-2)"*"review-2: APPROVE"*"review-2-plan: REVISE"*"waived by the human"* ]]
 }
 
+@test "guard: the human's own .factory/env may lie untracked in the main checkout, not in a task's worktree" {
+  make_repo
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  printf 'FACTORY_PR=1\n' >"$REPO/.factory/env" # the human's knobs, which fy check reads here
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  task_worktree
+  printf 'echo hello\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam change
+  printf 'FACTORY_GATE=true\n' >"$TMP/wt-9/.factory/env" # an agent's, which fy check would read there
+  run guard_check "$TMP/wt-9" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"uncommitted changes in the worktree"* ]]
+}
+
 @test "guard: an ignored file at a protected path fails, whether the repo or the user ignores it" {
   make_repo
   printf ':(glob)**/.mise*.toml\n.cargo/config*\n' >"$REPO/.factory/protected"

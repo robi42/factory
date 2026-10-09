@@ -696,11 +696,15 @@ kept_out() {
   fi
 }
 
-# tree_state worktree -> git's status line for each file changed or added outside Factory's
-# own run dir; the rest of .factory/, the gate among it, is the repo's
-tree_state() { git -C "$1" status --porcelain --untracked-files=all -- . ":(exclude)$RUN_DIR"; }
+# tree_state worktree -> git's status line for each file changed or added, the gate, the rules
+# and the rest of .factory/ included, but for what kept_out leaves out
+tree_state() {
+  local kept
+  mapfile -t kept < <(kept_out "$1")
+  git -C "$1" status --porcelain --untracked-files=all -- . "${kept[@]}"
+}
 
-# tree_dirty worktree: 0 when files outside Factory's run dir changed or appeared
+# tree_dirty worktree: 0 when tree_state lists a file
 tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 
 # guard_check worktree base: mechanical guardrails on the branch. Prints violations. Git lists
