@@ -67,12 +67,14 @@ plan_ready() {
   plan_round() { printf 'plan round %s on the note: %s\n' "$1" "$2"; }
 }
 
-# gate_opens: wait, up to 10 s, until the gate in $TMP listens for the plan, as a human in a
-# pane would; a gate that never opens then fails its test instead of hanging it
+# gate_opens [kind]: wait until the gate in $TMP listens for the plan (or the build), as a
+# human in a pane would: an answer sent before would be one the gate drops as stale. After a
+# minute it gives up and lets the answer go, so that a gate that never opens fails its test
+# instead of hanging it; on a busy machine a gate can take many seconds to open.
 gate_opens() {
   local _
-  for _ in $(seq 100); do
-    grep -qs '^plan ' "$TMP/waiting" && return 0
+  for _ in $(seq 600); do
+    grep -qs "^${1:-plan} " "$TMP/waiting" && return 0
     sleep 0.1
   done
 }
@@ -956,9 +958,9 @@ IN
   [ "$rc" -eq 4 ]
   [ "$HUMAN_NOTE" = "rename it" ]
   (
-    sleep 2
+    gate_opens build
     printf 'use a table\n' >"$TMP/reject.md"
-  ) &
+  ) 3>&- &
   pause_for_pane_reply() { gate_waiting "$TMP" >"$TMP/paused" || printf closed >"$TMP/paused"; }
   rc=0
   human_gate build builder "$TMP" </dev/null || rc=$?
