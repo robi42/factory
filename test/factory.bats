@@ -466,6 +466,23 @@ context_of() {
   [[ $output == *"latin1.sh: run_thing $pipe true"* ]]
 }
 
+@test "guard: lines grep would read together with a NUL further on are checked" {
+  make_repo
+  # Build the bad strings at runtime so this file passes its own guard check.
+  local hash='#' i
+  # GNU grep prints nothing of a read in which it meets a NUL, the lines before the NUL too.
+  {
+    printf '%s[allow(dead_code)]\nfn unused() {}\n' "$hash"
+    for ((i = 0; i < 400; i++)); do printf '// line %03d of a file longer than 8000 bytes\n' "$i"; done
+    printf '// a NUL \0 in a comment\n'
+  } >"$REPO/before.rs"
+  commit_all nul
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"NUL byte added to a file not known as binary data: before.rs"* ]]
+  [[ $output == *"before.rs: ${hash}[allow(dead_code)]"* ]]
+}
+
 @test "guard: a script with the bytes of binary data is still text, its lines checked" {
   make_repo
   # Build the bad strings at runtime so this file passes its own guard check.
@@ -489,6 +506,39 @@ context_of() {
   printf '*.sh binary\n' >"$REPO/.gitattributes"
   printf 'run_thing %s true\n' "$pipe" >"$REPO/run.sh"
   commit_all bad
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"run.sh: run_thing $pipe true"* ]]
+}
+
+@test "guard: a binary attribute from outside the tree, or core.bigFileThreshold, hides none of a file's lines" {
+  make_repo
+  local pipe='||' attr
+  printf 'run_thing %s true\n' "$pipe" >"$REPO/run.sh"
+  commit_all bad
+  # Besides .gitattributes, git reads .git/info/attributes, the file core.attributesFile names
+  # and, when it names none, git/attributes under XDG_CONFIG_HOME: no diff shows any of them.
+  for attr in binary -diff; do
+    printf '*.sh %s\n' "$attr" >"$REPO/.git/info/attributes"
+    run guard_check "$REPO" main
+    printf 'with %s in .git/info/attributes:\n%s\n' "$attr" "$output"
+    [ "$status" -eq 1 ]
+    [[ $output == *"run.sh: run_thing $pipe true"* ]]
+  done
+  rm "$REPO/.git/info/attributes"
+  printf '*.sh binary\n' >"$TMP/attributes"
+  git -C "$REPO" config core.attributesFile "$TMP/attributes"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"run.sh: run_thing $pipe true"* ]]
+  git -C "$REPO" config --unset core.attributesFile
+  mkdir -p "$TMP/xdg/git"
+  mv "$TMP/attributes" "$TMP/xdg/git/attributes"
+  XDG_CONFIG_HOME=$TMP/xdg run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"run.sh: run_thing $pipe true"* ]]
+  # A file larger than core.bigFileThreshold is binary to git, whatever it holds.
+  git -C "$REPO" config core.bigFileThreshold 8
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"run.sh: run_thing $pipe true"* ]]
@@ -530,6 +580,19 @@ context_of() {
   [ "$status" -eq 1 ]
   [[ $output == *"crates/core/tests/naïve.rs: ${hash}[allow(dead_code)]"* ]]
   [[ $output == *":(exclude)hidden.sh: run_thing $pipe true"* ]]
+}
+
+@test "guard: a file whose name holds a | or begins with a colon has its lines checked" {
+  make_repo
+  # Build the bad strings at runtime so this file passes its own guard check.
+  local pipe='||'
+  printf 'run_thing %s true\n' "$pipe" >"$REPO/a|b.sh"
+  printf 'run_thing %s true\n' "$pipe" >"$REPO/:x.sh"
+  commit_all names
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"a|b.sh: run_thing $pipe true"* ]]
+  [[ $output == *":x.sh: run_thing $pipe true"* ]]
 }
 
 @test "guard: a name git would quote counts as code, test, build artifact and protected path" {
