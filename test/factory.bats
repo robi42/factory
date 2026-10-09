@@ -1475,6 +1475,42 @@ JSON
   [ -e "$REPO/fixture.csv" ]
 }
 
+@test "ask: a prompt Herdr calls stalled that went in late gets its turn waited out, not sent again" {
+  herdr() { # the reviewer starts its turn a few looks after the prompt, as Codex did live
+    case "$*" in
+      "agent get"*)
+        printf 'x' >>"$TMP/gets"
+        printf '{"result":{"agent":{"agent_status":"done","state_change_seq":%s}}}' "$(($(wc -c <"$TMP/gets") > 3 ? 5 : 4))"
+        ;;
+      "agent prompt"*)
+        printf '%s\n' "$*" >>"$TMP/prompts"
+        printf '{"error":{"code":"agent_prompt_stalled","message":"no state change within 5000ms"}}'
+        return 1
+        ;;
+      "agent wait"*)
+        printf 'wait\n' >>"$TMP/prompts"
+        printf '{"result":{"agent":{"agent_status":"done"}}}'
+        ;;
+      *) printf '❯ \n' ;;
+    esac
+  }
+  sleep() { :; }
+  run ask t-review "review the plan"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^agent prompt' "$TMP/prompts")" -eq 1 ]
+  [ "$(tail -n 1 "$TMP/prompts")" = wait ] # its turn waited out
+  [[ $output != *"still"* ]]
+  # one that never went in: no state change for 20 s, so it goes again, three times at most
+  rm -f "$TMP/gets" "$TMP/prompts"
+  agent_seq() { printf 4; }
+  sleep() { [[ $1 != 1 ]] || printf s >>"$TMP/slept"; }
+  run ask t-review "review the plan"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c '^agent prompt' "$TMP/prompts")" -eq 3 ]
+  [ "$(wc -c <"$TMP/slept")" -eq $((3 * 19)) ] # each stall watched for 20 s
+  [[ $output == *"t-review: prompt stalled 3 times"* ]]
+}
+
 @test "ask: a turn under way, such as the agent's reply in its pane, ends before the prompt goes in" {
   PLAN_AGENT=planner
   herdr() {
@@ -1486,12 +1522,12 @@ JSON
   }
   printf working >"$TMP/state"
   ask planner "the note"
-  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent wait,agent read,agent prompt,agent read" ]
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent wait,agent read,agent get,agent prompt,agent read" ]
   grep -q '^agent wait planner --until idle --until done --until blocked ' "$TMP/herdr.log"
   printf 'done' >"$TMP/state"
   : >"$TMP/herdr.log"
   ask planner "the note"
-  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent prompt,agent read" ]
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent get,agent prompt,agent read" ]
   # a state it cannot read stops it before any prompt, also inside $(...), where errexit is off
   herdr() {
     printf '%s\n' "$*" >>"$TMP/herdr.log"
@@ -1535,7 +1571,7 @@ JSON
   run ask planner "the plan, please"
   [ "$status" -eq 0 ]
   [[ $output == *"planner is waiting for your input"* ]]
-  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent read,agent read,agent wait,agent read,agent prompt,agent read" ]
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent read,agent read,agent wait,agent read,agent get,agent prompt,agent read" ]
   # a question asked in the turn, which Herdr takes for its end: the human is told, and ask waits
   : >"$TMP/herdr.log"
   : >"$TMP/reads"
@@ -1555,7 +1591,7 @@ JSON
   run ask planner "the plan, please"
   [ "$status" -eq 0 ]
   [[ $output == *"planner is waiting for your input"* ]]
-  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent prompt,agent read,agent read,agent read,agent wait,agent read" ]
+  [ "$(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,)" = "agent get,agent read,agent get,agent prompt,agent read,agent read,agent read,agent wait,agent read" ]
   # a retry after Herdr refused the prompt waits for an open question too
   : >"$TMP/herdr.log"
   : >"$TMP/reads"
@@ -1881,7 +1917,7 @@ JSON
   printf working >"$TMP/state"
   run settle_dialogs t-review
   [ "$status" -eq 1 ]
-  [[ $output == *"t-review: still working after startup"* ]]
+  [[ $output == *"t-review: still working, and nothing on its screen Factory knows to clear"* ]]
 }
 
 @test "live_agents counts the named agents alive in a workspace" {

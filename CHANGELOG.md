@@ -31,6 +31,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 - Factory's startup-dialog settler leaves question dialogs alone, whatever their options
   say.
 
+### Fixed
+- A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
+  as Codex did on a long plan review ("still working after startup"): Factory sees the
+  turn begin and waits it out, instead of dying or sending the prompt twice.
+
 ### Removed
 - `factory answer` and the questions relay (`questions.md`, `answers.md`, the questions
   prompt in Factory's terminal): the planner asks in its dialog.

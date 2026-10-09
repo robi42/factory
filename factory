@@ -144,6 +144,7 @@ attention() { # agent message
 }
 
 agent_status() { h agent get "$1" | jq -r '.result.agent.agent_status'; }
+agent_seq() { h agent get "$1" | jq -r '.result.agent.state_change_seq // 0'; } # Herdr's count of its state changes
 
 # wait_for name timeout_ms state... : block until the agent reaches one of the states.
 # Waits in one-minute chunks: every chunk re-checks the screen for a known dialog, every
@@ -226,7 +227,7 @@ settle_dialogs() {
       return 0
       ;;
   esac
-  die "$name: still $status after startup; look at its pane"
+  die "$name: still $status, and nothing on its screen Factory knows to clear; look at its pane"
 }
 
 # dialog_hooks plan|build -> Claude Code settings for the task's planner or builder: its
@@ -315,7 +316,7 @@ start_agent() {
 
 # ask name text: send a prompt and wait for the turn to settle, handing blocks to the human.
 ask() {
-  local name=$1 text=$2 out status stalls=0
+  local name=$1 text=$2 out status stalls=0 seq
   # a turn under way ends first, the agent's reply to the human or to a command typed in its
   # pane: herdr's wait does not track turns and could match that turn's end instead. When the
   # state cannot be read, h has said why; exit also ends a $(...) caller, where errexit is off.
@@ -323,11 +324,16 @@ ask() {
   [[ $status != working ]] || wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked >/dev/null
   while :; do
     await_answer "$name" # typed into a question dialog, the prompt's Enter would answer it
+    seq=$(agent_seq "$name") || exit 1
     if out=$(herdr agent prompt "$name" "$text" --wait --timeout 60000 2>&1); then
       break
     fi
     case $(herr_code "$out") in
       agent_prompt_stalled)
+        if prompt_landed "$name" "$seq"; then # it went in late: its turn is the answer
+          turn_ends "$name"
+          return 0
+        fi
         stalls=$((stalls + 1))
         ((stalls < 3)) || die "$name: prompt stalled 3 times; look at its pane"
         settle_dialogs "$name"
@@ -336,9 +342,7 @@ ask() {
         unblock "$name"
         ;;
       timeout)
-        status=$(wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked)
-        [[ $status == blocked ]] && unblock "$name"
-        await_answer "$name"
+        turn_ends "$name"
         return 0
         ;;
       *) die "$name: $(herr_msg "$out")" ;;
@@ -348,6 +352,27 @@ ask() {
   [[ $status == blocked ]] && unblock "$name"
   await_answer "$name" # a question Herdr took for the end of the turn
   return 0
+}
+
+# prompt_landed name seq: Herdr calls a submitted prompt stalled when the agent shows no new
+# state within 5 s, but a long prompt can take Codex longer to start its turn (seen live). A
+# state change since seq within 20 s says it went in after all; sent again, it would ask twice.
+prompt_landed() {
+  local i
+  for i in {1..20}; do
+    [[ $(agent_seq "$1") == "$2" ]] || return 0
+    ((i == 20)) || sleep 1
+  done
+  return 1
+}
+
+# turn_ends name: a prompt went in that herdr's wait did not see through: its turn ends, a
+# block goes to the human, and a question waits for its answer
+turn_ends() {
+  local status
+  status=$(wait_for "$1" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked)
+  [[ $status != blocked ]] || unblock "$1"
+  await_answer "$1"
 }
 
 # QUESTION_SCREEN: a Claude Code question dialog: a question's footer, whose first hint survives
