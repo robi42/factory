@@ -337,7 +337,8 @@ after the gate passes and before review:
   `.factory/guardrails.txt`, which replaces Factory's list for that repo and is protected
   like the gate; copy the default and edit it. A pattern sees each added line with diff's
   `+` in front, so `^\+` anchors it at the line's start. Every added line of a text file is
-  read; a binary file, such as an image, has none.
+  read, whatever the git config and attributes say; a binary file, such as an image, has
+  none, and a submodule one, `+Subproject commit` and the id of the commit it points at.
 - No NUL byte added to a file that is not binary data: git and grep would take the file for
   binary and skip its lines. Binary data is a file named as an image, a PDF, a font, an
   archive, audio or video, whose bytes agree: they hold control bytes besides the NUL and

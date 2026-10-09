@@ -442,6 +442,31 @@ context_of() {
   done
 }
 
+@test "guard: the git config hides no submodule the branch adds, nor the line the diff holds for it" {
+  make_repo
+  # The repo's own rule refuses the line of an added submodule, and it protects vendor/.
+  printf '^\\+Subproject commit [0-9a-f]{7,}\n' >"$REPO/.factory/guardrails.txt"
+  printf 'vendor\n' >"$REPO/.factory/protected"
+  commit_all "own rules"
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  git init -q "$TMP/lib"
+  git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m lib
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" vendor/lib
+  commit_all "add lib"
+  local setting
+  for setting in diff.submodule=log diff.submodule=diff diff.ignoreSubmodules=all; do
+    git -C "$REPO" config "${setting%%=*}" "${setting#*=}"
+    run guard_check "$REPO" main
+    printf 'with %s:\n%s\n' "$setting" "$output"
+    [ "$status" -eq 1 ]
+    [[ $output == *"vendor/lib: Subproject commit "* ]]
+    [[ $output == *"protected path changed: vendor/lib"* ]]
+    git -C "$REPO" config --unset "${setting%%=*}"
+  done
+}
+
 @test "guard: a NUL byte added to a text file fails, and the file's lines are checked all the same" {
   make_repo
   # Build the bad strings at runtime so this file passes its own guard check.

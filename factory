@@ -743,7 +743,7 @@ guard_check() {
   while IFS= read -r -d '' f; do
     printf 'build artifact committed: %s\n' "$f"
     bad=1
-  done < <(git -C "$wt" diff --name-only -z --diff-filter=A "$base...HEAD" | LC_ALL=C grep -zE '(^|/)(__pycache__/|node_modules/|\.DS_Store$|.*\.pyc$|.*\.class$|.*\.o$)')
+  done < <(guard_diff "$wt" --name-only -z --diff-filter=A "$base...HEAD" | LC_ALL=C grep -zE '(^|/)(__pycache__/|node_modules/|\.DS_Store$|.*\.pyc$|.*\.class$|.*\.o$)')
   if ((FACTORY_REQUIRE_TESTS)) && ! tests_changed_with_source "$wt" "$base"; then
     printf 'source files changed but no test files did; add or adjust a test\n'
     bad=1
@@ -761,7 +761,7 @@ guard_check() {
     while IFS= read -r -d '' f; do
       printf 'protected path changed: %s\n' "$f"
       bad=1
-    done < <(git -C "$wt" diff --name-only -z "$base...HEAD" -- "${globs[@]}")
+    done < <(guard_diff "$wt" --name-only -z "$base...HEAD" -- "${globs[@]}")
   fi
   # A protected path is one that steers the gate, and an ignored file there steers it unseen:
   # git leaves it out of the branch and its diff, so the waiver, which is for those, has no say.
@@ -781,7 +781,7 @@ guard_check() {
       printf 'symlink to a directory: %s -> %s (the paths under it escape the protected globs)\n' "$f" "$(readlink "$wt/$f")"
       bad=1
     fi
-  done < <(git -C "$wt" diff --name-only -z --diff-filter=AMT "$base...HEAD")
+  done < <(guard_diff "$wt" --name-only -z --diff-filter=AMT "$base...HEAD")
   local hits=0
   local rules patterns lines nul=0
   rules=$(guardrails_file "$wt")
@@ -789,8 +789,7 @@ guard_check() {
   lines=$(mktemp)
   sed -E '/^\s*(#|$)/d' "$rules" >"$patterns"
   # a NUL is rare: each file is looked at for one only when the branch's diff holds one
-  if [[ $(git -C "$wt" diff --text --no-color --no-ext-diff --no-textconv --no-renames -U0 "$base...HEAD" -- . ':(exclude).factory' \
-    | LC_ALL=C tr -cd '\000' | wc -c) -gt 0 ]]; then
+  if [[ $(guard_diff "$wt" --no-renames -U0 "$base...HEAD" -- . ':(exclude).factory' | LC_ALL=C tr -cd '\000' | wc -c) -gt 0 ]]; then
     nul=1
   fi
   while IFS= read -r -d '' f; do
@@ -804,7 +803,7 @@ guard_check() {
     if grep -a -E -f "$patterns" "$lines" | label "$f"; then
       hits=1
     fi
-  done < <(git -C "$wt" diff --name-only -z "$base...HEAD" -- . ':(exclude).factory')
+  done < <(guard_diff "$wt" --name-only -z "$base...HEAD" -- . ':(exclude).factory')
   rm -f "$patterns" "$lines"
   if ((hits)); then
     printf 'the lines above match a forbidden pattern (see %s)\n' "$rules"
@@ -823,15 +822,21 @@ in_view() {
   ((rc == 1))
 }
 
+# guard_diff worktree [git diff args]: git diff in the worktree as git itself writes it,
+# whatever the git config and attributes say, which an agent can write: no colour codes,
+# external diff tool or textconv filter; text, where an attribute, a NUL byte or a file larger
+# than core.bigFileThreshold would have git print "Binary files differ"; and a submodule as
+# the one line that names its commit, never left out (diff.submodule, diff.ignoreSubmodules).
+guard_diff() {
+  git -C "$1" diff --no-color --no-ext-diff --no-textconv --text --submodule=short --ignore-submodules=none "${@:2}"
+}
+
 # added_lines worktree base path: the lines the branch adds to path, each with diff's + still
 # on it, as a repo's rules may anchor on it (^\+). Above a hunk's @@ line are the file headers,
 # +++ among them; below it, each line that begins with a + is an added line, whatever comes
-# after the +. The diff is git's own whatever the config says, which an agent can write: no
-# colour codes, external diff tool or textconv filter. And it is text: no attribute or NUL
-# byte makes git print "Binary files differ" in its place.
+# after the +.
 added_lines() {
-  git -C "$1" diff --text --no-color --no-ext-diff --no-textconv -U0 "$2...HEAD" -- ":(literal)$3" \
-    | sed -n '/^@@/,/^diff /{/^+/p;}'
+  guard_diff "$1" -U0 "$2...HEAD" -- ":(literal)$3" | sed -n '/^@@/,/^diff /{/^+/p;}'
 }
 
 # binary_data worktree path: 0 when the branch's file at path, which holds a NUL byte, is
@@ -861,7 +866,7 @@ tests_changed_with_source() {
   while IFS= read -r -d '' f; do
     [[ $f =~ $TEST_PATH_RE ]] && return 0
     [[ $f =~ $code_re ]] && code=1
-  done < <(git -C "$1" diff --name-only -z "$2...HEAD" -- . ':(exclude).factory')
+  done < <(guard_diff "$1" --name-only -z "$2...HEAD" -- . ':(exclude).factory')
   return "$code"
 }
 

@@ -94,6 +94,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 - A line of `.factory/protected` that git cannot read as a pathspec, such as `:(bogus)x`,
   made git fail in both checks of protected paths, which then read no path and passed; only
   git's own error reached the terminal. The guardrails now fail and say which line.
+- The guardrails let a submodule the branch adds through once the git config, which an
+  agent in a worktree can write, set `diff.submodule` to `log` or `diff`, or
+  `diff.ignoreSubmodules` to `all`: git's diff then held no `+Subproject commit` line for a
+  repo's rule to refuse, or left the submodule out, from the protected-path check too. Every
+  diff the guardrails read is now git's own, whatever the config says.
 
 ## [0.1.11] - 2026-10-05
 
