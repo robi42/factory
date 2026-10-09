@@ -1390,6 +1390,21 @@ IN
   [ "$status" -eq 0 ]
 }
 
+@test "guard: a symlink the branch renames is checked as one it adds" {
+  make_repo
+  printf '/target/\n' >"$REPO/.gitignore"
+  ln -s target/release/app "$REPO/latest-build" # the human's link, into a place git ignores
+  commit_all "ignore target, link the latest build"
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  git -C "$REPO" mv latest-build tool.sh
+  commit_all "rename the link"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"symlink to a place git does not show: tool.sh -> target/release/app"* ]]
+}
+
 @test "guard: a submodule the branch adds or points at another commit fails, waiver or not; one it removes passes" {
   make_repo
   git init -q "$TMP/lib"

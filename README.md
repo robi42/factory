@@ -362,10 +362,10 @@ after the gate passes and before review:
   that protects mise's configs. Factory's own `.factory/run/` is exempt, and so is your
   own `.factory/env` in the repo's main checkout, where `fy check` may run but no agent
   works.
-- No symlink added that leads out of the worktree, into `.git` or into an ignored place,
-  waiver or not: the gate would read through it what no diff shows. A symlink to a
-  directory gives the files under it paths that no protected glob names, so it needs the
-  waiver.
+- No symlink added or renamed that leads out of the worktree, into `.git` or into an
+  ignored place, waiver or not: the gate would read through it what no diff shows. A
+  symlink to a directory gives the files under it paths that no protected glob names, so it
+  needs the waiver.
 - No submodule added or pointed at another commit, waiver or not: the gate would read its
   files, which no diff shows. Commit such a change by hand.
 - The planner must leave the code untouched; what one of its turns changes is sent back once.

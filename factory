@@ -772,6 +772,7 @@ guard_check() {
   # A symlink the branch adds leads the gate where git's paths do not. Out of the worktree, into
   # .git or an ignored place, it reads what no diff shows, waiver or not; to a directory, it
   # gives the files there paths that no protected glob names, which the waiver lets through.
+  # A symlink the branch renames counts as one it adds (--no-renames).
   while IFS= read -r -d '' f; do
     [[ -L $wt/$f ]] || continue
     if ! in_view "$wt" "$(realpath -m --relative-to="$wt" "$wt/$f")"; then
@@ -781,7 +782,7 @@ guard_check() {
       printf 'symlink to a directory: %s -> %s (the paths under it escape the protected globs)\n' "$f" "$(readlink "$wt/$f")"
       bad=1
     fi
-  done < <(guard_diff "$wt" --name-only -z --diff-filter=AMT "$base...HEAD")
+  done < <(guard_diff "$wt" --name-only -z --no-renames --diff-filter=AMT "$base...HEAD")
   # A submodule brings in a tree of its own, which the branch's diff shows as one line, the
   # commit it points at: the gate reads files there that no diff shows, waiver or not.
   while IFS= read -r -d '' f; do
