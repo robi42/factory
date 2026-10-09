@@ -99,6 +99,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   `diff.ignoreSubmodules` to `all`: git's diff then held no `+Subproject commit` line for a
   repo's rule to refuse, or left the submodule out, from the protected-path check too. Every
   diff the guardrails read is now git's own, whatever the config says.
+- A submodule the branch added, or pointed at another commit, brought in files that the gate
+  read and no diff showed, so that no rule saw a line of them. The guardrails now refuse it,
+  waiver or not; such a change is yours to commit.
 
 ## [0.1.11] - 2026-10-05
 

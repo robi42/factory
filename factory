@@ -782,6 +782,12 @@ guard_check() {
       bad=1
     fi
   done < <(guard_diff "$wt" --name-only -z --diff-filter=AMT "$base...HEAD")
+  # A submodule brings in a tree of its own, which the branch's diff shows as one line, the
+  # commit it points at: the gate reads files there that no diff shows, waiver or not.
+  while IFS= read -r -d '' f; do
+    printf 'submodule added or pointed at another commit: %s (the gate would read files no diff shows; leave it for a human to commit)\n' "$f"
+    bad=1
+  done < <(gitlinks "$wt" "$base")
   local hits=0
   local rules patterns lines nul=0
   rules=$(guardrails_file "$wt")
@@ -820,6 +826,16 @@ in_view() {
   [[ $2 != .. && $2 != ../* && $2 != .git && $2 != .git/* ]] || return 1
   git -C "$1" check-ignore -q -- "$2" 2>/dev/null || rc=$?
   ((rc == 1))
+}
+
+# gitlinks worktree base: the paths, NUL-terminated, at which the branch adds a submodule or
+# points one at another commit. git's raw diff gives each change as its modes, ids and status,
+# then its path; a submodule's mode is 160000.
+gitlinks() {
+  local meta f
+  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+    if [[ $meta =~ ^:[0-7]+\ 160000\  ]]; then printf '%s\0' "$f"; fi
+  done < <(guard_diff "$1" --raw -z --no-renames --diff-filter=AMT "$2...HEAD")
 }
 
 # guard_diff worktree [git diff args]: git diff in the worktree as git itself writes it,

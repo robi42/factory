@@ -366,6 +366,8 @@ after the gate passes and before review:
   waiver or not: the gate would read through it what no diff shows. A symlink to a
   directory gives the files under it paths that no protected glob names, so it needs the
   waiver.
+- No submodule added or pointed at another commit, waiver or not: the gate would read its
+  files, which no diff shows. Commit such a change by hand.
 - The planner must leave the code untouched; what one of its turns changes is sent back once.
 
 ## Knobs

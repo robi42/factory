@@ -1390,6 +1390,36 @@ IN
   [ "$status" -eq 0 ]
 }
 
+@test "guard: a submodule the branch adds or points at another commit fails, waiver or not; one it removes passes" {
+  make_repo
+  git init -q "$TMP/lib"
+  git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m lib
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" lib
+  commit_all "add lib"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"submodule added or pointed at another commit: lib"* ]]
+  mkdir -p "$REPO/.factory/run"
+  : >"$REPO/.factory/run/allow-protected" # the waiver is for what the branch's diff shows
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"submodule added or pointed at another commit: lib"* ]]
+  rm "$REPO/.factory/run/allow-protected"
+  # the human's submodule, in the base, which the branch points at another commit
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  git -C "$REPO/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m more
+  commit_all "move lib"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"submodule added or pointed at another commit: lib"* ]]
+  git -C "$REPO" rm -q lib
+  commit_all "remove lib"
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+}
+
 @test "guard: an ignored build artifact passes, and so does the run directory under a protected .factory" {
   make_repo
   printf '.factory\n' >"$REPO/.factory/protected"
