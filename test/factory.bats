@@ -477,6 +477,21 @@ context_of() {
   [[ $output == *$'\033[1;32ma\033[0m\033[1;32mp\033[0m\033[1;33mr\033[0m\033[1;31mb\033[0m'* ]]
 }
 
+@test "gate_dialog_shown: a dialog on the screen counts, however herdr writes the screen" {
+  herdr() { # the dialog's chip first, the rest after a moment, when a grep -q on the pipe has gone
+    printf ' ☐ fy plan\nApprove the plan for toy-1?\n'
+    sleep 0.5
+    printf 'Enter to select · ↑/↓ to navigate · Esc to cancel\n'
+  }
+  gate_dialog_shown planner plan
+  gate_dialog_shown planner
+  run gate_dialog_shown planner build
+  [ "$status" -eq 1 ]
+  herdr() { return 1; } # no screen to read
+  run gate_dialog_shown planner plan
+  [ "$status" -eq 1 ]
+}
+
 @test "approval dialog: shown in the agent's pane when the gate opens, dismissed once answered elsewhere" {
   plan_ready
   herdr() { # the dialog shows once the prompt for it went in, until Esc; Herdr reads the agent as idle

@@ -411,8 +411,14 @@ asking_mark() {
   esac
 }
 
-# gate_dialog_shown agent [plan|build]: the agent shows Factory's approval dialog
-gate_dialog_shown() { herdr agent read "$1" --source visible 2>/dev/null | grep -qE "☐ fy ${2:-(plan|build)}\b"; }
+# gate_dialog_shown agent [plan|build]: the agent shows Factory's approval dialog. The screen
+# is read whole first: grep -q on a pipe stops at its match, and the broken pipe it leaves the
+# reader, which pipefail takes for a failure, would have a dialog on the screen read as none.
+gate_dialog_shown() {
+  local txt
+  txt=$(herdr agent read "$1" --source visible 2>/dev/null) || return 1
+  grep -qE "☐ fy ${2:-(plan|build)}\b" <<<"$txt"
+}
 
 # await_answer name: while the agent asks the human in a question dialog, say so, wait until it
 # is answered, then for the agent's turn to end; a new question is said again. Factory prompts
@@ -497,7 +503,7 @@ repo_prefix() {
 
 # branch_of repo bead-id -> the task's existing branch (factory/<id> or factory/<id>-<slug>), or empty
 branch_of() {
-  git -C "$1" branch --list "factory/$2" "factory/$2-*" --format='%(refname:short)' | head -n1
+  git -C "$1" branch --list "factory/$2" "factory/$2-*" --format='%(refname:short)' | sed -n 1p # reads to the end, unlike head
 }
 
 # bead_of_branch branch -> the bead id in a factory branch name
