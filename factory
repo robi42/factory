@@ -1645,11 +1645,12 @@ start_or_adopt_agents() {
   log "agents up: $PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
 }
 
-# Resume: the run directory records the last completed milestone ("reviewed" once the plan
+# Resume: the run directory records the last completed milestone ("written <round>" once the
+# plan was written or revised, naming the review round it waits for, "reviewed" once the plan
 # was reviewed, "planned" once the human approved the plan, "built <round>" once the reviews
 # and the human approved the build). A rerun skips what is done; --fresh starts over.
 mark() { printf '%s\n' "$*" >"$WT/$RUN_DIR/state"; }
-resume_point() { # -> reviewed | planned | built <round> | (empty)
+resume_point() { # -> written <round> | reviewed | planned | built <round> | (empty)
   if ((FACTORY_FRESH)); then
     rm -f "$WT/$RUN_DIR/state"
     return 0
@@ -1678,21 +1679,32 @@ plan_round() {
   planner_turn "$PLAN_AGENT" "$(plan_fix_prompt "$round" "${2:-}")"
 }
 
-# plan_phase repo: plan (with questions), then plan rounds until both reviewers approve or
-# FACTORY_PLAN_ROUNDS are used up, then human approval. An objection in the last round still
-# gets its revision, which goes on unreviewed.
+# plan_phase repo [round]: plan (with questions), then plan rounds until both reviewers approve
+# or FACTORY_PLAN_ROUNDS are used up, then human approval. An objection in the last round still
+# gets its revision, which goes on unreviewed. Given the round a written plan waits for (the
+# written marker), a rerun reviews that plan from there instead of planning again. The marker
+# is set here, not in plan_round: a note's round at the approval leaves the plan reviewed.
 plan_phase() {
-  local round=1
-  log "planning"
-  rm -f "$WT/$RUN_DIR/plan.md" "$WT/$RUN_DIR"/plan-review-*.md "$WT/$RUN_DIR/plan-changes.md" "$WT/$RUN_DIR/allow-protected" # an earlier plan's would pass as this one's
-  write_plan "$PLAN_AGENT"
-  while :; do
+  local round=${2:-}
+  PLAN_VERDICT=""
+  if [[ $round =~ ^[1-9][0-9]*$ && -s $WT/$RUN_DIR/plan.md ]]; then
+    log "the plan is already written; not planning again"
+    turn_ends "$PLAN_AGENT" # a revision the stopped run asked for may still be under way
+  else
+    round=1
+    log "planning"
+    rm -f "$WT/$RUN_DIR/state"                                                                                                 # a marker left from before would claim this plan is written
+    rm -f "$WT/$RUN_DIR/plan.md" "$WT/$RUN_DIR"/plan-review-*.md "$WT/$RUN_DIR/plan-changes.md" "$WT/$RUN_DIR/allow-protected" # an earlier plan's would pass as this one's
+    write_plan "$PLAN_AGENT"
+    mark written 1
+  fi
+  while ((round == 1 || round <= FACTORY_PLAN_ROUNDS)); do
     plan_round "$round"
     [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] && break
-    ((round < FACTORY_PLAN_ROUNDS)) || break
     round=$((round + 1))
+    mark written "$round" # revised
   done
-  [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] || warn "plan rounds used up; the revision after round $round goes on unreviewed"
+  [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] || warn "plan rounds used up; the revision after round $((round - 1)) goes on unreviewed"
   mark reviewed
   approve_plan "$1"
 }
@@ -1817,6 +1829,12 @@ run_task() { # repo arg
   point=$(resume_point)
   [[ -z $point ]] || log "resuming after: $point (use --fresh to start over)"
   case $point in
+    written*)
+      STEP=planning
+      plan_phase "$repo" "${point#written }"
+      STEP=building
+      build_phase "$repo"
+      ;;
     built*)
       VERDICT=APPROVE
       ROUND=${point#built }

@@ -71,8 +71,9 @@ Because the state is the worktree plus Beads, the orchestrator is disposable. Ki
 Ctrl-C it: the agents, worktree and workspace stay, the bead gets a note saying at which
 step it was interrupted, and `fy run` with the bead id resumes: it reopens the workspace,
 adopts the three agents still alive in it, and picks up after the last completed
-milestone: a reviewed plan waiting for your approval, an approved plan, or an approved
-build, reusing an open pull request. `--fresh` starts over.
+milestone: a written plan, at its next review round; a reviewed plan waiting for your
+approval; an approved plan; or an approved build, reusing an open pull request. `--fresh`
+starts over.
 
 Known startup dialogs (trust prompts, Codex's hook review and transcript overlay) are
 cleared from the screen automatically, and a pane whose shell swallowed the startup command

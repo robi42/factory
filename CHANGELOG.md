@@ -22,6 +22,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   claims a bead, that origin takes a push without a prompt, with a dry-run push that sends
   nothing. A missing credential or write access stops the run there, with git's error,
   instead of at the push after the work.
+- A rerun picks up a written plan at its next review round instead of planning again: the
+  run marks the plan as written, and again after each revision, so a run that stops
+  during the plan's review keeps the planner's work.
 
 ### Changed
 - The planner asks its questions in its own question dialog, with options where they

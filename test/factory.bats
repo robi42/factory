@@ -1060,6 +1060,104 @@ IN
   [ "$(cat "$WT/run.sh")" = "echo hi" ]
 }
 
+@test "plan_phase: a rerun after the plan was written reviews it from the round it waits for, without planning again" {
+  fake_task
+  WT=$TMP
+  TASK_DESC="" GATE=true FACTORY_FRESH=0
+  PLAN_AGENT=planner BUILD_AGENT=builder REVIEW_AGENT=codex
+  local run="$TMP/.factory/run"
+  mkdir -p "$run"
+  write_plan() {
+    printf 'planned\n'
+    printf 'the plan\n' >"$run/plan.md"
+  }
+  planner_kept_hands_off() { :; }
+  tree_state() { :; } # its snapshot of the tree, which is no git repo here
+  approve_plan() { printf 'to the human, at %s\n' "$(resume_point)"; }
+  turn_ends() { printf 'the turn of %s ended\n' "$1"; }
+  ask() { printf 'revised at %s\n' "$(resume_point)"; }
+  ask_for_file() { # each review takes the next verdict from $TMP/verdicts, and sees the marker
+    printf 'x' >>"$TMP/n"
+    printf 'review %s at %s\n' "${3##*/}" "$(resume_point)"
+    printf 'VERDICT: %s\n' "$(sed -n "$(wc -c <"$TMP/n")p" "$TMP/verdicts")" >"$3"
+  }
+  # a new plan is marked for round 1 before its review, for round 2 once revised
+  : >"$TMP/n"
+  printf '%s\n' REVISE APPROVE APPROVE APPROVE >"$TMP/verdicts"
+  run plan_phase "$TMP"
+  [ "$status" -eq 0 ]
+  [[ $output == *"planning"*"planned"*"review plan-review-1.md at written 1"*"revised at written 1"*"review plan-review-2.md at written 2"*"to the human, at reviewed" ]]
+  # a rerun at round 2: the plan and round 1's reviews stay, and nobody plans
+  rm "$run/plan-review-2.md" "$run/plan-review-2-build.md"
+  : >"$TMP/n"
+  printf '%s\n' APPROVE APPROVE >"$TMP/verdicts"
+  run plan_phase "$TMP" 2
+  [ "$status" -eq 0 ]
+  [[ $output == *"the plan is already written; not planning again"*"the turn of planner ended"*"plan review round 2"*"review plan-review-2.md"*"review plan-review-2-build.md"*"to the human, at reviewed" ]]
+  [[ $output != *"planned"* ]]
+  [[ $output != *"plan-review-1"* ]]
+  [ "$(cat "$run/plan.md")" = "the plan" ]
+  [ -e "$run/plan-review-1.md" ]
+  # past the last round: its revision goes on unreviewed, to the human
+  run plan_phase "$TMP" 3
+  [ "$status" -eq 0 ]
+  [[ $output == *"the plan is already written"*"the revision after round 2 goes on unreviewed"*"to the human, at reviewed" ]]
+  [[ $output != *"plan review round"* ]]
+  # no plan to go on with, or no round given: planned anew, and the marker goes before the
+  # planner starts, so that a run stopped while it plans does not take its plan for written
+  rm "$run/plan.md"
+  printf 'written 2\n' >"$run/state"
+  write_plan() {
+    printf 'planned at %s\n' "$(resume_point)"
+    printf 'the plan\n' >"$run/plan.md"
+  }
+  : >"$TMP/n"
+  printf '%s\n' APPROVE APPROVE >"$TMP/verdicts"
+  run plan_phase "$TMP" 2
+  [[ $output == *"planning"*"planned at "$'\n'*"review plan-review-1.md at written 1"* ]]
+  : >"$TMP/n"
+  run plan_phase "$TMP" written
+  [[ $output == *"planning"*"planned at "$'\n'*"review plan-review-1.md at written 1"* ]]
+  # a note's round at the approval leaves the plan reviewed: a rerun comes back to the gate
+  mark reviewed
+  : >"$TMP/n"
+  printf '%s\n' REVISE APPROVE >"$TMP/verdicts"
+  run take_note plan planner "split it"
+  [ "$(resume_point)" = reviewed ]
+}
+
+@test "run_task: a rerun goes on after the milestone its state names" {
+  make_repo
+  setup_task() { TASK_ID=toy-1; }
+  open_task_workspace() {
+    WT=$TMP/wt
+    mkdir -p "$WT/$RUN_DIR"
+  }
+  start_or_adopt_agents() { :; }
+  plan_phase() { printf 'plan_phase%s\n' "${2:+ round $2}"; }
+  approve_plan() { printf 'approve_plan\n'; }
+  build_phase() { printf 'build_phase%s\n' "${2:+ $2}"; }
+  finish_task() { printf 'finish_task\n'; }
+  FACTORY_FRESH=0
+  mkdir -p "$TMP/wt/$RUN_DIR"
+  run run_task "$REPO" toy-1
+  [ "$status" -eq 0 ]
+  [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = plan_phase,build_phase,finish_task ]
+  printf 'written 2\n' >"$TMP/wt/$RUN_DIR/state"
+  run run_task "$REPO" toy-1
+  [[ $output == *"resuming after: written 2"* ]]
+  [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = "plan_phase round 2,build_phase,finish_task" ]
+  printf 'reviewed\n' >"$TMP/wt/$RUN_DIR/state"
+  run run_task "$REPO" toy-1
+  [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = approve_plan,build_phase,finish_task ]
+  printf 'planned\n' >"$TMP/wt/$RUN_DIR/state"
+  run run_task "$REPO" toy-1
+  [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = "build_phase resume,finish_task" ]
+  printf 'built 1\n' >"$TMP/wt/$RUN_DIR/state"
+  run run_task "$REPO" toy-1
+  [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = finish_task ]
+}
+
 @test "plan_phase: a revised plan goes back to both reviewers, up to FACTORY_PLAN_ROUNDS" {
   fake_task
   WT=$TMP
@@ -2266,11 +2364,13 @@ JSON
   grep -q "comment toy-1 Factory: interrupted during building" "$TMP/bd.log"
 }
 
-@test "resume markers: reviewed, planned, built <round>, cleared by --fresh" {
+@test "resume markers: written <round>, reviewed, planned, built <round>, cleared by --fresh" {
   WT=$TMP
   mkdir -p "$TMP/.factory/run"
   FACTORY_FRESH=0
   [ -z "$(resume_point)" ]
+  mark written 2
+  [ "$(resume_point)" = "written 2" ]
   mark reviewed
   [ "$(resume_point)" = reviewed ]
   mark planned
