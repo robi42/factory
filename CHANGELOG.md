@@ -44,6 +44,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   prompt in Factory's terminal): the planner asks in its dialog.
 
 ### Fixed
+- The guardrails read a tree other than the branch's when an agent planted a `git replace`
+  ref or an `info/grafts` line in the shared git dir: either rewrites what `HEAD` is or
+  descends from, so `git diff base...HEAD` showed no added line, no protected path and no
+  gitlink, and the guardrails refused nothing. The guardrails and the uncommitted-changes
+  check now read the true object graph (`GIT_NO_REPLACE_OBJECTS`, no graft file), whatever
+  the shared git dir holds.
 - The guardrails skipped a file whose name git quotes, such as `naïve.rs` with its
   non-ASCII character: not one of its added lines was matched, and it counted as neither
   code, test nor build artifact. A name that reads as a pathspec, such as

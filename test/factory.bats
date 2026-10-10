@@ -643,6 +643,51 @@ context_of() {
   [[ $output != *"no test files did"* ]]
 }
 
+@test "guard: a git replace ref on the base does not hide an added line" {
+  make_repo
+  # Build the bad string at runtime so this file passes its own guard check.
+  local pipe='||' base blob doctree doc idx
+  printf 'deploy %s true\n' "$pipe" >"$REPO/run.sh"
+  commit_all bad
+  # A doctored root commit whose tree already holds the bad line; replace main's commit with
+  # it, so git diff main...HEAD reads a base that is not the branch's and shows run.sh unchanged.
+  base=$(git -C "$REPO" rev-parse main)
+  idx=$TMP/ridx
+  GIT_INDEX_FILE=$idx git -C "$REPO" read-tree "$base"
+  blob=$(printf 'deploy %s true\n' "$pipe" | git -C "$REPO" hash-object -w --stdin)
+  GIT_INDEX_FILE=$idx git -C "$REPO" update-index --add --cacheinfo 100644,"$blob",run.sh
+  doctree=$(GIT_INDEX_FILE=$idx git -C "$REPO" write-tree)
+  doc=$(git -C "$REPO" commit-tree "$doctree" -m doctored) # no parent: a drop-in for the root base
+  git -C "$REPO" replace "$base" "$doc"
+  [ -z "$(git -C "$REPO" diff --name-only main...HEAD -- run.sh)" ] # the poisoned diff hides it
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"run.sh: deploy $pipe true"* ]]
+}
+
+@test "guard: an info/grafts line does not cut the branch from its base" {
+  make_repo
+  # Build the bad string at runtime so this file passes its own guard check.
+  local pipe='||' base blob doctree doc tip idx common
+  printf 'deploy %s true\n' "$pipe" >"$REPO/run.sh"
+  commit_all bad
+  base=$(git -C "$REPO" rev-parse main)
+  idx=$TMP/gidx
+  GIT_INDEX_FILE=$idx git -C "$REPO" read-tree "$base"
+  blob=$(printf 'deploy %s true\n' "$pipe" | git -C "$REPO" hash-object -w --stdin)
+  GIT_INDEX_FILE=$idx git -C "$REPO" update-index --add --cacheinfo 100644,"$blob",run.sh
+  doctree=$(GIT_INDEX_FILE=$idx git -C "$REPO" write-tree)
+  doc=$(git -C "$REPO" commit-tree "$doctree" -m doctored)
+  tip=$(git -C "$REPO" rev-parse HEAD)
+  common=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)
+  # Graft the branch tip onto the doctored root, so a plain base...HEAD finds no merge base and
+  # a guard that trusts grafts reads nothing and refuses nothing.
+  printf '%s %s\n' "$tip" "$doc" >"$common/info/grafts"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"run.sh: deploy $pipe true"* ]]
+}
+
 @test "plan approval: terminal answers" {
   plan_ready
   human_gate plan planner "$TMP" <<<"a"

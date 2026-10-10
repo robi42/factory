@@ -704,8 +704,15 @@ kept_out() {
 # core.checkStat report no change, or leave out a submodule or a name that differs in case.
 tree_state() {
   local kept dir out
+  # An agent can plant a refs/replace ref (git replace) or an info/grafts line in the shared
+  # git dir, which rewrites what HEAD is or descends from: git would then read a tree other
+  # than the branch's and miss a change. Read the true graph: no replacement objects, and a
+  # graft file under the fresh index dir, a name git never finds, so grafts are off with no
+  # deprecation notice (a /dev/null graft file, which exists, prints one).
+  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE
   mapfile -t kept < <(kept_out "$1")
   dir=$(mktemp -d)
+  GIT_GRAFT_FILE=$dir/no-grafts
   if GIT_INDEX_FILE=$dir/index git -C "$1" read-tree HEAD; then
     out=$(GIT_INDEX_FILE=$dir/index git -C "$1" -c core.fsmonitor=false -c core.ignoreCase=false \
       status --porcelain --untracked-files=all --ignore-submodules=none -- . "${kept[@]}") || out="git status failed"
@@ -725,6 +732,14 @@ tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 # a pathspec.
 guard_check() {
   local wt=$1 base=$2 bad=0 f globs kept top err
+  # Every check below reads base...HEAD or HEAD. An agent can plant a refs/replace ref
+  # (git replace) or an info/grafts line in the shared git dir, so that git reads a tree
+  # other than the branch's: the diff then shows no added line, no protected path and no
+  # gitlink, and the guard refuses nothing. Read the true graph in every git call here and
+  # in the helpers it calls: no replacement objects, and a graft file git never finds (an
+  # unused name; a /dev/null graft file exists and would print a deprecation notice).
+  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE
+  GIT_GRAFT_FILE=$(mktemp -u)
   # git -C reads the worktree's own config, which an agent can write: core.worktree there
   # points every git call below at another checkout than the one the gate runs in
   top=$(git -C "$wt" rev-parse --show-toplevel)
