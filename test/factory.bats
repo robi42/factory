@@ -2785,6 +2785,37 @@ JSON
   [ -e "$run/asking-plan" ]
 }
 
+@test "start_agent: a startup that timed out, the command stuck in the shell's line editor, is cleared and tried again" {
+  herdr() { # the first start times out as Herdr 0.8 reports it, the second comes up
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent start"*)
+        if (($(grep -c '^agent start' "$TMP/herdr.log") < 2)); then
+          printf '{"error":{"code":"timeout","message":"timed out waiting for agent startup"}}'
+          return 1
+        fi
+        printf '{"result":{"type":"agent_started"}}'
+        ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  sleep() { :; }
+  settle_dialogs() { :; }
+  run start_agent t-plan claude w1:p2 --resume s-1 --name plan
+  [ "$status" -eq 0 ]
+  [[ $output == *"t-plan: startup timed out; clearing the pane's input line and retrying"* ]]
+  [ "$(grep -c '^agent start t-plan --kind claude --pane w1:p2 --timeout 90000 -- --resume s-1 --name plan$' "$TMP/herdr.log")" -eq 2 ]
+  grep -qx 'pane send-keys w1:p2 c-c' "$TMP/herdr.log"
+  # another failure stops the run, with Herdr's words
+  herdr() {
+    printf '{"error":{"code":"agent_name_taken","message":"agent name t-plan is already used"}}'
+    return 1
+  }
+  run start_agent t-plan claude w1:p2
+  [ "$status" -eq 1 ]
+  [[ $output == *"start t-plan: agent name t-plan is already used"* ]]
+}
+
 @test "guard: a repo's own .factory/guardrails.txt replaces the default list" {
   make_repo
   printf 'FORBIDDEN_WORD\n' >"$REPO/.factory/guardrails.txt"

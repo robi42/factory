@@ -302,9 +302,10 @@ start_agent() {
       pane_not_available | pane_busy | shell_not_ready)
         sleep 1
         ;;
-      agent_start_failed)
-        # usually "timed out waiting for agent startup": the pane's shell never ran the
-        # command (line editor stuck in multiline mode); clear its input and try again
+      agent_start_failed | timeout)
+        # "timed out waiting for agent startup" (Herdr 0.8 calls it timeout): usually the
+        # pane's shell never ran the command, its line editor stuck in multiline mode, as a
+        # long command line can leave ble.sh; clear its input and try again
         grep -q 'timed out' <<<"$out" || die "start $name: $(herr_msg "$out")"
         warn "$name: startup timed out; clearing the pane's input line and retrying"
         herdr pane send-keys "$pane" c-c >/dev/null 2>&1

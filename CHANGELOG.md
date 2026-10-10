@@ -42,6 +42,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.
+- An agent start that times out because the pane's shell kept its command line, the line
+  editor (ble.sh) stuck in multiline mode, is cleared and tried again, as it used to be:
+  Herdr 0.8 reports the timeout under a new code, and the run stopped instead.
 - A file an agent added or changed under `.factory/` needed no waiver unless it was the
   gate, `.factory/protected`, `.factory/guardrails.txt` or `.factory/env`, though the
   guardrails read no line under `.factory/`: an example in `.factory/guard/` that a repo's
