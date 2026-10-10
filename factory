@@ -200,6 +200,10 @@ settle_dialogs() {
       herdr agent send-keys "$name" down >/dev/null
       sleep 0.5
       herdr agent send-keys "$name" enter >/dev/null
+    elif grep -qF 'This conversation is open in another app' <<<"$txt"; then
+      # Codex resuming a session the process it replaces, just quit, still holds for a moment
+      log "$name: its session is still held by the process it replaces; retrying (attempt $i)"
+      herdr agent send-keys "$name" r >/dev/null
     elif grep -qE 'Do you trust the contents of this directory|Trust this folder\?' <<<"$txt"; then
       log "$name: accepting Codex trust dialog (attempt $i)"
       herdr agent send-keys "$name" enter >/dev/null
@@ -1448,6 +1452,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
   keys="$(key a), $(key p), $(key r) or $(key b)"
   [[ $kind == plan ]] || keys="$(key a), $(key r) or $(key b)"
   while :; do
+    drop_dead_dialog "$kind" "$agent" "$dir"
     toast "$TASK_ID $kind ready" "$TASK_TITLE. Answer in the $(role_of "$kind")'s pane or the Factory terminal" request
     show_for_approval "$kind" "$dir"
     open_gate "$kind" "$dir"
@@ -1533,6 +1538,18 @@ await_human() { # plan|build agent dir: human_gate's waiting
       fi
     done
   done
+}
+
+# drop_dead_dialog kind agent dir: an agent that runs without the run's dialog hooks, as Herdr
+# restores agents while a run goes on, gets no approval dialog, whose answer would not reach the
+# gate. Its hooks file goes, which tells the rest of the gate so.
+drop_dead_dialog() {
+  local rc=0
+  [[ -e $3/hooks-$1.json ]] || return 0
+  launched_with "$2" --settings "$3/hooks-$1.json" || rc=$?
+  ((rc == 1)) || return 0
+  rm -f "$3/hooks-$1.json"
+  warn "$2 runs without its dialog hooks: no approval dialog in its pane; answer here or with fy"
 }
 
 # open_gate kind dir: the gate listens to approve, reject and abort. Answers left from before
@@ -1816,11 +1833,15 @@ open_task_workspace() { # repo
 start_or_adopt_agents() {
   local repo=$1 live plan_pane review_pane pane repo_root
   live=$(live_agents "$WS" "$PLAN_AGENT" "$BUILD_AGENT" "$REVIEW_AGENT")
+  repo_root=$(git -C "$repo" rev-parse --show-toplevel)
   if [[ $live == 3 ]]; then
     log "reusing the live agents of $TASK_ID in workspace $WS"
     settle_dialogs "$PLAN_AGENT" quiet
     settle_dialogs "$BUILD_AGENT" quiet
     settle_dialogs "$REVIEW_AGENT" quiet
+    relaunch_restored plan "$repo_root"
+    relaunch_restored build "$repo_root"
+    relaunch_restored review "$repo_root"
     return 0
   fi
   [[ $live == 0 ]] || die "some agents of $TASK_ID are still alive in workspace $WS; run: factory clean $repo $TASK_ID --force"
@@ -1835,24 +1856,135 @@ start_or_adopt_agents() {
   h pane rename "$plan_pane" plan >/dev/null
   h pane rename "$review_pane" review >/dev/null
   sleep 1
-  # Give the agents the factory's PATH (bd, gate tools) via a short command; a long
-  # inline export trips line editors such as ble.sh into multiline mode.
-  printf "export PATH='%s'\n" "$PATH" >"$WT/$RUN_DIR/env.sh"
+  write_env
   for pane in "$BUILD_PANE" "$plan_pane" "$review_pane"; do
     prime_shell "$pane"
   done
-  repo_root=$(git -C "$repo" rev-parse --show-toplevel)
   dialog_hooks plan >"$WT/$RUN_DIR/hooks-plan.json"
   dialog_hooks build >"$WT/$RUN_DIR/hooks-build.json"
-  start_agent "$PLAN_AGENT" claude "$plan_pane" --model "$FACTORY_PLAN_MODEL" --effort "$FACTORY_PLAN_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --settings "$WT/$RUN_DIR/hooks-plan.json" --name plan
-  start_agent "$BUILD_AGENT" claude "$BUILD_PANE" --model "$FACTORY_BUILD_MODEL" --effort "$FACTORY_BUILD_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --settings "$WT/$RUN_DIR/hooks-build.json" --name build
+  launch_args plan "$repo_root"
+  start_agent "$PLAN_AGENT" claude "$plan_pane" "${AGENT_ARGS[@]}"
+  launch_args build "$repo_root"
+  start_agent "$BUILD_AGENT" claude "$BUILD_PANE" "${AGENT_ARGS[@]}"
   set_color "$PLAN_AGENT" purple
   set_color "$BUILD_AGENT" cyan
-  start_agent "$REVIEW_AGENT" codex "$review_pane" -m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search \
-    -c "model_reasoning_effort=\"$FACTORY_REVIEW_EFFORT\"" \
-    -c "projects={\"$repo_root\"={trust_level=\"trusted\"}}" \
-    -c "sandbox_workspace_write.writable_roots=[\"$repo_root/.beads\"]"
+  launch_args review "$repo_root"
+  start_agent "$REVIEW_AGENT" codex "$review_pane" "${AGENT_ARGS[@]}"
   log "agents up: $PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
+}
+
+# write_env: the agents get the factory's PATH (bd, gate tools) via a short command, which
+# prime_shell runs in their panes; a long inline export trips line editors such as ble.sh into
+# multiline mode
+write_env() { printf "export PATH='%s'\n" "$PATH" >"$WT/$RUN_DIR/env.sh"; }
+
+# launch_args plan|build|review repo-root: AGENT_ARGS, the arguments Factory starts the task's
+# planner, builder or reviewer with
+launch_args() {
+  case $1 in
+    plan) AGENT_ARGS=(--model "$FACTORY_PLAN_MODEL" --effort "$FACTORY_PLAN_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --settings "$WT/$RUN_DIR/hooks-plan.json" --name plan) ;;
+    build) AGENT_ARGS=(--model "$FACTORY_BUILD_MODEL" --effort "$FACTORY_BUILD_EFFORT" --permission-mode "$FACTORY_CLAUDE_PERMISSIONS" --settings "$WT/$RUN_DIR/hooks-build.json" --name build) ;;
+    review)
+      AGENT_ARGS=(-m "$FACTORY_REVIEW_MODEL" -a never -s workspace-write --search
+        -c "model_reasoning_effort=\"$FACTORY_REVIEW_EFFORT\""
+        -c "projects={\"$2\"={trust_level=\"trusted\"}}"
+        -c "sandbox_workspace_write.writable_roots=[\"$2/.beads\"]")
+      ;;
+  esac
+}
+
+# launched_with agent args...: 0 when the process in the agent's pane runs with all these
+# arguments, 1 when it runs without them, 2 when Herdr shows no process to tell by
+launched_with() {
+  local name=$1 pane info rc
+  shift
+  pane=$(herdr agent get "$name" 2>/dev/null | jq -r '.result.agent.pane_id // empty') || return 2
+  [[ -n $pane ]] || return 2
+  info=$(herdr pane process-info --pane "$pane" 2>/dev/null) || return 2
+  rc=$(jq -r --argjson want "$(printf '%s\n' "$@" | jq -R . | jq -s .)" '[.result.process_info.foreground_processes[]?.argv // empty] as $argvs
+    | if ($argvs | length) == 0 then 2 elif any($argvs[]; ($want - .) == []) then 0 else 1 end' <<<"$info") || return 2
+  return "$rc"
+}
+
+# relaunch_restored plan|build|review repo-root: an adopted agent that runs without the arguments
+# Factory starts it with is started again with them, resuming its session in its pane. After a
+# restart of Herdr's server (a reboot, an update), Herdr brings agents back with their resume
+# alone: without their effort, model and permissions, and without the dialog hooks, so that an
+# answer in Factory's approval dialog would never reach the gate.
+relaunch_restored() {
+  local role=$1 name=$PLAN_AGENT kind=claude rc=0 info session pane
+  case $role in
+    build) name=$BUILD_AGENT ;;
+    review) name=$REVIEW_AGENT kind=codex ;;
+  esac
+  launch_args "$role" "$2"
+  launched_with "$name" "${AGENT_ARGS[@]}" || rc=$?
+  ((rc == 1)) || return 0
+  turn_ends "$name" # never cut a turn short; and a tool its turn ran held the pane's foreground
+  rc=0
+  launched_with "$name" "${AGENT_ARGS[@]}" || rc=$?
+  ((rc == 1)) || return 0
+  info=$(h agent get "$name")
+  pane=$(jq -r '.result.agent.pane_id // empty' <<<"$info")
+  session=$(jq -r '.result.agent.agent_session.value // empty' <<<"$info")
+  [[ -n $session || -z $pane ]] || session=$(resumed_session "$pane")
+  if [[ -z $session || -z $pane ]]; then
+    warn "$name runs without Factory's arguments, and Herdr names no session of it to resume; it goes on as it is"
+    [[ $kind == codex ]] || rm -f "$WT/$RUN_DIR/hooks-$role.json" # so it shows no dialog that could not answer the gate
+    return 0
+  fi
+  log "$name runs without Factory's arguments, as Herdr restores agents; restarting it with them, its session resumed"
+  [[ $kind == codex ]] || dialog_hooks "$role" >"$WT/$RUN_DIR/hooks-$role.json"
+  agent_quit "$name" "$pane" "$kind"
+  write_env
+  prime_shell "$pane"
+  if [[ $kind == codex ]]; then
+    start_agent "$name" codex "$pane" resume "${AGENT_ARGS[@]}" "$session"
+    return 0
+  fi
+  start_agent "$name" claude "$pane" --resume "$session" "${AGENT_ARGS[@]}"
+  prompt_box_up "$name" # its colour came back with its session
+}
+
+# prompt_box_up name: a Claude agent's screen shows its prompt box, a ❯ line between two rules.
+# A resumed session reads as ready to Herdr while it still loads, its screen the shell's for
+# seconds yet, and a prompt sent meanwhile loses its Enter.
+prompt_box_up() {
+  local i
+  for i in {1..60}; do
+    herdr agent read "$1" --source visible 2>/dev/null | awk 'NF { l[++n] = $0 } END {
+      for (i = 2; i < n; i++) if (l[i] ~ /^❯/ && l[i] !~ /^❯[[:space:]]*[0-9]+\./ && l[i - 1] ~ /^─/ && l[i + 1] ~ /^─/) exit 0
+      exit 1 }' && return 0
+    sleep 1
+  done
+  warn "$1: no prompt box after a minute; the next prompt may not go in"
+}
+
+# resumed_session pane -> the session the process in the pane resumed, the one session id among
+# its arguments (claude --resume <id>, codex resume <id>), for when Herdr names none
+resumed_session() {
+  herdr pane process-info --pane "$1" 2>/dev/null | jq -r '[.result.process_info.foreground_processes[]?.argv // empty | .[]
+    | select(test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))] | first // empty'
+}
+
+# agent_quit name pane claude|codex: the agent quits, its pane's shell is back in front, and Herdr
+# lists it no more, so that its name can be started again. An agent that has just started can
+# lose the Enter of its quit command and keep it in its input: ctrl+c clears that for a retry.
+agent_quit() {
+  local quit=/exit try i
+  [[ $3 != codex ]] || quit=/quit
+  for try in 1 2 3; do
+    herdr agent prompt "$1" "$quit" >/dev/null 2>&1 || warn "$1: could not send $quit (try $try)"
+    for i in {1..10}; do
+      if herdr pane process-info --pane "$2" 2>/dev/null | jq -e '.result.process_info | .foreground_process_group_id == .shell_pid' >/dev/null \
+        && ! herdr agent get "$1" >/dev/null 2>&1; then
+        return 0
+      fi
+      sleep 1
+    done
+    herdr agent send-keys "$1" c-c >/dev/null 2>&1 || herdr pane send-keys "$2" c-c >/dev/null 2>&1
+  done
+  die "$1 did not quit to be started again; look at its pane"
 }
 
 # Resume: the run directory records the last completed milestone ("written <round>" once the

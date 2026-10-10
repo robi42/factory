@@ -45,6 +45,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 - An agent start that times out because the pane's shell kept its command line, the line
   editor (ble.sh) stuck in multiline mode, is cleared and tried again, as it used to be:
   Herdr 0.8 reports the timeout under a new code, and the run stopped instead.
+- A rerun after a restart of Herdr's server (a reboot, an update) starts the task's agents
+  again with Factory's arguments, their sessions resumed. Herdr brings them back with
+  their resume alone, and adopted as they were they ran without their effort (the
+  planner's `max` became `xhigh`), model, permissions and dialog hooks, so an answer in
+  the approval dialog never reached the gate. A gate now also offers its dialog only to
+  an agent that runs with the hook.
 - A file an agent added or changed under `.factory/` needed no waiver unless it was the
   gate, `.factory/protected`, `.factory/guardrails.txt` or `.factory/env`, though the
   guardrails read no line under `.factory/`: an example in `.factory/guard/` that a repo's

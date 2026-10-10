@@ -73,7 +73,10 @@ step it was interrupted, and `fy run` with the bead id resumes: it reopens the w
 adopts the three agents still alive in it, and picks up after the last completed
 milestone: a written plan, at its next review round; a reviewed plan waiting for your
 approval; an approved plan; or an approved build, reusing an open pull request. `--fresh`
-starts over.
+starts over. After a restart of Herdr's server (a reboot, an update), Herdr brings the
+agents back with their sessions but without the arguments Factory started them with; the
+rerun starts each such agent again with them, its session resumed, so it keeps its
+effort, model, permissions and dialog hook.
 
 Known startup dialogs (trust prompts, Codex's hook review and transcript overlay) are
 cleared from the screen automatically, and a pane whose shell swallowed the startup command
@@ -166,8 +169,9 @@ plan and the builder's for the build: pick Approve or Abort (for the plan also A
 allow protected paths), or type a note to have it revised. The note arrives as you typed
 it, with no shell in between, and ctrl+g opens your editor for a longer one. A hook that
 Factory gives the agent when it starts takes your answer to the run, so the agent never
-relays it, and tells Factory while a dialog is open. Agents an older Factory started have
-no hook and show no dialog.
+relays it, and tells Factory while a dialog is open. An agent that runs without the hook,
+one an older Factory started or one Herdr restored while the run went on, shows no
+dialog: answer in Factory's terminal or with the commands below.
 
 The gate also takes your answer in two more places, whichever comes first, and closes
 the dialog when it does. In Factory's terminal, at its prompt. Or as a command: from any

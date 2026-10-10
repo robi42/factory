@@ -900,6 +900,27 @@ context_of() {
   [ "$(grep -c '^plan approved$' "$TMP/recorded")" -eq 3 ]
 }
 
+@test "approval dialog: none for an agent that runs without its hooks, as Herdr restores agents" {
+  plan_ready
+  PLAN_AGENT=planner
+  printf '{}' >"$TMP/hooks-plan.json"
+  herdr() {
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent get planner") printf '{"result":{"agent":{"pane_id":"p2"}}}' ;;
+      "pane process-info --pane p2") printf '{"result":{"process_info":{"foreground_processes":[{"argv":["claude","--resume","s-plan"]}]}}}' ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  run human_gate plan planner "$TMP" <<<"a"
+  [ "$status" -eq 0 ]
+  [[ $output == *"planner runs without its dialog hooks: no approval dialog in its pane; answer here or with fy"* ]]
+  [[ $output != *"after Esc on its dialog"* ]]
+  [ "$(grep -c '^agent prompt' "$TMP/herdr.log")" -eq 0 ]
+  [ ! -e "$TMP/hooks-plan.json" ]
+  [ "$(tail -n 1 "$TMP/recorded")" = "plan approved" ]
+}
+
 @test "approval dialog: never typed over a question the agent asks already, nor that one dismissed" {
   plan_ready
   PLAN_AGENT=planner
@@ -2676,6 +2697,27 @@ JSON
   [ ! -s "$TMP/keys" ]
 }
 
+@test "settle_dialogs: Codex resuming a session another process still holds retries with r until it opens" {
+  herdr() { # the lock goes once r was pressed twice
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent read"*)
+        if (($(grep -c '^agent send-keys t-review r$' "$TMP/herdr.log") < 2)); then
+          printf '  🔒  This conversation is open in another app\n      Close it there and press R to continue here.\n   r retry   f fork   esc/^c/q exit\n'
+        else
+          printf '› Ask Codex to do anything\n'
+        fi
+        ;;
+      *) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+    esac
+  }
+  sleep() { :; }
+  run settle_dialogs t-review
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^agent send-keys t-review r$' "$TMP/herdr.log")" -eq 2 ]
+  [[ $output == *"t-review: its session is still held by the process it replaces; retrying (attempt 1)"* ]]
+}
+
 @test "settle_dialogs: Codex's folder trust dialog gets Enter, as the old one did" {
   fake_task
   : >"$TMP/keys"
@@ -2785,6 +2827,128 @@ JSON
   [ -e "$run/asking-plan" ]
 }
 
+@test "launched_with: what the agent's pane runs, told by its arguments" {
+  herdr() {
+    case "$*" in
+      "agent get t-plan") printf '{"result":{"agent":{"pane_id":"w1:p2"}}}' ;;
+      "pane process-info --pane w1:p2") cat "$TMP/info" ;;
+      *) return 1 ;;
+    esac
+  }
+  printf '{"result":{"process_info":{"foreground_processes":[{"argv":["claude","--effort","max","--settings","/r/hooks-plan.json"]}]}}}' >"$TMP/info"
+  launched_with t-plan --effort max --settings /r/hooks-plan.json
+  run launched_with t-plan --effort max --settings /r/hooks-build.json
+  [ "$status" -eq 1 ]
+  printf '{"result":{"process_info":{"foreground_processes":[{"argv":["claude","--resume","s-1"]}]}}}' >"$TMP/info"
+  run launched_with t-plan --settings /r/hooks-plan.json # as Herdr restores it
+  [ "$status" -eq 1 ]
+  printf '{"result":{"process_info":{"foreground_processes":[]}}}' >"$TMP/info"
+  run launched_with t-plan --settings /r/hooks-plan.json # nothing to tell by
+  [ "$status" -eq 2 ]
+  run launched_with t-gone --settings /r/hooks-plan.json
+  [ "$status" -eq 2 ]
+}
+
+@test "start_or_adopt_agents: agents Herdr restored without Factory's arguments are started again with them, their sessions resumed" {
+  make_repo
+  fake_task
+  PLAN_AGENT=toy-1-plan BUILD_AGENT=toy-1-build REVIEW_AGENT=toy-1-review
+  WS=w1 WT=$TMP/wt BUILD_PANE=p1 FACTORY_HOME=$TMP/factory
+  mkdir -p "$WT/$RUN_DIR"
+  herdr() { # three live agents; a pane runs what $TMP/argv-<pane> says, its shell once the agent quit
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    local pane
+    case "$*" in
+      "agent list"*) printf '{"result":{"agents":[{"name":"toy-1-plan","workspace_id":"w1"},{"name":"toy-1-build","workspace_id":"w1"},{"name":"toy-1-review","workspace_id":"w1"}]}}' ;;
+      "agent get toy-1-plan") [[ ! -e $TMP/quit-p2 ]] && printf '{"result":{"agent":{"pane_id":"p2","agent_status":"idle","agent_session":{"value":"s-plan"}}}}' ;;
+      "agent get toy-1-build") [[ ! -e $TMP/quit-p1 ]] && printf '{"result":{"agent":{"pane_id":"p1","agent_status":"idle","agent_session":{"value":"s-build"}}}}' ;;
+      "agent get toy-1-review") [[ ! -e $TMP/quit-p3 ]] && printf '{"result":{"agent":{"pane_id":"p3","agent_status":"idle","agent_session":{"value":"s-review"}}}}' ;;
+      "agent prompt toy-1-plan /exit") : >"$TMP/quit-p2" ;;
+      "agent prompt toy-1-build /exit") : >"$TMP/quit-p1" ;;
+      "agent prompt toy-1-review /quit") : >"$TMP/quit-p3" ;;
+      "pane process-info --pane "*)
+        pane=${*: -1}
+        if [[ -e $TMP/quit-$pane ]]; then
+          printf '{"result":{"process_info":{"foreground_process_group_id":9,"shell_pid":9,"foreground_processes":[{"argv":["bash"]}]}}}'
+        else
+          cat "$TMP/argv-$pane"
+        fi
+        ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  argv() { jq -n --argjson a "$(printf '%s\n' "$@" | jq -R . | jq -s .)" '{result: {process_info: {foreground_process_group_id: 5, shell_pid: 9, foreground_processes: [{argv: $a}]}}}'; }
+  settle_dialogs() { :; }
+  turn_ends() { printf 'turn of %s ended\n' "$1"; }
+  prime_shell() { printf 'primed %s\n' "$1"; }
+  start_agent() { printf 'started %s\n' "$*"; }
+  prompt_box_up() { printf 'prompt box of %s\n' "$1"; }
+  set_color() { printf 'colour %s %s\n' "$1" "$2"; }
+  argv claude --resume s-plan >"$TMP/argv-p2"
+  argv claude --resume s-build >"$TMP/argv-p1"
+  argv codex resume s-review >"$TMP/argv-p3"
+  run start_or_adopt_agents "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"reusing the live agents of toy-1"* ]]
+  [[ $output == *"toy-1-plan runs without Factory's arguments, as Herdr restores agents; restarting it with them, its session resumed"* ]]
+  [[ $output == *"turn of toy-1-plan ended"*"primed p2"*"started toy-1-plan claude p2 --resume s-plan --model $FACTORY_PLAN_MODEL --effort $FACTORY_PLAN_EFFORT --permission-mode $FACTORY_CLAUDE_PERMISSIONS --settings $WT/$RUN_DIR/hooks-plan.json --name plan"*"prompt box of toy-1-plan"* ]]
+  [[ $output == *"started toy-1-build claude p1 --resume s-build --model $FACTORY_BUILD_MODEL --effort $FACTORY_BUILD_EFFORT"*"--settings $WT/$RUN_DIR/hooks-build.json --name build"*"prompt box of toy-1-build"* ]]
+  [[ $output != *"colour"* ]] # the colour comes back with the session; a /color now could lose its Enter
+  [[ $output == *"started toy-1-review codex p3 resume -m $FACTORY_REVIEW_MODEL -a never -s workspace-write --search -c"*" s-review"* ]]
+  [ "$(grep -c '^agent prompt' "$TMP/herdr.log")" -eq 3 ]
+  [ -s "$WT/$RUN_DIR/hooks-plan.json" ]
+  [ -s "$WT/$RUN_DIR/hooks-build.json" ]
+  [ -s "$WT/$RUN_DIR/env.sh" ]
+  # agents that run with Factory's arguments are left as they are
+  rm -f "$TMP"/quit-* "$TMP/herdr.log"
+  launch_args plan "$REPO"
+  argv claude "${AGENT_ARGS[@]}" >"$TMP/argv-p2"
+  launch_args build "$REPO"
+  argv claude "${AGENT_ARGS[@]}" >"$TMP/argv-p1"
+  launch_args review "$REPO"
+  argv codex "${AGENT_ARGS[@]}" >"$TMP/argv-p3"
+  run start_or_adopt_agents "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output != *"started"* ]]
+  [ "$(grep -c '^agent prompt' "$TMP/herdr.log")" -eq 0 ]
+  # with no session to resume, the planner goes on as it is, and shows no dialog that could not answer the gate
+  argv claude --resume s-plan >"$TMP/argv-p2"
+  herdr() {
+    case "$*" in
+      "agent list"*) printf '{"result":{"agents":[{"name":"toy-1-plan","workspace_id":"w1"},{"name":"toy-1-build","workspace_id":"w1"},{"name":"toy-1-review","workspace_id":"w1"}]}}' ;;
+      "agent get toy-1-plan") printf '{"result":{"agent":{"pane_id":"p2","agent_status":"idle"}}}' ;;
+      "pane process-info --pane p2") cat "$TMP/argv-p2" ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  run start_or_adopt_agents "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"toy-1-plan runs without Factory's arguments, and Herdr names no session of it to resume; it goes on as it is"* ]]
+  [[ $output != *"started"* ]]
+  [ ! -e "$WT/$RUN_DIR/hooks-plan.json" ]
+  [ -e "$WT/$RUN_DIR/hooks-build.json" ]
+  # one Herdr names no session of, but whose arguments do, resumes that one
+  argv claude --resume 0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b >"$TMP/argv-p2"
+  herdr() {
+    case "$*" in
+      "agent list"*) printf '{"result":{"agents":[{"name":"toy-1-plan","workspace_id":"w1"},{"name":"toy-1-build","workspace_id":"w1"},{"name":"toy-1-review","workspace_id":"w1"}]}}' ;;
+      "agent get toy-1-plan") [[ ! -e $TMP/quit-p2 ]] && printf '{"result":{"agent":{"pane_id":"p2","agent_status":"idle"}}}' ;;
+      "agent prompt toy-1-plan /exit") : >"$TMP/quit-p2" ;;
+      "pane process-info --pane p2")
+        if [[ -e $TMP/quit-p2 ]]; then
+          printf '{"result":{"process_info":{"foreground_process_group_id":9,"shell_pid":9}}}'
+        else
+          cat "$TMP/argv-p2"
+        fi
+        ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  run start_or_adopt_agents "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"started toy-1-plan claude p2 --resume 0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b --model"* ]]
+}
+
 @test "start_agent: a startup that timed out, the command stuck in the shell's line editor, is cleared and tried again" {
   herdr() { # the first start times out as Herdr 0.8 reports it, the second comes up
     printf '%s\n' "$*" >>"$TMP/herdr.log"
@@ -2814,6 +2978,62 @@ JSON
   run start_agent t-plan claude w1:p2
   [ "$status" -eq 1 ]
   [[ $output == *"start t-plan: agent name t-plan is already used"* ]]
+}
+
+@test "prompt_box_up: a resumed Claude session is ready once its prompt box is drawn, not while its screen is the shell's" {
+  herdr() { cat "$TMP/screen"; }
+  sleep() { # time passes: a minute of loading, then the session draws its box
+    printf 's' >>"$TMP/slept"
+    if (($(wc -c <"$TMP/slept") == 3)); then
+      printf '  ⎿  Wrote 17 lines\n\n────────────────── build ─\n❯ \n──────────────────\n  Opus 5.5 (xhigh)\n' >"$TMP/screen"
+    fi
+  }
+  # loading: the shell's line, its own prompt a ❯ too, with the command it typed
+  printf 'wt\n❯ claude --resume s-1 --model claude-opus-5-5 --effort xhigh\n' >"$TMP/screen"
+  run prompt_box_up t-build
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMP/slept")" = sss ]
+  [ -z "$output" ]
+  # a box that never comes: a warning after a minute, and on
+  printf 'wt\n❯ claude --resume s-1\n' >"$TMP/screen"
+  sleep() { :; }
+  run prompt_box_up t-build
+  [ "$status" -eq 0 ]
+  [[ $output == *"t-build: no prompt box after a minute; the next prompt may not go in"* ]]
+}
+
+@test "agent_quit: a quit command whose Enter was lost is cleared and sent again; one that never works stops the run" {
+  herdr() { # the first /exit stays in the agent's input, the second quits it
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent prompt t-plan /exit")
+        if (($(grep -c '^agent prompt' "$TMP/herdr.log") >= 2)); then : >"$TMP/quit"; fi
+        ;;
+      "pane process-info --pane p2")
+        if [[ -e $TMP/quit ]]; then
+          printf '{"result":{"process_info":{"foreground_process_group_id":9,"shell_pid":9}}}'
+        else
+          printf '{"result":{"process_info":{"foreground_process_group_id":5,"shell_pid":9}}}'
+        fi
+        ;;
+      "agent get t-plan") [[ ! -e $TMP/quit ]] && printf '{"result":{"agent":{"pane_id":"p2"}}}' ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  sleep() { :; }
+  run agent_quit t-plan p2 claude
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^agent prompt t-plan /exit$' "$TMP/herdr.log")" -eq 2 ]
+  [ "$(grep -c '^agent send-keys t-plan c-c$' "$TMP/herdr.log")" -eq 1 ]
+  herdr() { # it never quits
+    case "$*" in
+      "agent get"*) printf '{"result":{"agent":{}}}' ;;
+      *) printf '{"result":{"process_info":{"foreground_process_group_id":5,"shell_pid":9}}}' ;;
+    esac
+  }
+  run agent_quit t-plan p2 claude
+  [ "$status" -eq 1 ]
+  [[ $output == *"t-plan did not quit to be started again; look at its pane"* ]]
 }
 
 @test "guard: a repo's own .factory/guardrails.txt replaces the default list" {
