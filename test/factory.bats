@@ -79,6 +79,25 @@ gate_opens() {
   done
 }
 
+# hint_marked: the gate's word to a run without a terminal on where to answer (no_terminal_hint)
+# also leaves $TMP/hinted, which hint_seen waits for, up to a minute, as a human in a pane
+# waits to be asked. The gate says it once its stdin is at its end: an answer that came
+# before would be taken first, and a test that checks the hint would find none.
+hint_marked() {
+  eval "real_$(declare -f no_terminal_hint)"
+  no_terminal_hint() {
+    real_no_terminal_hint "$@"
+    : >"$TMP/hinted"
+  }
+}
+hint_seen() {
+  local _
+  for _ in $(seq 600); do
+    [[ -e $TMP/hinted ]] && return 0
+    sleep 0.1
+  done
+}
+
 # the branch globals the gates and guards read, as task_context and open_workspace set them
 on_work_branch() {
   WT=$REPO
@@ -562,8 +581,9 @@ context_of() {
     esac
   }
   FACTORY_POLL_SECONDS=1
+  hint_marked
   (
-    gate_opens
+    hint_seen
     : >"$TMP/approved"
   ) 3>&- &
   run human_gate plan planner "$TMP" </dev/null
@@ -589,9 +609,10 @@ context_of() {
     ) >/dev/null 2>&1 3>&- &
   }
   pause_for_pane_reply() { printf 'pause for the reply, gate %s\n' "$(gate_waiting "$TMP" || printf closed)"; }
-  # the human's reject arrives once the factory waits
+  # the human's reject arrives once the factory waits and has said where to answer
+  hint_marked
   (
-    gate_opens
+    hint_seen
     printf 'too big, split it\n' >"$TMP/reject.md"
   ) 3>&- &
   run human_gate plan planner "$TMP" </dev/null
