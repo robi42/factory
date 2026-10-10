@@ -3036,6 +3036,28 @@ JSON
   [[ $output == *"t-plan did not quit to be started again; look at its pane"* ]]
 }
 
+@test "bd_json: bd's JSON read through the envelope bd 2.0 makes its default, or as bd 1 gives it" {
+  bd() {
+    printf 'envelope=%s args=%s\n' "${BD_JSON_ENVELOPE:-unset}" "$*" >>"$TMP/bd.log"
+    cat "$TMP/out"
+  }
+  printf '{"data":[{"id":"toy-1"}],"schema_version":1}\n' >"$TMP/out"
+  [ "$(bd_json "$TMP" list -n 0 | jq -c .)" = '[{"id":"toy-1"}]' ]
+  [ "$(cat "$TMP/bd.log")" = "envelope=1 args=-C $TMP list -n 0 --json" ] # opted in, so bd 1 prints no notice
+  printf '[{"id":"toy-1"}]\n' >"$TMP/out"                                 # no envelope
+  [ "$(bd_json "$TMP" list -n 0 | jq -c .)" = '[{"id":"toy-1"}]' ]
+  printf '{"data":{"error":"no issues found"},"schema_version":1}\n' >"$TMP/out" # an error, as bd 1 gave it unwrapped
+  [ "$(bd_json "$TMP" show toy-9 | jq -c .)" = '{"error":"no issues found"}' ]
+  bd() { # bd's failure stays the call's
+    printf '{"data":{"error":"no issues found"},"schema_version":1}\n'
+    return 1
+  }
+  run bd_json "$TMP" show toy-9
+  [ "$status" -eq 1 ]
+  bd() { printf '{"data":[{"id":"toy-1","title":"Add CSV export"}],"schema_version":1}\n'; }
+  [ "$(bd_field "$TMP" toy-1 .title)" = "Add CSV export" ]
+}
+
 @test "guard: a repo's own .factory/guardrails.txt replaces the default list" {
   make_repo
   printf 'FORBIDDEN_WORD\n' >"$REPO/.factory/guardrails.txt"
@@ -3094,7 +3116,7 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" = $'○ t-1 ● P2 one\n○ t-2 ● P2 two' ]
   run cmd_tasks "$TMP" --all
-  [ "$(cat "$TMP/bd.log")" = "-C $TMP list --json -n 0"$'\n'"-C $TMP list --all" ]
+  [ "$(cat "$TMP/bd.log")" = "-C $TMP list -n 0 --json"$'\n'"-C $TMP list --all" ]
   bd() { printf '[]'; }
   run cmd_tasks "$TMP"
   [ "$status" -eq 0 ]

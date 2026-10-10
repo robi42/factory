@@ -498,8 +498,17 @@ ask_for_file() {
 }
 
 # ----------------------------------------------------------------- beads ----
+# bd_json repo args...: bd's --json output for the args, read through the envelope bd 2.0 makes
+# its default ({"data": ..., "schema_version": 1}), to which Factory opts in; that also keeps bd
+# 1.x from printing its notice about the change. Output without one passes as it is.
+bd_json() {
+  local repo=$1
+  shift
+  BD_JSON_ENVELOPE=1 bd -C "$repo" "$@" --json | jq 'if type == "object" and has("schema_version") and has("data") then .data else . end'
+}
+
 bd_field() { # repo id jq-expr
-  bd -C "$1" show "$2" --json 2>/dev/null | jq -r "if type == \"array\" then .[0] else . end | $3"
+  bd_json "$1" show "$2" 2>/dev/null | jq -r "if type == \"array\" then .[0] else . end | $3"
 }
 
 # need_beads repo: the commands that touch tasks want a bd init first
@@ -545,7 +554,7 @@ bead_of_branch() { sed -E 's#^factory/([a-z][a-z0-9]*-[a-z0-9]+).*#\1#' <<<"$1";
 resolve_task() {
   local repo=$1 arg=$2
   need_beads "$repo"
-  if is_bead_id "$arg" && bd -C "$repo" show "$arg" --json >/dev/null 2>&1; then
+  if is_bead_id "$arg" && bd_json "$repo" show "$arg" >/dev/null 2>&1; then
     TASK_ID=$arg
     TASK_TITLE=$(bd_field "$repo" "$arg" '.title')
     TASK_DESC=$(bd_field "$repo" "$arg" '.description // ""')
@@ -2396,14 +2405,14 @@ cmd_tasks() { # repo [bd list args...]: without args, the open tasks in the orde
     return
   fi
   [[ -t 1 ]] && color=1
-  out=$(bd -C "$repo" list --json -n 0 | task_order "$color")
+  out=$(bd_json "$repo" list -n 0 | task_order "$color")
   if [[ -n $out ]]; then printf '%s\n' "$out"; else log "no open tasks in $repo"; fi
 }
 
 cmd_next() {
   local repo=$1 id
   # --claim is atomic, so several factory next in parallel never pick the same bead
-  id=$(bd -C "$repo" ready --claim --json 2>/dev/null | jq -r 'if type == "array" then .[0].id // empty else .id // empty end') || id=""
+  id=$(bd_json "$repo" ready --claim 2>/dev/null | jq -r 'if type == "array" then .[0].id // empty else .id // empty end') || id=""
   [[ -n $id ]] || {
     log "nothing ready in $repo"
     return 3

@@ -51,6 +51,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   planner's `max` became `xhigh`), model, permissions and dialog hooks, so an answer in
   the approval dialog never reached the gate. A gate now also offers its dialog only to
   an agent that runs with the hook.
+- `fy tasks` showed bd's notice that its `--json` output changes in bd 2.0. Factory now
+  reads bd's JSON in the envelope bd 2.0 makes its default (`BD_JSON_ENVELOPE=1`), which
+  ends the notice and keeps the task list, `fy next` and the task lookups working on
+  bd 2.0.
 - A file an agent added or changed under `.factory/` needed no waiver unless it was the
   gate, `.factory/protected`, `.factory/guardrails.txt` or `.factory/env`, though the
   guardrails read no line under `.factory/`: an example in `.factory/guard/` that a repo's
