@@ -688,6 +688,33 @@ context_of() {
   [[ $output == *"run.sh: deploy $pipe true"* ]]
 }
 
+@test "guard: a branch whose diff git cannot read fails, cut off from its base or with an object gone" {
+  make_repo
+  # Build the bad string at runtime so this file passes its own guard check.
+  local pipe='||' common blob
+  printf 'deploy %s true\n' "$pipe" >"$REPO/run.sh"
+  commit_all bad
+  common=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)
+  # A line in .git/shallow gives the branch's commit no parents, so it shares no history with
+  # main: git diff main...HEAD fails, and a guard that reads nothing refuses nothing.
+  git -C "$REPO" rev-parse HEAD >"$common/shallow"
+  run git -C "$REPO" merge-base main HEAD
+  [ "$status" -eq 1 ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"git cannot read the branch's diff against main"* ]]
+  rm "$common/shallow"
+  # The added content's object gone: the worktree still matches HEAD's tree, which names the
+  # object's id, but the diff of run.sh fails.
+  blob=$(git -C "$REPO" rev-parse HEAD:run.sh)
+  rm -f "$common/objects/${blob:0:2}/${blob:2}"
+  run tree_dirty "$REPO"
+  [ "$status" -eq 1 ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"git cannot read the branch's diff against main"* ]]
+}
+
 @test "guard: a committed build artifact git reads as a rename is still flagged" {
   make_repo
   # A data file on main whose content the artifact will "rename" from, so git pairs them R100.

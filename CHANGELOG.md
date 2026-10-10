@@ -50,6 +50,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   gitlink, and the guardrails refused nothing. The guardrails and the uncommitted-changes
   check now read the true object graph (`GIT_NO_REPLACE_OBJECTS`, no graft file), whatever
   the shared git dir holds.
+- The guardrails passed a branch whose diff against the base git could not read, since
+  every check then read nothing: a line in `.git/shallow`, which an agent can write, cut the
+  branch off from the base, so that the two shared no history, and an object gone from the
+  repository failed the diff of a file the worktree still matched. The guardrails now fail
+  such a branch and say why.
 - A committed build artifact slipped past the build-artifact check when git read it as a
   rename of a deleted file of like content: the check listed added files alone
   (`--diff-filter=A`), which leaves a rename out. It reads the list with `--no-renames` now,
