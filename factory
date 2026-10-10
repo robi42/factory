@@ -697,11 +697,13 @@ kept_out() {
 }
 
 # tree_state worktree -> git's status line for each file changed or added, the gate, the rules
-# and the rest of .factory/ included, but for what kept_out leaves out. Git compares the files
-# with HEAD through an index of its own, with the settings that could hide a change at their
-# defaults: the worktree's index and git config, which an agent can write, can mark a file
-# unchanged (assume-unchanged, skip-worktree, sparse patterns), have an fsmonitor hook or a lax
-# core.checkStat report no change, or leave out a submodule or a name that differs in case.
+# and the rest of .factory/ included, but for what kept_out leaves out, and one for each file
+# whose change git's conversions hide (masked). Git compares the files with HEAD through an
+# index of its own, with the settings that could hide a change at their defaults: the
+# worktree's index and git config, which an agent can write, can mark a file unchanged
+# (assume-unchanged, skip-worktree, sparse patterns), have an fsmonitor hook or a lax
+# core.checkStat report no change, or leave out a submodule, a name that differs in case, an
+# executable bit (core.fileMode) or a symlink made a file (core.symlinks).
 tree_state() {
   local kept dir out
   # An agent can plant a refs/replace ref (git replace) or an info/grafts line in the shared
@@ -709,18 +711,48 @@ tree_state() {
   # than the branch's and miss a change. Read the true graph: no replacement objects, and a
   # graft file under the fresh index dir, a name git never finds, so grafts are off with no
   # deprecation notice (a /dev/null graft file, which exists, prints one).
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE
+  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE GIT_INDEX_FILE
   mapfile -t kept < <(kept_out "$1")
   dir=$(mktemp -d)
-  GIT_GRAFT_FILE=$dir/no-grafts
-  if GIT_INDEX_FILE=$dir/index git -C "$1" read-tree HEAD; then
-    out=$(GIT_INDEX_FILE=$dir/index git -C "$1" -c core.fsmonitor=false -c core.ignoreCase=false \
-      status --porcelain --untracked-files=all --ignore-submodules=none -- . "${kept[@]}") || out="git status failed"
+  GIT_GRAFT_FILE=$dir/no-grafts GIT_INDEX_FILE=$dir/index
+  if git -C "$1" read-tree HEAD; then
+    fresh_status "$1" --untracked-files=all -- . "${kept[@]}" >"$dir/status" || printf 'git status failed\n' >>"$dir/status"
+    masked "$1" "$dir" . "${kept[@]}" >>"$dir/status" || printf 'git could not hash the tracked files\n' >>"$dir/status"
+    out=$(<"$dir/status")
   else
     out="no HEAD to compare with"
   fi
   rm -rf "$dir"
   printf '%s' "$out"
+}
+
+# fresh_status worktree args...: git status --porcelain against tree_state's own index, with the
+# git config that could hide a change at its defaults, and the paths quoted as ls-files quotes them
+fresh_status() {
+  git -C "$1" -c core.fsmonitor=false -c core.ignoreCase=false -c core.fileMode=true -c core.symlinks=true \
+    -c core.quotePath=true status --porcelain --ignore-submodules=none "${@:2}"
+}
+
+# masked worktree dir pathspec...: a status line for each tracked file whose bytes are not the
+# blob's in tree_state's own index while git status, whose lines are in dir/status, shows no
+# change. Git compares a file through its conversions, all of which an agent can set:
+# core.autocrlf and core.eol, a text, eol, ident, working-tree-encoding or filter attribute, in
+# .gitattributes, info/attributes or the file core.attributesFile names, and the filter's
+# command. The gate reads the bytes, so they are hashed as they are. A repo whose own
+# .gitattributes converts files on checkout, as Git LFS or eol=crlf does, has them listed here,
+# not skipped: Factory cannot check such files.
+masked() {
+  # Each file, but those git status shows gone or of another kind, which hash-object cannot
+  # read: its blob, its name as git status quotes it, which also puts a name with a space in
+  # quotes, and as ls-files quotes it, which hash-object reads back. ls-files -s prints
+  # "mode blob stage<TAB>name"; a symlink or a submodule is git status's to compare.
+  git -C "$1" -c core.ignoreCase=false -c core.quotePath=true ls-files -s -- "${@:3}" \
+    | awk -F '\t' 'FILENAME == ARGV[1] { if (/^.[DT] /) gone[substr($0, 4)]; next }
+      $1 ~ /^100/ { q = ($2 ~ /^"/ || $2 !~ / /) ? $2 : "\"" $2 "\""
+        if (!(q in gone)) { split($1, m, " "); print m[2] "\t" q "\t" $2 } }' "$2/status" - >"$2/files" || return
+  cut -f 3 "$2/files" | git -C "$1" hash-object --no-filters --stdin-paths >"$2/hashes" || return
+  paste "$2/hashes" "$2/files" | awk -F '\t' 'FILENAME == ARGV[1] { shown[substr($0, 4)]; next }
+    $1 != $2 && !($3 in shown) { print " M " $3 " (bytes differ from the commit'"'"'s; git'"'"'s conversions hide it)" }' "$2/status" -
 }
 
 # tree_dirty worktree: 0 when tree_state lists a file
@@ -747,8 +779,12 @@ guard_check() {
     printf 'git reads the work tree at %s, not %s: name the top of a checkout, with no core.worktree in its git config\n' "$top" "$wt"
     bad=1
   fi
-  if tree_dirty "$wt"; then
+  local dirty
+  dirty=$(tree_state "$wt")
+  if [[ -n $dirty ]]; then
     printf 'uncommitted changes in the worktree; commit your work (ignore build artifacts, do not commit them)\n'
+    # the tracked files, by name: git's own status may show none of them (masked)
+    sed '/^?? /d' <<<"$dirty"
     bad=1
   fi
   if [[ $(git -C "$wt" rev-list --count "$base..HEAD") -eq 0 ]]; then

@@ -1373,6 +1373,60 @@ IN
   [[ $output == *"uncommitted changes in the worktree"* ]]
 }
 
+@test "guard: a change still counts when git's conversions show git the committed bytes" {
+  make_repo
+  printf 'skip\n' >"$REPO/.factory/guardrails.txt"
+  printf 'ci:\n\tjust test\n' >"$REPO/justfile"
+  printf 'echo tool\n' >"$REPO/tool.sh"
+  ln -s run.sh "$REPO/link"
+  commit_all "rules, recipe, tool and link"
+  git -C "$REPO" branch -f main # the base has them
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  # The rules with CRLF line endings, which core.autocrlf reads as the commit's LF: every
+  # pattern would end in a CR, and the guardrails would match nothing. git add finds nothing
+  # to add, and git status nothing to show.
+  git -C "$REPO" config core.autocrlf true
+  printf 'skip\r\n' >"$REPO/.factory/guardrails.txt"
+  git -C "$REPO" add -A
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"uncommitted changes in the worktree"* ]]
+  [[ $output == *" M .factory/guardrails.txt (bytes differ from the commit's; git's conversions hide it)"* ]]
+  git -C "$REPO" config --unset core.autocrlf
+  printf 'skip\n' >"$REPO/.factory/guardrails.txt"
+  # An edited recipe, and a clean filter, named in info/attributes, that hands git the commit's.
+  printf 'justfile filter=hide\n' >"$REPO/.git/info/attributes"
+  git -C "$REPO" config filter.hide.clean "sed 's/true # relaxed/just test/'"
+  printf 'ci:\n\ttrue # relaxed\n' >"$REPO/justfile"
+  git -C "$REPO" add -A
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *" M justfile (bytes differ from the commit's; git's conversions hide it)"* ]]
+  printf 'ci:\n\tjust test\n' >"$REPO/justfile"
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+  # An executable bit core.fileMode leaves out, and a symlink made a file core.symlinks leaves out.
+  git -C "$REPO" config core.fileMode false
+  chmod +x "$REPO/tool.sh"
+  git -C "$REPO" add -A
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *" M tool.sh"* ]]
+  chmod -x "$REPO/tool.sh"
+  git -C "$REPO" config core.symlinks false
+  rm "$REPO/link"
+  printf 'run.sh' >"$REPO/link"
+  git -C "$REPO" add -A
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *" T link"* ]]
+}
+
 @test "guard: a worktree whose git config points git at another checkout fails" {
   make_repo
   task_worktree

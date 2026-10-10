@@ -351,7 +351,11 @@ after the gate passes and before review:
   Git compares the worktree with the branch through an index of Factory's own, so neither
   the worktree's index nor its git config can hide a change, as `assume-unchanged` or an
   fsmonitor hook could, and a worktree whose config points git at another checkout
-  (`core.worktree`) fails.
+  (`core.worktree`) fails. Factory also compares each tracked file's bytes, which the gate
+  reads, with the commit's: git's conversions (`core.autocrlf`, a `text`, `eol` or `filter`
+  attribute) could show git the commit's bytes for others. The guardrails name the changed
+  tracked files. A repo whose own `.gitattributes` converts files on checkout, as Git LFS or
+  `eol=crlf` does, cannot pass: such files are named, not skipped.
 - Protected paths untouched: `.factory/gate`, `.factory/protected`, `.factory/guardrails.txt`,
   `.factory/env`, and every glob listed in `.factory/protected`, which git reads as a
   pathspec; a line git cannot read fails the guardrails. A task that legitimately must
