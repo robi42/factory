@@ -356,11 +356,12 @@ after the gate passes and before review:
   attribute) could show git the commit's bytes for others. The guardrails name the changed
   tracked files. A repo whose own `.gitattributes` converts files on checkout, as Git LFS or
   `eol=crlf` does, cannot pass: such files are named, not skipped.
-- Protected paths untouched: `.factory/gate`, `.factory/protected`, `.factory/guardrails.txt`,
-  `.factory/env`, and every glob listed in `.factory/protected`, which git reads as a
-  pathspec; a line git cannot read fails the guardrails. A task that legitimately must
-  change them, such as adding the gate, gets a one-task waiver from you at plan approval
-  (`p`, or `--allow-protected`); the pull request body records it.
+- Protected paths untouched: all of `.factory/`, the gate, the rules, `.factory/env` and
+  any other file a repo keeps there, but Factory's own `.factory/run/`; and every glob
+  listed in `.factory/protected`, which git reads as a pathspec; a line git cannot read
+  fails the guardrails. A task that legitimately must change them, such as adding the gate,
+  gets a one-task waiver from you at plan approval (`p`, or `--allow-protected`); the pull
+  request body records it.
 - No ignored file at a protected path, waiver or not: git leaves it out of the branch and
   its diff, but the gate reads it, as mise reads an ignored `.mise.local.toml` in a repo
   that protects mise's configs. Factory's own `.factory/run/` is exempt, and so is your

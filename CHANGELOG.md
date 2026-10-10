@@ -42,6 +42,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.
+- A file an agent added or changed under `.factory/` needed no waiver unless it was the
+  gate, `.factory/protected`, `.factory/guardrails.txt` or `.factory/env`, though the
+  guardrails read no line under `.factory/`: an example in `.factory/guard/` that a repo's
+  own gate holds its rules to could change unseen. All of `.factory/` is protected now, but
+  Factory's own `.factory/run/`, and an ignored file anywhere under it fails the
+  guardrails, waiver or not. Your own `.factory/env` in the repo's main checkout stays
+  exempt from the checks for uncommitted and ignored files.
 - The check for uncommitted changes read each file through git's conversions, which an
   agent can turn on: `.factory/guardrails.txt` rewritten with CRLF line endings under
   `core.autocrlf=true` read to git as the committed file, while every rule then ended in a

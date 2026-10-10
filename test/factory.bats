@@ -155,16 +155,14 @@ context_of() {
   [[ $output == *"no gate"* ]]
 }
 
-@test "protected globs: defaults plus .factory/protected" {
+@test "protected globs: all of .factory/ but the run dir, plus .factory/protected" {
   make_repo
   printf '# keep\nsrc/legacy/*\n\n' >"$REPO/.factory/protected"
   run protected_globs "$REPO"
-  [ "${lines[0]}" = ".factory/gate" ]
-  [ "${lines[1]}" = ".factory/protected" ]
-  [ "${lines[2]}" = ".factory/guardrails.txt" ]
-  [ "${lines[3]}" = ".factory/env" ]
-  [ "${lines[4]}" = "src/legacy/*" ]
-  [ "${#lines[@]}" -eq 5 ]
+  [ "${lines[0]}" = ".factory" ]
+  [ "${lines[1]}" = ":(exclude).factory/run" ]
+  [ "${lines[2]}" = "src/legacy/*" ]
+  [ "${#lines[@]}" -eq 3 ]
 }
 
 @test "load_repo_env: .factory/env fills unset knobs, the environment wins, bad lines die" {
@@ -277,6 +275,18 @@ context_of() {
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"protected path changed: src/legacy/old.txt"* ]]
+}
+
+@test "guard: a new file anywhere under .factory/ is a protected path; Factory's run dir is not" {
+  make_repo
+  mkdir -p "$REPO/.factory/guard" "$REPO/.factory/run"
+  printf 'x\n' >"$REPO/.factory/guard/x" # such as an example a repo's own gate reads
+  printf 'plan\n' >"$REPO/.factory/run/plan.md"
+  commit_all "a guard example, and Factory's run dir"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/guard/x"* ]]
+  [[ $output != *".factory/run"* ]]
 }
 
 @test "guard: forbidden patterns on added lines fail, except under .factory" {

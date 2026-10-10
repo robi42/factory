@@ -660,8 +660,10 @@ guardrails_file() {
   if [[ -f $1/.factory/guardrails.txt ]]; then printf '%s' "$1/.factory/guardrails.txt"; else printf '%s' "$FACTORY_GUARDRAILS"; fi
 }
 
-protected_globs() { # repo -> one glob per line
-  printf '%s\n' .factory/gate .factory/protected .factory/guardrails.txt .factory/env
+# protected_globs repo -> one pathspec per line: all of .factory/ but Factory's own run dir, then
+# the lines of the repo's .factory/protected
+protected_globs() {
+  printf '%s\n' .factory ":(exclude)$RUN_DIR"
   [[ -f $1/.factory/protected ]] && grep -vE '^\s*(#|$)' "$1/.factory/protected"
   return 0
 }
