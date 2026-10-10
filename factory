@@ -755,10 +755,13 @@ guard_check() {
     printf 'no commits on the branch since %s\n' "$base"
     bad=1
   fi
+  # --no-renames, as the symlink and gitlink checks pass: git pairs an added artifact with a
+  # deleted file of like content as a rename (R), which --diff-filter=A leaves out, so a
+  # committed build/out.o git read as renamed from a data file would pass unflagged.
   while IFS= read -r -d '' f; do
     printf 'build artifact committed: %s\n' "$f"
     bad=1
-  done < <(guard_diff "$wt" --name-only -z --diff-filter=A "$base...HEAD" | LC_ALL=C grep -zE '(^|/)(__pycache__/|node_modules/|\.DS_Store$|.*\.pyc$|.*\.class$|.*\.o$)')
+  done < <(guard_diff "$wt" --name-only -z --no-renames --diff-filter=A "$base...HEAD" | LC_ALL=C grep -zE '(^|/)(__pycache__/|node_modules/|\.DS_Store$|.*\.pyc$|.*\.class$|.*\.o$)')
   if ((FACTORY_REQUIRE_TESTS)) && ! tests_changed_with_source "$wt" "$base"; then
     printf 'source files changed but no test files did; add or adjust a test\n'
     bad=1

@@ -688,6 +688,26 @@ context_of() {
   [[ $output == *"run.sh: deploy $pipe true"* ]]
 }
 
+@test "guard: a committed build artifact git reads as a rename is still flagged" {
+  make_repo
+  # A data file on main whose content the artifact will "rename" from, so git pairs them R100.
+  printf 'AAAA\nBBBB\nCCCC\nDDDD\n' >"$REPO/blob.dat"
+  commit_all blob
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+  git -C "$REPO" rm -q blob.dat
+  mkdir -p "$REPO/build"
+  printf 'AAAA\nBBBB\nCCCC\nDDDD\n' >"$REPO/build/artifact.o"
+  printf '#[test]\nfn t(){}\n' >"$REPO/lib_test.rs"
+  commit_all 'artifact git pairs as a rename of blob.dat'
+  # with rename detection on, the full added-file list pairs the artifact with blob.dat and drops it
+  [[ $(git -C "$REPO" diff --name-only --diff-filter=A main...HEAD | grep -c 'build/artifact\.o') -eq 0 ]]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"build artifact committed: build/artifact.o"* ]]
+}
+
 @test "plan approval: terminal answers" {
   plan_ready
   human_gate plan planner "$TMP" <<<"a"

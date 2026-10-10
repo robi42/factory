@@ -50,6 +50,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   gitlink, and the guardrails refused nothing. The guardrails and the uncommitted-changes
   check now read the true object graph (`GIT_NO_REPLACE_OBJECTS`, no graft file), whatever
   the shared git dir holds.
+- A committed build artifact slipped past the build-artifact check when git read it as a
+  rename of a deleted file of like content: the check listed added files alone
+  (`--diff-filter=A`), which leaves a rename out. It reads the list with `--no-renames` now,
+  as the symlink and submodule checks do.
 - The guardrails skipped a file whose name git quotes, such as `naïve.rs` with its
   non-ASCII character: not one of its added lines was matched, and it counted as neither
   code, test nor build artifact. A name that reads as a pathspec, such as
