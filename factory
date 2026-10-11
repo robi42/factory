@@ -54,6 +54,10 @@ need_all() {
 }
 RUN_TOOLS=(herdr claude codex bd jq git)
 
+# git_version -> git's version, as 2.43.0; git_at_least version: 0 when git is that or later
+git_version() { git version | grep -oE '[0-9]+(\.[0-9]+)+' | head -n 1; }
+git_at_least() { [[ $(printf '%s\n' "$1" "$(git_version)" | sort -V | head -n 1) == "$1" ]]; }
+
 # check_knobs: a knob Factory cannot read stops here, before a bead is claimed. Claude Code
 # ignores an unknown effort with a warning in its pane and Codex fails the reviewer's first turn
 # on one; an approval mode other than ask would pass both human gates unasked; a flag or a count
@@ -105,11 +109,12 @@ usage() {
   row "factory reject  <repo> <bead-id> '<note>'" 'send a note back; the plan or build comes back revised'
   row 'factory abort   <repo> <bead-id>' 'abort the task at its waiting plan or build'
   row '  in a task'"'"'s worktree: no <repo> <bead-id>' 'the task is the one there: !fy approve in a pane that shows no dialog'
-  row 'factory pr      <repo> <bead-id> [--no-copilot]' 'push an existing task branch and open a pull request'
+  row 'factory pr      <repo> <bead-id> [--no-copilot]' 'check, push an existing task branch and open a pull request'
   row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
   row 'factory check   <worktree> <base>' 'run gate + guardrails on a branch, no agents'
   row 'factory status' 'live factory agents in Herdr'
   row 'factory doctor' 'check prerequisites'
+  row 'factory --version' 'print the version'
   printf '\nknobs (env, or the repo'"'"'s .factory/env; current values):\n'
   row "FACTORY_PLAN_MODEL=$FACTORY_PLAN_MODEL" 'planner (Claude Code)'
   row "FACTORY_BUILD_MODEL=$FACTORY_BUILD_MODEL" 'builder (Claude Code)'
@@ -122,7 +127,7 @@ usage() {
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
   row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'a stalled turn fails after this; one working or waiting for your input toasts you and goes on'
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
-  row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" '1: code changes must touch a test file'
+  row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" '1: code changes must touch a test file (in Rust, a test in the file will do)'
   row "FACTORY_APPROVAL=$FACTORY_APPROVAL" 'ask: you approve each plan and build; auto: skip'
   row "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS" 'seconds between checks for the approve, reject and abort files, and on an open question'
   row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request'
@@ -517,7 +522,7 @@ ask_for_file() {
   [[ -s $file ]] && return 0
   warn "$name replied but $file is missing; asking again"
   ask "$name" "You replied, but $file does not exist. Write it now and reply as asked."
-  [[ -s $file ]] || die "$name never wrote $file"
+  [[ -s $file ]] || die "$name never wrote $file; look at its pane, then rerun to take the task up again"
 }
 
 # ----------------------------------------------------------------- beads ----
@@ -540,7 +545,7 @@ bd_field() { # repo id jq-expr
 # need_beads repo: the commands that touch tasks want a bd init first
 need_beads() { [[ -d $1/.beads ]] || die "no beads in $1; run: factory init $1"; }
 
-# bd_note repo id text: a comment on the bead, tagged so it reads as the factory's in bd show
+# bd_note repo id text: a comment on the bead, tagged so it reads as Factory's in bd show
 bd_note() { bd -C "$1" comment "$2" "Factory: $3" >/dev/null; }
 
 is_bead_id() { [[ $1 =~ ^[a-z][a-z0-9]*-[a-z0-9]+$ ]]; }
@@ -683,12 +688,12 @@ detect_gate() {
   return 1
 }
 
-# write_gate repo command: a committed script the factory runs as the definition of done.
+# write_gate repo command: a committed script Factory runs as the definition of done.
 write_gate() {
   mkdir -p "$1/.factory"
   cat >"$1/.factory/gate" <<G
 #!/usr/bin/env bash
-# The factory's definition of done. Detected by factory init; make it as strict as you like.
+# Factory's definition of done. Detected by factory init; make it as strict as you like.
 set -euo pipefail
 $2
 G
@@ -874,14 +879,16 @@ guard_check() {
   # an agent can write, cuts the branch off from the base, so that base...HEAD has no merge base,
   # and an object gone from the repository fails the diff of a file while the worktree matches.
   local nuls
+  err=$(mktemp)
   if ! nuls=$(
-    guard_diff "$wt" --no-renames -U0 "$base...HEAD" -- . ':(exclude).factory' | LC_ALL=C tr -cd '\000' | wc -c
+    guard_diff "$wt" --no-renames -U0 "$base...HEAD" -- . ':(exclude).factory' 2>"$err" | LC_ALL=C tr -cd '\000' | wc -c
     exit "${PIPESTATUS[0]}"
   ); then
-    printf "git cannot read the branch's diff against %s (git says why above), so no check here could read it\n" "$base"
+    printf "git cannot read the branch's diff against %s, so no check here could read it: %s\n" "$base" "$(head -n 3 "$err" | paste -sd ' ')"
     bad=1
     nuls=0
   fi
+  rm -f "$err"
   # --no-renames, as the symlink and gitlink checks pass: git pairs an added artifact with a
   # deleted file of like content as a rename (R), which --diff-filter=A leaves out, so a
   # committed build/out.o git read as renamed from a data file would pass unflagged.
@@ -908,6 +915,12 @@ guard_check() {
       bad=1
     done < <(guard_diff "$wt" --name-only -z "$base...HEAD" -- "${globs[@]}")
   fi
+  # The run dir is Factory's, out of the branch: a file committed there with git add -f would
+  # be in no check's view, as the protected paths and the patterns leave the run dir out
+  while IFS= read -r -d '' f; do
+    printf "file committed in Factory's run dir: %s (no part of the branch; git rm --cached it)\n" "$f"
+    bad=1
+  done < <(guard_diff "$wt" --name-only -z "$base...HEAD" -- "$RUN_DIR")
   # The waiver was a file in the run dir, which the agents write: one there or on the branch can
   # only be an agent's, and waives nothing.
   if [[ -e $wt/$RUN_DIR/allow-protected || -L $wt/$RUN_DIR/allow-protected ]] \
@@ -918,7 +931,7 @@ guard_check() {
   # A protected path is one that steers the gate, and an ignored file there steers it unseen:
   # git leaves it out of the branch and its diff, so the waiver, which is for those, has no say.
   while IFS= read -r -d '' f; do
-    printf 'ignored file at a protected path: %s (read in this worktree, left out of the branch; remove it)\n' "$f"
+    printf 'ignored file at a protected path: %s (read in this worktree, left out of the branch; remove it, or narrow the line of .factory/protected that names it)\n' "$f"
     bad=1
   done < <(git -C "$wt" ls-files --others --ignored --exclude-standard -z -- "${globs[@]}" "${kept[@]}")
   # An untracked .gitignore that ignores itself hides the files beside it, a conftest.py say,
@@ -949,17 +962,17 @@ guard_check() {
   while IFS= read -r -d '' f; do
     [[ -L $wt/$f ]] || continue
     if ! in_view "$wt" "$(realpath -m --relative-to="$wt" "$wt/$f")"; then
-      printf 'symlink to a place git does not show: %s -> %s (the gate would read what no diff shows)\n' "$f" "$(readlink "$wt/$f")"
+      printf 'symlink to a place git does not show: %s -> %s (the gate would read what no diff shows; point it at a tracked file, or remove it)\n' "$f" "$(readlink "$wt/$f")"
       bad=1
     elif [[ -d $wt/$f ]] && ! waived; then
-      printf 'symlink to a directory: %s -> %s (the paths under it escape the protected globs)\n' "$f" "$(readlink "$wt/$f")"
+      printf "symlink to a directory: %s -> %s (the paths under it escape the protected globs; remove it, or have the human waive the protected paths at the plan's approval)\n" "$f" "$(readlink "$wt/$f")"
       bad=1
     fi
   done < <(guard_diff "$wt" --name-only -z --no-renames --diff-filter=AMT "$base...HEAD")
   # A submodule brings in a tree of its own, which the branch's diff shows as one line, the
   # commit it points at: the gate reads files there that no diff shows, waiver or not.
   while IFS= read -r -d '' f; do
-    printf 'submodule added or pointed at another commit: %s (the gate would read files no diff shows; leave it for a human to commit)\n' "$f"
+    printf 'submodule added or pointed at another commit: %s (the gate would read files no diff shows; take it out of the branch, for a human to change after the merge)\n' "$f"
     bad=1
   done < <(gitlinks "$wt" "$base")
   local hits=0 rc=0
@@ -989,7 +1002,7 @@ guard_check() {
     # A NUL is rare: each file is looked at for one only when the branch's diff holds one.
     if ((nuls)) && [[ $(LC_ALL=C tr -cd '\000' <"$lines" | wc -c) -gt 0 ]]; then
       binary_data "$wt" "$f" && continue
-      printf 'NUL byte added to a file not known as binary data: %s (git and grep would skip its lines; remove the byte, or leave the file for a human to commit)\n' "$f"
+      printf 'NUL byte added to a file not known as binary data: %s (git and grep would skip its lines; remove the byte, or take the file out of the branch, for a human to add after the merge)\n' "$f"
       bad=1
     fi
     if grep -a -E -f "$patterns" "$lines" | label "$f"; then
@@ -1061,14 +1074,21 @@ label() {
 }
 
 # tests_changed_with_source worktree base: true unless code changed and no test file did.
-# The names are matched as the bytes git keeps (LC_ALL=C), whatever their encoding.
+# The names are matched as the bytes git keeps (LC_ALL=C), whatever their encoding. Rust keeps
+# unit tests in the file they test (#[cfg(test)]): a test or an assertion added to a .rs file
+# counts as a test changed.
 tests_changed_with_source() {
-  local LC_ALL=C f code=0
+  local LC_ALL=C f code=0 lines rust=()
   local code_re='\.(py|js|jsx|ts|tsx|go|rs|java|kt|kts|scala|sh|bash|rb|ex|exs|c|cc|cpp|h|hpp|cs|swift|php|lua|clj|el)$'
   while IFS= read -r -d '' f; do
     [[ $f =~ $TEST_PATH_RE ]] && return 0
+    [[ $f == *.rs ]] && rust+=("$f")
     [[ $f =~ $code_re ]] && code=1
   done < <(guard_diff "$1" --name-only -z "$2...HEAD" -- . ':(exclude).factory')
+  for f in "${rust[@]}"; do
+    lines=$(added_lines "$1" "$2" "$f")
+    grep -qE '#\[([a-z_]+::)?test\]|#\[cfg\(test\)\]|assert(_eq|_ne)?!' <<<"$lines" && return 0
+  done
   return "$code"
 }
 
@@ -1207,7 +1227,7 @@ task_base() {
   GIT_GRAFT_FILE=$(mktemp -u)
   read -r sha ref 2>/dev/null <"$TASK_STATE/base" || die "no base commit recorded for $TASK_ID in $TASK_STATE"
   git -C "$WT" merge-base --is-ancestor "$sha" "$ref" 2>/dev/null \
-    || die "$ref no longer holds $sha, the commit $BRANCH is measured from: something other than Factory moved it, maybe rewrote your $BASE. Look at it before you go on; if it was you, remove $TASK_STATE/base, and a rerun measures the branch from where it forks off then"
+    || die "$ref no longer holds $sha, the commit $BRANCH is measured from: something other than Factory moved it, maybe rewrote your $BASE; look at it before you go on, and if it was you, remove $TASK_STATE/base for a rerun to measure the branch from where it forks off then"
   printf '%s' "$sha"
 }
 
@@ -1349,7 +1369,7 @@ pr_checks() { # -> markdown bullets describing what the run directory proves
     f=$(printf '%s\n' "${gates[@]}" | sort -V | tail -n1)
     printf -- '- Gate %s passed (%s)\n' "\`$GATE\`" "$(basename "$f" .log)"
   else
-    printf -- '- Gate: not run by the factory\n'
+    printf -- '- Gate: not run by Factory\n'
   fi
   if ((${#reviews[@]})); then
     while IFS= read -r f; do
@@ -1601,7 +1621,7 @@ Task $TASK_ID: $TASK_TITLE
 $TASK_DESC
 
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
-Do not write the code itself and do not change any file outside $RUN_DIR/; the factory checks.
+Do not write the code itself and do not change any file outside $RUN_DIR/; Factory checks.
 If the task is ambiguous in a way that would change the design, ask the human first with your AskUserQuestion tool (up to four questions, with options where they help); prefer a plan with stated assumptions when the ambiguity is minor.$([[ ! -s $WT/$RUN_DIR/decisions.md ]] || printf ' The human'"'"'s answers and decisions on this task so far are in %s; read them before asking again.' "$RUN_DIR/decisions.md")
 The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected to waive protected paths), !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 $MEMORY
@@ -1642,11 +1662,11 @@ Fix the cause (no suppressions, no skipped tests, no swallowed errors, leave pro
 P
 }
 
-review_prompt() { # round
+review_prompt() { # round [human's note]
   cat <<P
 Review task $TASK_ID: $TASK_TITLE
 The plan is in $RUN_DIR/plan.md. The changes: git diff $(task_base)...HEAD
-Look for bugs, missed requirements, shortcuts (skipped tests, suppressed warnings, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.
+Look for bugs, missed requirements, shortcuts (skipped tests, suppressed warnings, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.$(build_recheck "$1" "" "${2:-}")
 Write the review to $RUN_DIR/review-$1.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.
 P
@@ -1688,6 +1708,21 @@ plan_recheck() {
   return 0
 }
 
+# build_recheck round suffix [human's note]: from the second round on, a reviewer checks what
+# changed since its last notes (review-<k><suffix>.md), with the builder's answer to them, and
+# after a note from the human, against that note too
+build_recheck() {
+  local k=$(($1 - 1))
+  while ((k > 0)) && [[ ! -s $WT/$RUN_DIR/review-$k$2.md ]]; do k=$((k - 1)); done
+  if ((k > 0)); then
+    printf '\nYour notes from review round %s are in %s.' "$k" "$RUN_DIR/review-$k$2.md"
+    [[ ! -s $WT/$RUN_DIR/response-$k.md ]] || printf ' The builder said why it left points as they were in %s.' "$RUN_DIR/response-$k.md"
+    printf ' Check what changed since against them and for anything it broke; ask for another revision only for a real problem, not for polish.'
+  fi
+  [[ -z ${3:-} ]] || printf '\nThe human sent this note on the build: %s\nCheck the changes against the note as well.' "$3"
+  return 0
+}
+
 plan_note_prompt() { # note
   cat <<P
 The human reviewed $RUN_DIR/plan.md and says: $1
@@ -1710,10 +1745,10 @@ Then reply with the plan's content.
 P
 }
 
-plan_check_prompt() { # round
+plan_check_prompt() { # round [human's note]
   cat <<P
 The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(task_base)...HEAD
-Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.
+Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.$(build_recheck "$1" -plan "${2:-}")
 Write your notes to $RUN_DIR/review-$1-plan.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.
 P
@@ -1767,7 +1802,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
       if [[ -e $dir/aborted ]]; then
         rm -f "$dir/aborted" "$dir/waiting"
         printf '\n' >&2
-        log "aborted via file"
+        log "aborted in a pane or with fy abort"
         record_answer "$dir" "$kind aborted"
         return 3
       fi
@@ -1776,7 +1811,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
         rm -f "$dir/reject.md"
         close_gate "$kind" "$dir" "$agent"
         printf '\n' >&2
-        log "note received via file"
+        log "note received from a pane or fy reject"
         record_answer "$dir" "note on the $kind: $note"
         pause_for_pane_reply
         take_note "$kind" "$agent" "$note" || return $?
@@ -1785,7 +1820,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
       if [[ -e $dir/approved ]]; then
         rm -f "$dir/approved" "$dir/waiting"
         printf '\n' >&2
-        log "approved via file"
+        log "approved in a pane or with fy approve"
         if [[ $kind == plan ]] && waived; then
           record_answer "$dir" "plan approved, protected paths allowed"
         else
@@ -2058,7 +2093,7 @@ write_plan() {
   [[ ! -s $file ]] || return 0
   warn "$1 replied but wrote no $RUN_DIR/plan.md; asking again"
   planner_turn "$1" "You replied, but $RUN_DIR/plan.md does not exist. Do not ask the human again: decide what is still open with stated assumptions, which the human sees when approving the plan, then write the plan and reply with its content."
-  [[ -s $file ]] || die "$1 never wrote $RUN_DIR/plan.md"
+  [[ -s $file ]] || die "$1 never wrote $RUN_DIR/plan.md; look at its pane, then rerun to take the task up again"
 }
 
 # ------------------------------------------------------------- workspace ----
@@ -2227,7 +2262,7 @@ start_or_adopt_agents() {
   log "agents up: $PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
 }
 
-# write_env: the agents get the factory's PATH (bd, gate tools) via a short command, which
+# write_env: the agents get Factory's PATH (bd, gate tools) via a short command, which
 # prime_shell runs in their panes; a long inline export trips line editors such as ble.sh into
 # multiline mode
 write_env() { printf "export PATH='%s'\n" "$PATH" >"$WT/$RUN_DIR/env.sh"; }
@@ -2358,7 +2393,7 @@ resume_point() { # -> written <round> | reviewed | planned | built <round> | (em
 # stop_task repo what: a human gate ended the run; leave the workspace for them.
 stop_task() {
   bd_note "$1" "$TASK_ID" "stopped at $2. workspace $WS, worktree $WT"
-  die "stopped at $2 for $TASK_ID; the workspace stays open"
+  die "stopped at $2 for $TASK_ID; the workspace stays open, and factory run $1 $TASK_ID takes the task up again"
 }
 
 # plan_round round [human's note]: Codex and the builder review the plan, and the planner
@@ -2418,7 +2453,7 @@ approve_plan() {
 # approval per round, up to FACTORY_ROUNDS; a note from the human always gets a round of its
 # own, past the last if need be. Sets ROUND VERDICT.
 build_phase() {
-  local repo=$1 violations rc limit=$FACTORY_ROUNDS gate_log
+  local repo=$1 violations rc limit=$FACTORY_ROUNDS gate_log note=""
   log "building"
   if [[ ${2:-} == resume ]]; then
     ask "$BUILD_AGENT" "$(build_prompt) Part of it may already be implemented or committed on this branch from an earlier run; check the branch and continue from there."
@@ -2442,8 +2477,8 @@ build_phase() {
       continue
     fi
     log "review round $ROUND: $REVIEW_AGENT and $PLAN_AGENT"
-    ask_for_file "$REVIEW_AGENT" "$(review_prompt "$ROUND")" "$WT/$RUN_DIR/review-$ROUND.md"
-    ask_for_file "$PLAN_AGENT" "$(plan_check_prompt "$ROUND")" "$WT/$RUN_DIR/review-$ROUND-plan.md"
+    ask_for_file "$REVIEW_AGENT" "$(review_prompt "$ROUND" "$note")" "$WT/$RUN_DIR/review-$ROUND.md"
+    ask_for_file "$PLAN_AGENT" "$(plan_check_prompt "$ROUND" "$note")" "$WT/$RUN_DIR/review-$ROUND-plan.md"
     VERDICT=$(verdicts "$WT/$RUN_DIR/review-$ROUND.md" "$WT/$RUN_DIR/review-$ROUND-plan.md")
     log "verdicts: $VERDICT"
     if [[ $VERDICT == "APPROVE APPROVE" ]]; then
@@ -2458,7 +2493,8 @@ build_phase() {
         4)
           VERDICT=REVISE
           log "note for the builder; another round"
-          ask "$BUILD_AGENT" "$(build_note_prompt "$HUMAN_NOTE")"
+          note=$HUMAN_NOTE
+          ask "$BUILD_AGENT" "$(build_note_prompt "$note")"
           ((ROUND < limit)) || limit=$((ROUND + 1))
           ROUND=$((ROUND + 1))
           continue
@@ -2592,10 +2628,18 @@ cmd_doctor() {
     printf '  MISSING  herdr server (start herdr first)\n'
     ok=1
   fi
-  # Claude Code runs its shell commands from a fresh login shell, not the pane's environment,
-  # so bd must resolve there (e.g. mise use -g, or a symlink in ~/.local/bin).
+  # Claude Code runs its shell commands, yours after ! too, from a fresh login shell, not the
+  # pane's environment, so bd and fy must resolve there (mise use -g, or a symlink in ~/.local/bin)
   if bash -lc 'bd version' >/dev/null 2>&1; then printf '  ok       bd from a fresh login shell\n'; else
     printf '  MISSING  bd from a fresh login shell (agents will not be able to use beads)\n'
+    ok=1
+  fi
+  if bash -lc 'command -v fy' >/dev/null 2>&1; then printf '  ok       fy from a fresh login shell\n'; else
+    printf '  MISSING  fy from a fresh login shell (!fy approve in a pane will not work; see the README'"'"'s Install)\n'
+    ok=1
+  fi
+  if git_at_least 2.31; then printf '  ok       git %s\n' "$(git_version)"; else
+    printf '  MISSING  git 2.31 or later (this is %s)\n' "$(git_version)"
     ok=1
   fi
   [[ -f $FACTORY_GUARDRAILS ]] && printf '  ok       guardrails %s\n' "$FACTORY_GUARDRAILS"
@@ -2901,9 +2945,6 @@ cmd_dialog_hook() {
   event=$(jq -r '.hook_event_name // ""' <<<"$in")
   if (($# >= 3)); then
     TASK_ID=$2 dir=$3
-  elif cd "$(jq -r '.cwd // ""' <<<"$in")" 2>/dev/null && task_args; then # an agent's hook from before it named them
-    TASK_ID=${TARGS[1]}
-    dir=$(task_run_dir "${TARGS[0]}" "$TASK_ID") || return 1
   fi
   if [[ ! -d ${dir:-} ]]; then # nothing to mark without the run dir; an answer says so
     [[ $event == PostToolUse ]] || return 0
@@ -3188,7 +3229,8 @@ main() {
     dialog-hook) cmd_dialog_hook "$@" ;; # Claude Code's hooks, see dialog_hooks
     pr)
       take_flags "$@"
-      ((${#ARGS[@]} == 2)) || die "usage: factory pr [--no-copilot] <repo> <bead-id>"
+      [[ ${#ARGS[@]} == 2 && " $* " != *" --auto "* && " $* " != *" --fresh "* ]] \
+        || die "usage: factory pr [--no-copilot] <repo> <bead-id>"
       need_all herdr gh bd jq git
       check_knobs
       cmd_pr "${ARGS[0]}" "${ARGS[1]}"

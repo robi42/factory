@@ -314,7 +314,8 @@ context_of() {
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"protected path changed: .factory/guard/x"* ]]
-  [[ $output != *".factory/run"* ]]
+  [[ $output != *"protected path changed: .factory/run"* ]]
+  [[ $output == *"file committed in Factory's run dir: .factory/run/plan.md"* ]] # which is no place for one
 }
 
 @test "guard: forbidden patterns on added lines fail, except under .factory" {
@@ -330,7 +331,7 @@ context_of() {
   [ "$status" -eq 1 ]
   [[ $output == *"run.sh: run_thing"* ]]
   [[ $output == *"test_x.py: @pytest.mark.$marker"* ]]
-  [[ $output != *"log.txt"* ]]
+  [[ $output != *"log.txt: "* ]]
   [[ $output == *"forbidden pattern"* ]]
 }
 
@@ -801,7 +802,7 @@ context_of() {
   }
   run human_gate plan planner "$TMP" <<<$'y\nn\nr\n'
   [ "$status" -eq 0 ]
-  [[ $output == *"a, p, r or b?"*"a, p, r or b?"*"gate while typing: typing"*"a, p, r or b?"*"gate after the note: plan"*"approved via file"* ]]
+  [[ $output == *"a, p, r or b?"*"a, p, r or b?"*"gate while typing: typing"*"a, p, r or b?"*"gate after the note: plan"*"approved in a pane or with fy approve"* ]]
   [ "$(grep -c 'plan for toy-1' <<<"$output")" -eq 1 ]
   # a pane's answer that came in while the terminal waited for its key goes before that r
   read() { # every read in the script passes -r first
@@ -815,7 +816,7 @@ context_of() {
   run human_gate plan planner "$TMP" <<<$'r\nsplit it\na'
   unset -f read
   [ "$status" -eq 0 ]
-  [[ $output == *"approved via file"* ]]
+  [[ $output == *"approved in a pane or with fy approve"* ]]
   [[ $output != *"note for the planner"* ]]
 }
 
@@ -1014,10 +1015,10 @@ context_of() {
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 0 ]
-  [[ $output == *"note received via file"*"pause for the reply, gate note"*"asked planner: "*"too big, split it"*"gate in the round: note"* ]]
+  [[ $output == *"note received from a pane or fy reject"*"pause for the reply, gate note"*"asked planner: "*"too big, split it"*"gate in the round: note"* ]]
   [ -e "$TMP/still-waiting" ]
   # the plan comes back after the note, and with it where to answer
-  [[ $output == *"note received via file"*"plan for toy-1"*"no terminal to answer from; waiting for your answer in one of the task's panes: !fy approve, !fy reject '<note>' or !fy abort"*"approved via file"*"pause for the reply, gate closed" ]]
+  [[ $output == *"note received from a pane or fy reject"*"plan for toy-1"*"no terminal to answer from; waiting for your answer in one of the task's panes: !fy approve, !fy reject '<note>' or !fy abort"*"approved in a pane or with fy approve"*"pause for the reply, gate closed" ]]
   [ "$(cat "$TMP/recorded")" = $'note on the plan: too big, split it\nplan approved' ]
   [ "$(grep -c 'no terminal to answer from' <<<"$output")" -eq 2 ]
   [ ! -e "$TMP/approved" ]
@@ -1033,7 +1034,7 @@ context_of() {
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 3 ]
-  [[ $output == *"aborted via file"* ]]
+  [[ $output == *"aborted in a pane or with fy abort"* ]]
   [ "$(cat "$TMP/seen")" = "plan $$" ]
   [ ! -e "$TMP/waiting" ]
   [ ! -e "$TMP/aborted" ]
@@ -1147,10 +1148,6 @@ context_of() {
   run cmd_dialog_hook plan toy-9 "$TMP/gone" < <(dialog Format "Which format?" '[{"label":"CSV"}]' CSV)
   [ "$status" -eq 1 ]
   [[ $output == *"no run dir of a task for this dialog; the answer went to the agent only"* ]]
-  # an agent's hook from before it was told them finds the task by its cwd
-  hook PreToolUse | cmd_dialog_hook plan
-  [ -e "$run/asking-plan" ]
-  rm -f "$run/asking-plan" "$run/tree-at-ask"
   # Factory's own dialog, while the plan waits
   printf 'plan %s\n' "$$" >"$run/waiting"
   dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan toy-9 "$run"
@@ -1427,6 +1424,29 @@ IN
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"info/exclude changed since the task started"* ]]
+}
+
+@test "guard: a Rust change counts as tested with a test added in its own file; a file committed in the run dir fails" {
+  make_repo
+  FACTORY_REQUIRE_TESTS=1
+  printf 'pub fn f() -> u8 { 1 }\n' >"$REPO/lib.rs"
+  commit_all lib
+  git -C "$REPO" branch -f main
+  printf 'pub fn g() -> u8 { 2 }\n' >>"$REPO/lib.rs"
+  commit_all "g, untested"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"source files changed but no test files did"* ]]
+  printf '#[cfg(test)]\nmod tests {\n    #[test]\n    fn g_is_2() { assert_eq!(super::g(), 2); }\n}\n' >>"$REPO/lib.rs"
+  commit_all "test g"
+  guard_check "$REPO" main
+  mkdir -p "$REPO/$RUN_DIR"
+  printf 'exit 0\n' >"$REPO/$RUN_DIR/gate.sh"
+  git -C "$REPO" add -f "$RUN_DIR/gate.sh"
+  commit_all "a file in the run dir"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"file committed in Factory's run dir: .factory/run/gate.sh"* ]]
 }
 
 @test "guard: a change still counts when the worktree's index marks the file unchanged" {
@@ -1963,6 +1983,16 @@ IN
   TASK_DESC="" GATE=true MEMORY="" BASE=main BRANCH=factory/toy-1
   task_base() { printf main; }
   [[ $(build_prompt) == *"do not rebase onto or merge main: Factory brings the branch up to date itself"* ]]
+  # from the second build round on, a reviewer checks against its last notes, the builder's
+  # answer and the human's note
+  mkdir -p "$TMP/.factory/run"
+  printf 'notes\n' >"$TMP/.factory/run/review-1.md"
+  printf 'notes\n' >"$TMP/.factory/run/review-1-plan.md"
+  printf 'kept\n' >"$TMP/.factory/run/response-1.md"
+  [[ $(review_prompt 1) != *"Your notes"* ]]
+  [[ $(review_prompt 2 "use a table") == *"Your notes from review round 1 are in .factory/run/review-1.md. The builder said why it left points as they were in .factory/run/response-1.md."*"The human sent this note on the build: use a table"* ]]
+  [[ $(plan_check_prompt 3) == *"Your notes from review round 1 are in .factory/run/review-1-plan.md."* ]]
+  [[ $(plan_check_prompt 3) != *"note on the build"* ]]
   [[ $(review_prompt 2) == *"review-2.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_check_prompt 2) == *"review-2-plan.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_review_prompt 1) == *"plan-review-1.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
