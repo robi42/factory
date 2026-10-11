@@ -1059,6 +1059,17 @@ base_ref() {
   fi
 }
 
+# recorded_base_branch -> the branch the task's recorded base was read from: refs/heads/<branch>
+# and a remote's refs/remotes/<remote>/<branch> alike name <branch>
+recorded_base_branch() {
+  local ref
+  read -r _ ref 2>/dev/null <"$TASK_STATE/base" || return 1
+  [[ -n $ref ]] || return 1
+  ref=${ref#refs/heads/}
+  [[ $ref != refs/remotes/* ]] || ref=${ref#refs/remotes/*/}
+  printf '%s' "$ref"
+}
+
 # record_base: the commit the branch is measured from, with the ref it was read from, kept in
 # Factory's state once, as Factory takes up the task's worktree: where the branch forks off the
 # base ref (base_ref). Only Factory's rebase onto the base moves it on (rebase_onto_base). The
@@ -1922,18 +1933,16 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
 #   and on_interrupt.
 
 # task_context repo: from TASK_ID and TASK_TITLE, derive TASK_REPO TASK_STATE GATE BASE BRANCH
-# and the agent names. The base is the branch the checkout is on as the task starts, recorded in
-# its run dir (open_task_workspace); a rerun keeps it whatever branch the checkout is on by then,
-# and --fresh, starting the task over, takes the checkout's anew.
+# and the agent names. The base is the branch the checkout is on as the task starts; a rerun
+# keeps the one the task's recorded base was read from (record_base), whatever branch the
+# checkout is on by then, and --fresh, starting the task over, takes the checkout's anew.
 task_context() {
-  local slug wt recorded
+  local slug recorded
   TASK_REPO=$1
   TASK_STATE=$(task_state "$1" "$TASK_ID")
   GATE=$(resolve_gate "$1")
   BASE=$(git -C "$1" rev-parse --abbrev-ref HEAD)
-  wt=$(worktree_of "$1" "$TASK_ID")
-  if ((! FACTORY_FRESH)) && [[ -n $wt && -s $wt/$RUN_DIR/base ]]; then
-    recorded=$(<"$wt/$RUN_DIR/base")
+  if ((! FACTORY_FRESH)) && recorded=$(recorded_base_branch); then
     [[ $recorded == "$BASE" ]] || log "$TASK_ID keeps the base it started from, $recorded; the checkout is on $BASE"
     BASE=$recorded
   fi
@@ -1966,9 +1975,9 @@ open_task_workspace() { # repo
   local exclude
   open_workspace "$1" "$BRANCH" "$TASK_ID $TASK_TITLE"
   mkdir -p "$WT/$RUN_DIR"
-  if ((FACTORY_FRESH)) || [[ ! -s $WT/$RUN_DIR/base ]]; then printf '%s\n' "$BASE" >"$WT/$RUN_DIR/base"; fi
   exclude="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
   grep -qsxF "$RUN_DIR/" "$exclude" || printf '%s/\n' "$RUN_DIR" >>"$exclude"
+  ((! FACTORY_FRESH)) || rm -f "$TASK_STATE/base" # starting over, from the checkout's branch (task_context)
   record_base
   log "workspace $WS at $WT"
 }
@@ -1982,7 +1991,7 @@ check_base() {
   ((rc != 0)) || return 0
   if ((rc == 2)); then
     wt=$(worktree_of "$1" "$TASK_ID")
-    die "the task's base, $BASE, is no branch on origin, so its pull request could not be opened; push it$([[ -z $wt ]] || printf ', or put the base the task should have in %s' "$wt/$RUN_DIR/base")"
+    die "the task's base, $BASE, is no branch on origin, so its pull request could not be opened; push it$([[ -z $wt ]] || printf ', or check out the base the task should have and rerun with --fresh, which starts it over')"
   fi
   printf '%s\n' "$out" >&2
   die "could not read origin's branches for the task's base, $BASE"

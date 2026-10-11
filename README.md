@@ -269,14 +269,14 @@ open, and the planner's `tree-at-ask` and `tree-at-answer`), `plan-review-N.md` 
 (builder's pushback), `plan-changes.md` (what the planner changed after your note; shown
 once at the approval prompt, then removed), `copilot-N.md` and `copilot-N-response.md`
 (Copilot's comments and the builder's pushback), `gate-N.log` (also `gate-rebase-pr.log`
-and `gate-copilot-N.log`), `state` (where a rerun resumes; `--fresh` clears it), `base` (the branch the task started
-from, which a rerun keeps), `waiting`
-(what the run waits for, while it waits).
+and `gate-copilot-N.log`), `state` (where a rerun resumes; `--fresh` clears it), `waiting` (what the run waits for,
+while it waits).
 
 The agents write the worktree, so what only you and Factory decide is kept out of it, in
 Factory's own state for the task under `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`:
 `allow-protected`, your waiver of the protected-path check, `base`, the commit the branch
-is measured from, and `gated`, the commit the gate last passed on.
+is measured from and the base branch it was read from, which a rerun keeps, and `gated`,
+the commit the gate last passed on.
 
 `fy init` writes a short `AGENTS.md` (with `CLAUDE.md` linking to it) only when a repo
 has neither. Keep it to what the code cannot tell a new engineer: how to verify, layout

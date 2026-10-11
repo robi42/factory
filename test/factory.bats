@@ -3447,12 +3447,13 @@ JSON
   [ "${lines[2]}" = factory/toy-1-old-slug ]
 }
 
-@test "task_context: a task keeps the base it started from, whatever the checkout is on; --fresh takes the checkout's anew" {
+@test "task_context: a task keeps the base its record was read from, whatever the checkout is on; --fresh takes the checkout's anew" {
   make_repo # its checkout is on work
   fake_task
-  git -C "$REPO" worktree add -q -b factory/toy-1-x "$TMP/wt" main
-  mkdir -p "$TMP/wt/$RUN_DIR"
-  printf 'main\n' >"$TMP/wt/$RUN_DIR/base"
+  local st
+  st=$(task_state "$REPO" toy-1)
+  mkdir -p "$st"
+  printf '%s refs/heads/main\n' "$(git -C "$REPO" rev-parse main)" >"$st/base"
   run context_of "$REPO"
   [[ $output == *"toy-1 keeps the base it started from, main; the checkout is on work"* ]]
   [ "${lines[-3]}" = main ]
@@ -3463,26 +3464,29 @@ JSON
   git -C "$REPO" checkout -q work
   FACTORY_FRESH=1 run context_of "$REPO"
   [ "${lines[-3]}" = work ]
-  rm "$TMP/wt/$RUN_DIR/base" # a task from before bases were recorded
+  printf '%s refs/remotes/origin/docs/rain\n' "$(git -C "$REPO" rev-parse main)" >"$st/base" # after the pull request's rebase
+  run context_of "$REPO"
+  [ "${lines[-3]}" = docs/rain ]
+  rm "$st/base" # a task from before bases were recorded
   run context_of "$REPO"
   [ "${lines[-3]}" = work ]
 }
 
-@test "open_task_workspace: records the task's base on its first run, and anew with --fresh" {
+@test "open_task_workspace: --fresh drops the task's recorded base, for record_base to take the checkout's" {
   make_repo
   fake_task
   BRANCH=factory/toy-1 BASE=main
+  mkdir -p "$TASK_STATE"
+  printf 'abc refs/heads/old\n' >"$TASK_STATE/base"
   open_workspace() {
     WT=$TMP/wt WS=w1 BUILD_PANE=p1
     mkdir -p "$WT"
   }
-  open_task_workspace "$REPO"
-  [ "$(cat "$TMP/wt/$RUN_DIR/base")" = main ]
-  BASE=work # a rerun from another branch
-  open_task_workspace "$REPO"
-  [ "$(cat "$TMP/wt/$RUN_DIR/base")" = main ]
-  FACTORY_FRESH=1 open_task_workspace "$REPO"
-  [ "$(cat "$TMP/wt/$RUN_DIR/base")" = work ]
+  record_base() { printf 'record_base finds: %s\n' "$(cat "$TASK_STATE/base" 2>/dev/null || printf none)"; }
+  run open_task_workspace "$REPO"
+  [[ $output == *"record_base finds: abc refs/heads/old"* ]]
+  FACTORY_FRESH=1 run open_task_workspace "$REPO"
+  [[ $output == *"record_base finds: none"* ]]
 }
 
 @test "check_base: a run that opens a pull request stops before claiming its task when the base is no branch on origin" {
@@ -3495,10 +3499,10 @@ JSON
   run check_base "$REPO"
   [ "$status" -eq 1 ]
   [[ $output == *"the task's base, gone, is no branch on origin, so its pull request could not be opened; push it"* ]]
-  [[ $output != *"or put the base"* ]] # no worktree yet, no record to point to
+  [[ $output != *"rerun with --fresh"* ]] # no worktree yet: a task not started has nothing to start over
   git -C "$REPO" worktree add -q -b factory/toy-1-x "$TMP/wt" main
   run check_base "$REPO"
-  [[ $output == *"push it, or put the base the task should have in $TMP/wt/$RUN_DIR/base"* ]]
+  [[ $output == *"push it, or check out the base the task should have and rerun with --fresh, which starts it over"* ]]
   git -C "$REPO" remote set-url origin "$TMP/nowhere.git"
   BASE=main
   run check_base "$REPO"
