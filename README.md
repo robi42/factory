@@ -252,6 +252,11 @@ your write access. A missing credential stops the run there, with git's error, r
 than at the push hours later. So does a base that is no branch on origin, such as one
 merged and deleted there.
 
+The gate and the guardrails run on the tip of the task's branch, checked out in its
+worktree, and Factory pushes exactly the commit the gate passed on, by its id. A worktree
+left on another commit stops the run, and a branch that moved on after the gate, as by a
+commit made after your approval, is not pushed: the run then needs you.
+
 <br clear="all">
 
 ### Run artifacts
@@ -270,8 +275,8 @@ from, which a rerun keeps), `waiting`
 
 The agents write the worktree, so what only you and Factory decide is kept out of it, in
 Factory's own state for the task under `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`:
-`allow-protected`, your waiver of the protected-path check, and `base`, the commit the
-branch is measured from.
+`allow-protected`, your waiver of the protected-path check, `base`, the commit the branch
+is measured from, and `gated`, the commit the gate last passed on.
 
 `fy init` writes a short `AGENTS.md` (with `CLAUDE.md` linking to it) only when a repo
 has neither. Keep it to what the code cannot tell a new engineer: how to verify, layout

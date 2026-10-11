@@ -1769,6 +1769,36 @@ IN
   [[ $output == *"$TMP/wt-9 is no worktree that $REPO lists"* ]]
 }
 
+@test "the gate, the guardrails and the push hold to one commit: the branch's tip the gate passed" {
+  make_repo
+  add_origin
+  task_opened
+  gh() { :; } # no pull request to open here
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam "an honest change"
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
+  git -C "$TMP/wt-9" commit -qam "relax the gate"
+  git -C "$TMP/wt-9" checkout -q --detach HEAD~1 # the worktree on the honest commit, the branch past it
+  run gate_then_guards builder 1
+  [ "$status" -eq 1 ]
+  [[ $output == *"$TMP/wt-9 is at "*", not at the tip of factory/toy-9"* ]]
+  # the branch on the honest commit, gated; a commit after the gate is not pushed
+  git -C "$TMP/wt-9" checkout -q -B factory/toy-9
+  gate_then_guards builder 1
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
+  git -C "$TMP/wt-9" commit -qam "relax the gate after the gate"
+  run raise_pr builder
+  [ "$status" -eq 1 ]
+  [[ $output == *"refusing to push a commit the gate has not passed"* ]]
+  run git -C "$TMP/origin.git" rev-parse --verify -q refs/heads/factory/toy-9
+  [ "$status" -ne 0 ]
+  # back on the gated commit, exactly that one is pushed
+  git -C "$TMP/wt-9" reset -q --hard HEAD~1
+  raise_pr builder
+  [ "$(git -C "$TMP/origin.git" rev-parse refs/heads/factory/toy-9)" = "$(git -C "$TMP/wt-9" rev-parse HEAD)" ]
+  [ "$(git -C "$TMP/wt-9" rev-parse --abbrev-ref '@{upstream}')" = origin/factory/toy-9 ]
+}
+
 @test "build approval: a approves; r and the reject file hand the note back with 4" {
   make_repo
   printf 'echo more\n' >>"$REPO/run.sh"

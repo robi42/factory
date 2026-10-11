@@ -170,6 +170,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   guardrails read that clone's refs, history and HEAD, and the check for `core.worktree`
   still passed. Factory now refuses to gate or guard a worktree unless git there reads the
   task repo's own git dir, through a worktree the repo lists.
+- The gate and the guardrails checked the commit checked out in the worktree, but Factory
+  pushed the branch by name: a worktree left on another commit had them pass that commit
+  while the push sent the branch's, and a commit made after the gate went out unchecked.
+  Factory now gates and guards only the branch's tip, records the commit the gate passed
+  on, and pushes exactly that commit by its id (`<sha>:refs/heads/<branch>`), refusing
+  when the branch has moved on since; the Copilot rounds push the same way.
 
 ## [0.1.11] - 2026-10-05
 

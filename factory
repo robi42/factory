@@ -1067,7 +1067,7 @@ base_ref() {
 record_base() {
   local ref sha
   [[ ! -s $TASK_STATE/base ]] || return 0
-  own_worktree
+  task_head
   ref=$(git -C "$WT" rev-parse --symbolic-full-name "$(base_ref)") || die "no base ref $BASE for $BRANCH"
   sha=$(git -C "$WT" merge-base "$ref" HEAD) || die "$BRANCH has no fork point from $ref to be measured from"
   mkdir -p "$TASK_STATE"
@@ -1094,26 +1094,62 @@ own_worktree() {
   local common p listed=0
   common=$(git -C "$TASK_REPO" rev-parse --path-format=absolute --git-common-dir) || die "$TASK_REPO is no git repository"
   [[ $(git -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) -ef $common ]] \
-    || die "git in $WT reads another repository than $TASK_REPO, as its .git file names another: refusing to gate or guard it"
+    || die "git in $WT reads another repository than $TASK_REPO, as its .git file names another: refusing to gate, guard or push it"
   while IFS= read -r -d '' p; do
     if [[ $p == "worktree "* && ${p#worktree } -ef $WT ]]; then listed=1; fi
   done < <(git -C "$TASK_REPO" worktree list --porcelain -z)
-  ((listed)) || die "$WT is no worktree that $TASK_REPO lists: refusing to gate or guard it"
+  ((listed)) || die "$WT is no worktree that $TASK_REPO lists: refusing to gate, guard or push it"
 }
 
-# gate_branch logfile: the gate, in the task's own worktree
+# task_head: own_worktree, with HEAD at the tip of the task's branch; HEAD_SHA is that commit.
+# The gate and the guardrails check the commit checked out, and Factory pushes the branch: on
+# another commit, the worktree would have them pass one commit while the push sends others.
+task_head() {
+  local tip
+  own_worktree
+  HEAD_SHA=$(git -C "$WT" rev-parse --verify -q HEAD) || HEAD_SHA=""
+  tip=$(git -C "$WT" rev-parse --verify -q "refs/heads/$BRANCH") || tip=""
+  [[ -n $HEAD_SHA && $HEAD_SHA == "$tip" ]] \
+    || die "$WT is at ${HEAD_SHA:-no commit}, not at the tip of $BRANCH (${tip:-none}), which Factory gates, guards and pushes: check out $BRANCH there"
+}
+
+# gate_branch logfile: the gate on the tip of the task's branch, in its own worktree
+# (task_head). The commit it passes on is recorded as the one a push may send (push_gated).
 gate_branch() {
-  own_worktree
-  run_gate "$WT" "$GATE" "$1"
+  local sha
+  task_head
+  sha=$HEAD_SHA
+  run_gate "$WT" "$GATE" "$1" || return 1
+  task_head
+  [[ $HEAD_SHA == "$sha" ]] || die "$BRANCH moved from $sha to $HEAD_SHA while the gate ran"
+  mkdir -p "$TASK_STATE"
+  printf '%s\n' "$sha" >"$TASK_STATE/gated"
 }
 
-# guard_branch: the guardrails on the task's own worktree, the branch measured from its
-# recorded base. Prints the violations.
+# guard_branch: the guardrails on the commit the gate passed on, the tip of the task's branch
+# in its own worktree, measured from the recorded base. Prints the violations.
 guard_branch() {
-  local base
-  own_worktree
+  local base gated
+  task_head
+  gated=$(cat "$TASK_STATE/gated" 2>/dev/null) || gated=""
+  if [[ $HEAD_SHA != "$gated" ]]; then
+    warn "the gate has not passed on $HEAD_SHA, the tip of $BRANCH (it passed on ${gated:-none})"
+    return 1
+  fi
   base=$(task_base) || exit 1
   guard_check "$WT" "$base"
+}
+
+# push_gated git-push-options...: push the commit the gate passed on, by its id, as the task's
+# branch on origin, while the branch's tip is that commit: by name, git would push whatever the
+# branch has come to by then.
+push_gated() {
+  local gated
+  task_head
+  gated=$(cat "$TASK_STATE/gated" 2>/dev/null) || gated=""
+  [[ $HEAD_SHA == "$gated" ]] \
+    || die "$BRANCH is at $HEAD_SHA, but the gate passed on ${gated:-none}: refusing to push a commit the gate has not passed"
+  git -C "$WT" push "$@" origin "$gated:refs/heads/$BRANCH"
 }
 
 # gate_then_guards builder-agent label: gate with one fix round, then guardrails. 1 on failure.
@@ -1194,7 +1230,9 @@ raise_pr() { # builder-agent -> prints the PR url
   local rc=0 url
   rebase_onto_base "$1" || rc=$?
   ((rc == 10)) && regate "$1" pr
-  git -C "$WT" push -q -u --force-with-lease origin "$BRANCH" || die "could not push $BRANCH to origin"
+  push_gated -q --force-with-lease || die "could not push $BRANCH to origin"
+  # pushed by its id, the branch gets no upstream from -u; it tracks origin's as before
+  git -C "$WT" branch -q --set-upstream-to="origin/$BRANCH" || warn "$BRANCH tracks no branch on origin"
   url=$(existing_pr)
   if [[ -n $url ]]; then
     log "pull request already open, reusing it"
@@ -1364,7 +1402,7 @@ copilot_loop() {
       COPILOT_NOTE="gate or guardrails failed while addressing Copilot's comments"
       return 1
     }
-    git -C "$WT" push -q || {
+    push_gated -q || {
       COPILOT_NOTE="could not push the fixes for round $round"
       warn "$COPILOT_NOTE"
       return 1
@@ -1879,8 +1917,9 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
 # -------------------------------------------------------------- pipeline ----
 # Shared task state: setup_task sets TASK_ID TASK_TITLE TASK_DESC TASK_REPO TASK_STATE GATE BASE
 #   BRANCH MEMORY and PLAN_AGENT BUILD_AGENT REVIEW_AGENT; open_task_workspace sets WS WT
-#   BUILD_PANE; build_phase (run_task on resume) sets ROUND VERDICT GATE_LOG; HUMAN_NOTE,
-#   COPILOT_NOTE and STEP pass between the human gates, the Copilot loop and on_interrupt.
+#   BUILD_PANE; build_phase (run_task on resume) sets ROUND VERDICT GATE_LOG; task_head sets
+#   HEAD_SHA; HUMAN_NOTE, COPILOT_NOTE and STEP pass between the human gates, the Copilot loop
+#   and on_interrupt.
 
 # task_context repo: from TASK_ID and TASK_TITLE, derive TASK_REPO TASK_STATE GATE BASE BRANCH
 # and the agent names. The base is the branch the checkout is on as the task starts, recorded in
