@@ -55,6 +55,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   reads bd's JSON in the envelope bd 2.0 makes its default (`BD_JSON_ENVELOPE=1`), which
   ends the notice and keeps the task list, `fy next` and the task lookups working on
   bd 2.0.
+- A rerun took the branch your checkout was on for the task's base, so a task rerun from
+  another branch was rebased onto that one and opened its pull request against it; one
+  merged and deleted on GitHub failed the pull request after all the work. A task now keeps
+  the base it started from (`.factory/run/base`), whatever the checkout is on, and `--fresh`
+  takes the checkout's anew. A run that opens a pull request checks at its start that its
+  base is a branch on origin.
 - A file an agent added or changed under `.factory/` needed no waiver unless it was the
   gate, `.factory/protected`, `.factory/guardrails.txt` or `.factory/env`, though the
   guardrails read no line under `.factory/`: an example in `.factory/guard/` that a repo's

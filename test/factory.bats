@@ -3323,6 +3323,78 @@ JSON
   [ "${lines[2]}" = factory/toy-1-old-slug ]
 }
 
+@test "task_context: a task keeps the base it started from, whatever the checkout is on; --fresh takes the checkout's anew" {
+  make_repo # its checkout is on work
+  fake_task
+  git -C "$REPO" worktree add -q -b factory/toy-1-x "$TMP/wt" main
+  mkdir -p "$TMP/wt/$RUN_DIR"
+  printf 'main\n' >"$TMP/wt/$RUN_DIR/base"
+  run context_of "$REPO"
+  [[ $output == *"toy-1 keeps the base it started from, main; the checkout is on work"* ]]
+  [ "${lines[-3]}" = main ]
+  git -C "$REPO" checkout -q main # on that base: nothing to say
+  run context_of "$REPO"
+  [[ $output != *"keeps the base"* ]]
+  [ "${lines[-3]}" = main ]
+  git -C "$REPO" checkout -q work
+  FACTORY_FRESH=1 run context_of "$REPO"
+  [ "${lines[-3]}" = work ]
+  rm "$TMP/wt/$RUN_DIR/base" # a task from before bases were recorded
+  run context_of "$REPO"
+  [ "${lines[-3]}" = work ]
+}
+
+@test "open_task_workspace: records the task's base on its first run, and anew with --fresh" {
+  make_repo
+  fake_task
+  BRANCH=factory/toy-1 BASE=main
+  open_workspace() {
+    WT=$TMP/wt WS=w1 BUILD_PANE=p1
+    mkdir -p "$WT"
+  }
+  open_task_workspace "$REPO"
+  [ "$(cat "$TMP/wt/$RUN_DIR/base")" = main ]
+  BASE=work # a rerun from another branch
+  open_task_workspace "$REPO"
+  [ "$(cat "$TMP/wt/$RUN_DIR/base")" = main ]
+  FACTORY_FRESH=1 open_task_workspace "$REPO"
+  [ "$(cat "$TMP/wt/$RUN_DIR/base")" = work ]
+}
+
+@test "check_base: a run that opens a pull request stops before claiming its task when the base is no branch on origin" {
+  make_repo
+  add_origin
+  fake_task
+  BASE=main
+  check_base "$REPO"
+  BASE=gone
+  run check_base "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"the task's base, gone, is no branch on origin, so its pull request could not be opened; push it"* ]]
+  [[ $output != *"or put the base"* ]] # no worktree yet, no record to point to
+  git -C "$REPO" worktree add -q -b factory/toy-1-x "$TMP/wt" main
+  run check_base "$REPO"
+  [[ $output == *"push it, or put the base the task should have in $TMP/wt/$RUN_DIR/base"* ]]
+  git -C "$REPO" remote set-url origin "$TMP/nowhere.git"
+  BASE=main
+  run check_base "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"could not read origin's branches for the task's base, main"* ]]
+  # setup_task: only a run that opens a pull request, and before the claim
+  git -C "$REPO" remote set-url origin "$TMP/origin.git"
+  git -C "$REPO" checkout -q -b local-only
+  bd() { printf '%s\n' "$*" >>"$TMP/bd.log"; }
+  resolve_task() { TASK_ID=toy-9 TASK_TITLE=t; }
+  memory_block() { :; }
+  FACTORY_PR=1 run setup_task "$REPO" toy-9
+  [ "$status" -eq 1 ]
+  [[ $output == *"the task's base, local-only, is no branch on origin"* ]]
+  [ ! -e "$TMP/bd.log" ]
+  FACTORY_PR=0 run setup_task "$REPO" toy-9
+  [ "$status" -eq 0 ]
+  grep -q 'update toy-9 --claim' "$TMP/bd.log"
+}
+
 @test "worktree_path: short directory under Herdr's worktree dir, from its config when set" {
   printf '[ui]\nx = 1\n[worktrees]\ndirectory = "~/wt"\n[other]\ndirectory = "nope"\n' >"$TMP/herdr.toml"
   HERDR_CONFIG_PATH=$TMP/herdr.toml run worktree_path /home/me/src/app toy-abe

@@ -1801,10 +1801,19 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
 #   between the human gates, the Copilot loop and on_interrupt.
 
 # task_context repo: from TASK_ID and TASK_TITLE, derive GATE BASE BRANCH and the agent names.
+# The base is the branch the checkout is on as the task starts, recorded in its run dir
+# (open_task_workspace); a rerun keeps it whatever branch the checkout is on by then, and
+# --fresh, starting the task over, takes the checkout's anew.
 task_context() {
-  local slug
+  local slug wt recorded
   GATE=$(resolve_gate "$1")
   BASE=$(git -C "$1" rev-parse --abbrev-ref HEAD)
+  wt=$(worktree_of "$1" "$TASK_ID")
+  if ((! FACTORY_FRESH)) && [[ -n $wt && -s $wt/$RUN_DIR/base ]]; then
+    recorded=$(<"$wt/$RUN_DIR/base")
+    [[ $recorded == "$BASE" ]] || log "$TASK_ID keeps the base it started from, $recorded; the checkout is on $BASE"
+    BASE=$recorded
+  fi
   BRANCH=$(branch_of "$1" "$TASK_ID")
   if [[ -z $BRANCH ]]; then
     slug=$(slugify "$TASK_TITLE")
@@ -1819,6 +1828,7 @@ setup_task() { # repo arg
   local repo=$1 arg=$2 st
   resolve_task "$repo" "$arg"
   task_context "$repo"
+  ((! FACTORY_PR)) || check_base "$repo"
   MEMORY=$(memory_block "$repo")
   log "task $TASK_ID: $TASK_TITLE"
   log "models: plan=$FACTORY_PLAN_MODEL ($FACTORY_PLAN_EFFORT) build=$FACTORY_BUILD_MODEL ($FACTORY_BUILD_EFFORT) review=$FACTORY_REVIEW_MODEL ($FACTORY_REVIEW_EFFORT)"
@@ -1833,9 +1843,25 @@ open_task_workspace() { # repo
   local exclude
   open_workspace "$1" "$BRANCH" "$TASK_ID $TASK_TITLE"
   mkdir -p "$WT/$RUN_DIR"
+  if ((FACTORY_FRESH)) || [[ ! -s $WT/$RUN_DIR/base ]]; then printf '%s\n' "$BASE" >"$WT/$RUN_DIR/base"; fi
   exclude="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
   grep -qsxF "$RUN_DIR/" "$exclude" || printf '%s/\n' "$RUN_DIR" >>"$exclude"
   log "workspace $WS at $WT"
+}
+
+# check_base repo: a run that opens a pull request opens it against the task's base, which must
+# be a branch on origin; one merged and deleted there, say, would fail the pull request after
+# all the work. Checked as the task starts, before its bead is claimed.
+check_base() {
+  local out rc=0 wt
+  out=$(GIT_TERMINAL_PROMPT=0 git -C "$1" ls-remote --exit-code --heads origin "refs/heads/$BASE" 2>&1) || rc=$?
+  ((rc != 0)) || return 0
+  if ((rc == 2)); then
+    wt=$(worktree_of "$1" "$TASK_ID")
+    die "the task's base, $BASE, is no branch on origin, so its pull request could not be opened; push it$([[ -z $wt ]] || printf ', or put the base the task should have in %s' "$wt/$RUN_DIR/base")"
+  fi
+  printf '%s\n' "$out" >&2
+  die "could not read origin's branches for the task's base, $BASE"
 }
 
 # start_or_adopt_agents repo: three agents in three panes, or the task's live ones on a rerun.
@@ -2592,6 +2618,7 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
   TASK_TITLE=$(bd_field "$repo" "$2" '.title')
   TASK_DESC=$(bd_field "$repo" "$2" '.description // ""')
   task_context "$repo"
+  check_base "$repo"
   tree_dirty "$WT" && die "$WT has uncommitted changes"
   herdr agent get "$BUILD_AGENT" >/dev/null 2>&1 || die "no live builder agent for $2 to handle a rebase; rebase by hand, or rerun the task"
   url=$(raise_pr "$BUILD_AGENT")

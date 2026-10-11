@@ -73,7 +73,9 @@ step it was interrupted, and `fy run` with the bead id resumes: it reopens the w
 adopts the three agents still alive in it, and picks up after the last completed
 milestone: a written plan, at its next review round; a reviewed plan waiting for your
 approval; an approved plan; or an approved build, reusing an open pull request. `--fresh`
-starts over. After a restart of Herdr's server (a reboot, an update), Herdr brings the
+starts over. A rerun also keeps the task's base, the branch your checkout was on when the
+task started, whatever branch it is on by then; `--fresh` takes the checkout's anew. After
+a restart of Herdr's server (a reboot, an update), Herdr brings the
 agents back with their sessions but without the arguments Factory started them with; the
 rerun starts each such agent again with them, its session resumed, so it keeps its
 effort, model, permissions and dialog hook.
@@ -247,7 +249,8 @@ without changing anything. Copilot never approves formally, only in its review t
 Such a run checks at its start, before it claims a bead, that origin takes a push without a
 prompt: a dry-run push, which sends nothing, has the remote check git's credentials and
 your write access. A missing credential stops the run there, with git's error, rather
-than at the push hours later.
+than at the push hours later. So does a base that is no branch on origin, such as one
+merged and deleted there.
 
 <br clear="all">
 
@@ -261,7 +264,8 @@ open, and the planner's `tree-at-ask` and `tree-at-answer`), `plan-review-N.md` 
 (builder's pushback), `plan-changes.md` (what the planner changed after your note; shown
 once at the approval prompt, then removed), `copilot-N.md` and `copilot-N-response.md`
 (Copilot's comments and the builder's pushback), `gate-N.log` (also `gate-rebase-pr.log`
-and `gate-copilot-N.log`), `state` (where a rerun resumes; `--fresh` clears it), `waiting`
+and `gate-copilot-N.log`), `state` (where a rerun resumes; `--fresh` clears it), `base` (the branch the task started
+from, which a rerun keeps), `waiting`
 (what the run waits for, while it waits).
 
 `fy init` writes a short `AGENTS.md` (with `CLAUDE.md` linking to it) only when a repo
