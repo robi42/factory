@@ -114,11 +114,13 @@ hint_seen() {
   done
 }
 
-# the branch globals the gates and guards read, as task_context and open_workspace set them
+# the branch globals the gates and guards read, as task_context and open_workspace set them,
+# and the base Factory records as it takes up the worktree
 on_work_branch() {
   WT=$REPO
   BASE=main
   BRANCH=work
+  record_base
 }
 
 commit_all() {
@@ -1718,6 +1720,28 @@ IN
   [[ $output == *".factory/run/allow-protected found"* ]]
 }
 
+@test "the guardrails measure the branch from the base recorded with its worktree, not from where main is now" {
+  make_repo
+  task_opened
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
+  git -C "$TMP/wt-9" commit -qam "relax the gate"
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam "an honest change"
+  git -C "$TMP/wt-9" update-ref refs/heads/main HEAD~1 # the builder moves main, yours, past its first commit
+  run gate_then_guards builder 1
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/gate"* ]]
+  # main rewritten, so that it no longer holds the base: that fails loudly, before any rebase
+  git -C "$TMP/wt-9" update-ref refs/heads/main "$(git -C "$TMP/wt-9" commit-tree -m elsewhere 'HEAD^{tree}')"
+  run gate_then_guards builder 1
+  [ "$status" -eq 1 ]
+  [[ $output == *"refs/heads/main no longer holds"*"something other than Factory moved it"* ]]
+  run rebase_onto_base builder
+  [ "$status" -eq 1 ]
+  [[ $output == *"refs/heads/main no longer holds"* ]]
+  [[ $output != *rebasing* ]]
+}
+
 @test "build approval: a approves; r and the reject file hand the note back with 4" {
   make_repo
   printf 'echo more\n' >>"$REPO/run.sh"
@@ -1757,7 +1781,7 @@ IN
   fake_task
   WT=$TMP
   TASK_DESC="" GATE=true MEMORY=""
-  base_ref() { printf main; }
+  task_base() { printf main; }
   [[ $(review_prompt 2) == *"review-2.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_check_prompt 2) == *"review-2-plan.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_review_prompt 1) == *"plan-review-1.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
@@ -2000,7 +2024,7 @@ IN
   mkdir -p "$TMP/.factory/run"
   run_gate() { :; }
   guard_check() { :; }
-  base_ref() { printf main; }
+  task_base() { printf main; }
   mark() { :; }
   ask() { printf 'asked %s: %.40s\n' "$1" "$2"; }
   ask_for_file() { printf 'VERDICT: %s\n' "$(cat "$TMP/verdict")" >"$3"; }

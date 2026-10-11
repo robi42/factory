@@ -1018,33 +1018,36 @@ rebase_in_progress() { # worktree
 
 # rebase_onto_base builder-agent: bring the branch up to date with the base before a PR.
 # Returns 0 when nothing changed, 10 when the branch was rebased (gate and guards must rerun).
+# The commit it was rebased onto is the one it is measured from then (task_base).
 rebase_onto_base() {
-  local agent=$1 upstream="$BASE" files
+  local agent=$1 upstream="$BASE" files onto
+  task_base >/dev/null # a base moved by another hand fails here, before the branch moves onto it
   if git -C "$WT" remote get-url origin >/dev/null 2>&1 && git -C "$WT" fetch -q origin "$BASE" 2>/dev/null; then
     upstream="origin/$BASE"
   fi
   if git -C "$WT" merge-base --is-ancestor "$upstream" HEAD 2>/dev/null; then
     return 0
   fi
+  onto=$(git -C "$WT" rev-parse --verify -q "$upstream^{commit}") || die "no $upstream to rebase $BRANCH onto"
   log "rebasing $BRANCH onto $upstream"
-  if git -C "$WT" rebase -q "$upstream" >/dev/null 2>&1; then
-    return 10
+  if ! git -C "$WT" rebase -q "$onto" >/dev/null 2>&1; then
+    files=$(git -C "$WT" diff --name-only --diff-filter=U | paste -sd' ')
+    warn "rebase conflicts in: $files; asking the builder"
+    ask "$agent" "$(rebase_fix_prompt "$upstream" "$files")"
+    if rebase_in_progress "$WT"; then
+      die "the rebase onto $upstream is still in progress in $WT; finish or abort it"
+    fi
+    tree_dirty "$WT" && die "the worktree is dirty after the rebase; commit or clean it"
+    git -C "$WT" merge-base --is-ancestor "$onto" HEAD || die "$BRANCH is still not on top of $upstream"
   fi
-  files=$(git -C "$WT" diff --name-only --diff-filter=U | paste -sd' ')
-  warn "rebase conflicts in: $files; asking the builder"
-  ask "$agent" "$(rebase_fix_prompt "$upstream" "$files")"
-  if rebase_in_progress "$WT"; then
-    die "the rebase onto $upstream is still in progress in $WT; finish or abort it"
-  fi
-  tree_dirty "$WT" && die "the worktree is dirty after the rebase; commit or clean it"
-  git -C "$WT" merge-base --is-ancestor "$upstream" HEAD || die "$BRANCH is still not on top of $upstream"
+  printf '%s %s\n' "$onto" "$(git -C "$WT" rev-parse --symbolic-full-name "$upstream")" >"$TASK_STATE/base"
   return 10
 }
 
-# base_ref: the rev the branch is measured against: the local base branch or origin's copy,
-# whichever the branch forked from later. Origin's after the pull request rebase, also once
-# origin has moved on again (a stale local base would blame the branch for what the upstream
-# added); the local one while it carries commits origin does not, or without an origin.
+# base_ref: the rev the branch forks from: the local base branch or origin's copy, whichever
+# the branch forked from later. Origin's after the pull request rebase, also once origin has
+# moved on again (a stale local base would blame the branch for what the upstream added); the
+# local one while it carries commits origin does not, or without an origin.
 base_ref() {
   local origin="origin/$BASE" lo ro
   if lo=$(git -C "$WT" merge-base "$BASE" HEAD 2>/dev/null) \
@@ -1056,6 +1059,32 @@ base_ref() {
   fi
 }
 
+# record_base: the commit the branch is measured from, with the ref it was read from, kept in
+# Factory's state once, as Factory takes up the task's worktree: where the branch forks off the
+# base ref (base_ref). Only Factory's rebase onto the base moves it on (rebase_onto_base). The
+# ref itself is no base: an agent can move main or origin/main (git update-ref), your main with
+# it, so that its commits drop out of every diff read against the ref.
+record_base() {
+  local ref sha
+  [[ ! -s $TASK_STATE/base ]] || return 0
+  ref=$(git -C "$WT" rev-parse --symbolic-full-name "$(base_ref)") || die "no base ref $BASE for $BRANCH"
+  sha=$(git -C "$WT" merge-base "$ref" HEAD) || die "$BRANCH has no fork point from $ref to be measured from"
+  mkdir -p "$TASK_STATE"
+  printf '%s %s\n' "$sha" "$ref" >"$TASK_STATE/base"
+}
+
+# task_base -> the recorded base commit, while its ref still holds it. A ref that no longer does
+# was moved by another hand than Factory's, as when your main is rewritten: that fails loudly.
+task_base() {
+  local sha ref
+  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE # the true graph, as guard_check reads it
+  GIT_GRAFT_FILE=$(mktemp -u)
+  read -r sha ref 2>/dev/null <"$TASK_STATE/base" || die "no base commit recorded for $TASK_ID in $TASK_STATE"
+  git -C "$WT" merge-base --is-ancestor "$sha" "$ref" 2>/dev/null \
+    || die "$ref no longer holds $sha, the commit $BRANCH is measured from: something other than Factory moved it, maybe rewrote your $BASE. Look at it before you go on; if it was you, remove $TASK_STATE/base, and a rerun measures the branch from where it forks off then"
+  printf '%s' "$sha"
+}
+
 # gate_then_guards builder-agent label: gate with one fix round, then guardrails. 1 on failure.
 gate_then_guards() {
   local agent=$1 gate_log="$WT/$RUN_DIR/gate-$2.log"
@@ -1063,8 +1092,9 @@ gate_then_guards() {
     ask "$agent" "$(gate_fix_prompt "$gate_log")"
     run_gate "$WT" "$GATE" "$gate_log" || return 1
   fi
-  local violations
-  if ! violations=$(guard_check "$WT" "$(base_ref)"); then
+  local violations base
+  base=$(task_base) || exit 1
+  if ! violations=$(guard_check "$WT" "$base"); then
     warn "guardrails failed after $2:"
     printf '%s\n' "$violations" >&2
     return 1
@@ -1370,7 +1400,7 @@ P
 review_prompt() { # round
   cat <<P
 Review task $TASK_ID: $TASK_TITLE
-The plan is in $RUN_DIR/plan.md. The changes: git diff $(base_ref)...HEAD
+The plan is in $RUN_DIR/plan.md. The changes: git diff $(task_base)...HEAD
 Look for bugs, missed requirements, shortcuts (skipped tests, suppressed warnings, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.
 Write the review to $RUN_DIR/review-$1.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.
@@ -1437,7 +1467,7 @@ P
 
 plan_check_prompt() { # round
   cat <<P
-The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(base_ref)...HEAD
+The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(task_base)...HEAD
 Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.
 Write your notes to $RUN_DIR/review-$1-plan.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.
@@ -1710,7 +1740,7 @@ plan_rounds() {
 }
 
 show_for_approval() { # kind dir
-  local n v color=never width=80 a p r b esc=""
+  local n v color=never width=80 a p r b esc="" base
   a=$(key a) p=$(key p) r=$(key r) b=$(key b)
   [[ ! -e $2/hooks-$1.json ]] || esc=", after Esc on its dialog," # keys typed into the dialog answer it
   printf '\n%s ' "$TAG" >&2
@@ -1730,6 +1760,7 @@ show_for_approval() { # kind dir
     fi
     printf '\n%s [%s]pprove (edit the file or talk to the planner%s first if you like), a[%s]prove and allow protected paths, [%s]evise with a note, a[%s]ort? (%s/%s/%s/%s) ' "$TAG" "$a" "$esc" "$p" "$r" "$b" "$a" "$p" "$r" "$b" >&2
   else
+    base=$(task_base) || exit 1
     printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2
     if [[ -t 2 ]]; then # git sees only the indenting sed, so it gets the colours and width here
       color=always
@@ -1737,8 +1768,8 @@ show_for_approval() { # kind dir
       [[ $width =~ ^[0-9]+$ ]] || width=80
     fi
     {
-      git -C "$WT" log --oneline --color="$color" "$(base_ref)..HEAD"
-      git -C "$WT" diff --stat="$((width - 4))" --color="$color" "$(base_ref)...HEAD"
+      git -C "$WT" log --oneline --color="$color" "$base..HEAD"
+      git -C "$WT" diff --stat="$((width - 4))" --color="$color" "$base...HEAD"
     } 2>/dev/null | sed 's/^/    /' >&2 || warn "could not show the branch"
     printf '\n%s [%s]pprove (look at the worktree or talk to the builder%s first if you like), [%s]evise with a note, a[%s]ort? (%s/%s/%s) ' "$TAG" "$a" "$esc" "$r" "$b" "$a" "$r" "$b" >&2
   fi
@@ -1868,6 +1899,7 @@ open_task_workspace() { # repo
   if ((FACTORY_FRESH)) || [[ ! -s $WT/$RUN_DIR/base ]]; then printf '%s\n' "$BASE" >"$WT/$RUN_DIR/base"; fi
   exclude="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
   grep -qsxF "$RUN_DIR/" "$exclude" || printf '%s/\n' "$RUN_DIR" >>"$exclude"
+  record_base
   log "workspace $WS at $WT"
 }
 
@@ -2135,7 +2167,7 @@ build_phase() {
       ROUND=$((ROUND + 1))
       continue
     fi
-    if ! violations=$(guard_check "$WT" "$(base_ref)"); then
+    if ! violations=$(guard_check "$WT" "$(task_base)"); then
       warn "guardrails: $violations"
       ask "$BUILD_AGENT" "$(guard_fix_prompt "$violations")"
       ROUND=$((ROUND + 1))
@@ -2178,7 +2210,7 @@ finish_task() {
   local repo=$1 pr="" next="merge $BRANCH" copilot=""
   local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}"
   ask "$BUILD_AGENT" "$(memory_prompt)"
-  if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_check "$WT" "$(base_ref)" >/dev/null; then
+  if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_check "$WT" "$(task_base)" >/dev/null; then
     bd_note "$repo" "$TASK_ID" "needs a human. $summary"
     toast "$TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
     warn "needs a human: $summary"
@@ -2642,6 +2674,7 @@ cmd_pr() { # repo bead-id: open a pull request for an existing task branch
   TASK_DESC=$(bd_field "$repo" "$2" '.description // ""')
   task_context "$repo"
   check_base "$repo"
+  record_base # a task from before Factory recorded one
   tree_dirty "$WT" && die "$WT has uncommitted changes"
   herdr agent get "$BUILD_AGENT" >/dev/null 2>&1 || die "no live builder agent for $2 to handle a rebase; rebase by hand, or rerun the task"
   url=$(raise_pr "$BUILD_AGENT")

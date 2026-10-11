@@ -270,7 +270,8 @@ from, which a rerun keeps), `waiting`
 
 The agents write the worktree, so what only you and Factory decide is kept out of it, in
 Factory's own state for the task under `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`:
-`allow-protected`, your waiver of the protected-path check.
+`allow-protected`, your waiver of the protected-path check, and `base`, the commit the
+branch is measured from.
 
 `fy init` writes a short `AGENTS.md` (with `CLAUDE.md` linking to it) only when a repo
 has neither. Keep it to what the code cannot tell a new engineer: how to verify, layout
@@ -341,7 +342,11 @@ Factory stays language-agnostic; whatever the gate says is done, is done.
 
 Where the gate asks "does it work", the guardrails ask "was it done honestly". They are
 Factory's own checks, language-agnostic and the same for every repo, run on the branch
-after the gate passes and before review:
+after the gate passes and before review. They read the branch from the commit it forks
+from, which Factory records when it opens the task's worktree and moves only when it
+rebases the branch itself, before a pull request: never from where `main` or `origin/main`
+is now, which an agent can move, and your `main` with it. A base ref that no longer holds
+the recorded commit stops the run, as your `main` may have been rewritten.
 
 - No added lines matching `guardrails.txt`: suppressions such as `noqa`, `type: ignore`,
   `eslint-disable`, `shellcheck disable`; skipped tests; `|| true`. Adapted from

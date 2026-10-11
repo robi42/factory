@@ -159,6 +159,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   approval writes (`p`, the dialog, or `fy approve <repo> <bead-id> --allow-protected`). An
   `allow-protected` file in the run dir, or on the branch, waives nothing and fails the
   guardrails. `fy check` in a task's worktree honours the task's waiver.
+- The guardrails diffed the branch against `main` or `origin/main` by name, which an agent
+  can move with `git update-ref`, your `main` with it, so that its commits dropped out of
+  every diff they read. Factory now records the commit the branch forks from when it opens
+  the task's worktree, and moves it only when it rebases the branch itself before a pull
+  request; the guardrails, the reviewers' prompts and the build's approval read the branch
+  from that commit. A base ref that no longer holds it stops the run loudly, as your `main`
+  may have been rewritten.
 
 ## [0.1.11] - 2026-10-05
 
