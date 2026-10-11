@@ -1322,30 +1322,36 @@ task_head() {
     || die "$WT is at ${HEAD_SHA:-no commit}, not at the tip of $BRANCH (${tip:-none}), which Factory gates, guards and pushes: check out $BRANCH there"
 }
 
-# base_ref: the ref the branch forks from: the local base branch or origin's copy, whichever
-# the branch forked from later. Origin's after the pull request rebase, also once origin has
-# moved on again (a stale local base would blame the branch for what the upstream added); the
-# local one while it carries commits origin does not, or without an origin. Full names: a tag
-# or a branch named origin/<base> would be read as either.
+# base_ref: the ref the branch forks from: the local base branch, origin's as Factory fetched it
+# (upstream_ref), or origin's tracking ref, whichever the branch forked from latest, origin's on a
+# tie. Origin's after the pull request rebase, also once origin has moved on again (a stale local
+# base would blame the branch for what the upstream added); the local one while it carries
+# commits origin does not, or without an origin. Full names: a tag or a branch named
+# origin/<base> would be read as either.
 base_ref() {
-  local origin="refs/remotes/origin/$BASE" lo ro
-  if lo=$(git -C "$WT" merge-base "refs/heads/$BASE" HEAD 2>/dev/null) \
-    && ro=$(git -C "$WT" merge-base "$origin" HEAD 2>/dev/null) \
-    && git -C "$WT" merge-base --is-ancestor "$lo" "$ro"; then
-    printf '%s' "$origin"
-  else
-    printf '%s' "refs/heads/$BASE"
-  fi
+  local ref best="refs/heads/$BASE" fork last=""
+  for ref in "refs/heads/$BASE" "$(upstream_ref)" "refs/remotes/origin/$BASE"; do
+    fork=$(git -C "$WT" merge-base "$ref" HEAD 2>/dev/null) || continue
+    if [[ -z $last ]] || git -C "$WT" merge-base --is-ancestor "$last" "$fork"; then
+      best=$ref last=$fork
+    fi
+  done
+  printf '%s' "$best"
 }
 
-# recorded_base_branch -> the branch the task's recorded base was read from: refs/heads/<branch>
-# and a remote's refs/remotes/<remote>/<branch> alike name <branch>
+# upstream_ref -> the ref Factory fetches origin's base branch into for the task (fetch_base): a
+# name of its own, which no remote's config or fetch writes
+upstream_ref() { printf 'refs/factory/%s/upstream/%s' "$TASK_ID" "$BASE"; }
+
+# recorded_base_branch -> the branch the task's recorded base was read from: refs/heads/<branch>,
+# a remote's refs/remotes/<remote>/<branch> and Factory's own fetch of it alike name <branch>
 recorded_base_branch() {
   local ref
   read -r _ ref 2>/dev/null <"$TASK_STATE/base" || return 1
   [[ -n $ref ]] || return 1
   ref=${ref#refs/heads/}
   [[ $ref != refs/remotes/* ]] || ref=${ref#refs/remotes/*/}
+  [[ $ref != refs/factory/* ]] || ref=${ref#refs/factory/*/upstream/}
   printf '%s' "$ref"
 }
 
@@ -1353,20 +1359,34 @@ recorded_base_branch() {
 # Factory's state once, as Factory takes up the task's worktree: where the branch forks off the
 # base ref (base_ref). Only Factory's rebase onto the base moves it on (rebase_onto_base). The
 # ref itself is no base: an agent can move main or origin/main (git update-ref), your main with
-# it, so that its commits drop out of every diff read against the ref.
+# it, so that its commits drop out of every diff read against the ref. With the base go
+# origin's URLs (record_origin).
 record_base() {
-  local ref sha url
-  [[ ! -s $TASK_STATE/base ]] || return 0
-  task_head
-  ref=$(git -C "$WT" rev-parse --symbolic-full-name "$(base_ref)") || die "no base ref $BASE for $BRANCH"
-  sha=$(git -C "$WT" merge-base "$ref" HEAD) || die "$BRANCH has no fork point from $ref to be measured from"
-  mkdir -p "$TASK_STATE"
-  printf '%s %s\n' "$sha" "$ref" >"$TASK_STATE/base"
-  # with it origin's URL, which the base is fetched from from then on (fetch_base)
-  rm -f "$TASK_STATE/origin"
-  if url=$(git -C "$TASK_REPO" remote get-url origin 2>/dev/null); then
-    printf '%s\n' "$url" >"$TASK_STATE/origin"
+  local ref sha
+  if [[ ! -s $TASK_STATE/base ]]; then
+    task_head
+    ref=$(git -C "$WT" rev-parse --symbolic-full-name "$(base_ref)") || die "no base ref $BASE for $BRANCH"
+    sha=$(git -C "$WT" merge-base "$ref" HEAD) || die "$BRANCH has no fork point from $ref to be measured from"
+    mkdir -p "$TASK_STATE"
+    printf '%s %s\n' "$sha" "$ref" >"$TASK_STATE/base"
+    rm -f "$TASK_STATE/origin" "$TASK_STATE/origin-push" # a base taken anew takes them anew
   fi
+  record_origin
+}
+
+# record_origin: origin's URL, which the base is fetched from from then on (fetch_base), and the
+# URLs a push goes to, as git in the worktree reads them, kept in Factory's state as the task's
+# worktree opens, before an agent works there; none when there is no origin. An agent can
+# repoint either in the repo's git config, which origin_url refuses. A task from before Factory
+# kept the push URLs gets them recorded now.
+record_origin() {
+  local url push
+  [[ ! -e $TASK_STATE/origin ]] || [[ ! -e $TASK_STATE/origin-push ]] || return 0
+  mkdir -p "$TASK_STATE"
+  url=$(git -C "$WT" remote get-url origin 2>/dev/null) || url=""
+  push=$(git -C "$WT" remote get-url --push --all origin 2>/dev/null) || push=""
+  [[ -e $TASK_STATE/origin ]] || printf '%s\n' "$url" >"$TASK_STATE/origin"
+  printf '%s\n' "$push" >"$TASK_STATE/origin-push"
 }
 
 # task_base -> the recorded base commit, while its ref still holds it. A ref that no longer does
@@ -1380,32 +1400,64 @@ task_base() {
   printf '%s' "$sha"
 }
 
-# origin_url -> origin's URL as recorded when the task started (record_base), or now for a task
-# from before; refused when git would rewrite it (url.<base>.insteadOf in the repo's config)
+# origin_url -> origin's URL as the task's worktree opened (record_origin), while git in the
+# worktree reads origin's URLs, the fetch URL and the push URLs, as they were then: an agent that
+# repointed one in the repo's git config (remote.origin.url or pushurl, url.*.insteadOf) would
+# have Factory rebase onto, or push to, a repository of its own. 1, saying why, when origin had
+# no URL then, or has others now.
 origin_url() {
-  local url
-  if [[ ! -s $TASK_STATE/origin ]]; then
-    url=$(git -C "$TASK_REPO" remote get-url origin 2>/dev/null) || return 1
-    mkdir -p "$TASK_STATE"
-    printf '%s\n' "$url" >"$TASK_STATE/origin"
-  fi
-  url=$(<"$TASK_STATE/origin")
-  if [[ $(git -C "$WT" ls-remote --get-url "$url") != "$url" ]]; then
-    warn "git rewrites origin's URL, $url, to $(git -C "$WT" ls-remote --get-url "$url") (url.*.insteadOf): refusing to fetch from there"
+  local was="" was_push="" url push
+  [[ ! -s $TASK_STATE/origin ]] || was=$(<"$TASK_STATE/origin")
+  [[ ! -s $TASK_STATE/origin-push ]] || was_push=$(<"$TASK_STATE/origin-push")
+  url=$(git -C "$WT" remote get-url origin 2>/dev/null) || url=""
+  push=$(git -C "$WT" remote get-url --push --all origin 2>/dev/null) || push=""
+  if [[ -z $was ]]; then
+    [[ -z $url ]] || warn "$TASK_ID had no origin when it started, and origin is $url now: refusing to fetch from or push to it; if you added it, remove $TASK_STATE/origin for a rerun or factory pr to record it"
     return 1
   fi
-  printf '%s' "$url"
+  if [[ $url != "$was" || $push != "$was_push" ]]; then
+    warn "origin's URLs in $WT are not those $TASK_ID started with: fetch ${url:-none} (was $was), push ${push//$'\n'/ } (was ${was_push//$'\n'/ }); something other than Factory changed them, maybe an agent: refusing to fetch from or push to origin. Look at git remote -v there; if it was you, remove $TASK_STATE/origin for a rerun or factory pr to record them anew"
+    return 1
+  fi
+  printf '%s' "$was"
 }
 
+# own_git_dir -> a new bare git dir of Factory's own, which borrows the repo's objects: git there
+# reads none of the repo's git config, which an agent can write to steer a fetch to another
+# server (core.sshCommand, a proxy, url.*.insteadOf), only yours. The caller removes it.
+own_git_dir() {
+  local own
+  own=$(mktemp -d) || return 1
+  if git init -q --bare "$own" \
+    && git -C "$WT" rev-parse --path-format=absolute --git-path objects >"$own/objects/info/alternates"; then
+    printf '%s' "$own"
+  else
+    rm -rf "$own"
+    return 1
+  fi
+}
+
+# own_git git-dir args...: git in that git dir of Factory's own (own_git_dir), run from the
+# worktree, so that a relative URL means what it does there
+own_git() { (cd "$WT" && GIT_TERMINAL_PROMPT=0 git --git-dir="$1" "${@:2}"); }
+
 # fetch_base -> origin's tip of the base branch, fetched by its full name from origin's URL as
-# the task recorded it (origin_url), into origin's tracking ref, never through the remote's
-# config: that and the tracking ref are the agents' to write, and an agent's commit put there
-# would be rebased onto, then dropped from every diff the branch is checked by.
+# the task recorded it (origin_url) into upstream_ref, a ref of Factory's own, never through the
+# remote's config or into its tracking ref: those are the agents' to write, and an agent's commit
+# put there would be rebased onto, then dropped from every diff the branch is checked by. The
+# fetch from origin runs in a git dir of Factory's own (own_git_dir), and the commit it fetched is
+# the one the ref holds.
 fetch_base() {
-  local url
+  local url own tip="" rc=0
   url=$(origin_url) || return 1
-  GIT_TERMINAL_PROMPT=0 git -C "$WT" fetch -q --no-tags "$url" "+refs/heads/$BASE:refs/remotes/origin/$BASE" || return 1
-  git -C "$WT" rev-parse --verify -q 'FETCH_HEAD^{commit}'
+  own=$(own_git_dir) || return 1
+  own_git "$own" fetch -q --no-tags "$url" "+refs/heads/$BASE:refs/upstream" \
+    && tip=$(git --git-dir="$own" rev-parse --verify -q 'refs/upstream^{commit}') \
+    && git -C "$WT" fetch -q --no-tags "$own" "+refs/upstream:$(upstream_ref)" \
+    && [[ $(git -C "$WT" rev-parse --verify -q "$(upstream_ref)^{commit}") == "$tip" ]] || rc=1
+  rm -rf "$own"
+  ((rc == 0)) || return 1
+  printf '%s' "$tip"
 }
 
 # took_in base -> the newest commit of origin's base branch that the branch holds, when that is
@@ -1415,7 +1467,7 @@ fetch_base() {
 # own on a local ref, which would then drop out of every diff.
 took_in() {
   local base=$1 ref fork="" tip
-  for ref in "refs/heads/$BASE" "refs/remotes/origin/$BASE"; do
+  for ref in "refs/heads/$BASE" "refs/remotes/origin/$BASE" "$(upstream_ref)"; do
     fork=$(git -C "$WT" merge-base HEAD "$ref" 2>/dev/null) || fork=""
     if [[ -n $fork && $fork != "$base" ]] && git -C "$WT" merge-base --is-ancestor "$base" "$fork"; then
       break
@@ -1457,7 +1509,7 @@ guard_branch() {
   base=$(task_base) || exit 1
   if newer=$(took_in "$base"); then
     log "$BRANCH took in newer commits of origin's $BASE; measuring it from $newer, the newest of them"
-    printf '%s refs/remotes/origin/%s\n' "$newer" "$BASE" >"$TASK_STATE/base"
+    printf '%s %s\n' "$newer" "$(upstream_ref)" >"$TASK_STATE/base"
     base=$newer
   fi
   guard_check "$WT" "$base" || return 1
@@ -1477,6 +1529,7 @@ push_gated() {
   local checked
   checked=$(recorded guarded)
   guarded || die "$BRANCH is at $HEAD_SHA, but the gate and the guardrails passed on ${checked:-none}: refusing to push what they have not passed; rerun, or factory pr, to check it"
+  origin_url >/dev/null || die "refusing to push $BRANCH to origin, whose URLs are not those $TASK_ID started with (above)"
   git -C "$WT" push "$@" origin "$checked:refs/heads/$BRANCH" || return 1
   printf '%s\n' "$checked" >"$TASK_STATE/pushed"
 }
@@ -1507,13 +1560,17 @@ rebase_in_progress() {
   -d $(git -C "$1" rev-parse --path-format=absolute --git-path rebase-apply) ]]
 }
 
-# rebase_onto_base builder-agent: bring the branch up to date with origin's base before a PR.
-# The commit it was rebased onto is the one it is measured from then (task_base), and the gate
-# and the guardrails must pass on the rebased tip (guarded).
+# rebase_onto_base builder-agent: bring the branch up to date with origin's base before a PR,
+# as Factory fetched it (fetch_base), never onto a local ref. The commit it was rebased onto is
+# the one it is measured from then (task_base), and the gate and the guardrails must pass on the
+# rebased tip (guarded). Origin's base must hold the commit the branch was measured from: one
+# that only a local ref held, an agent's say, would go into the pull request unchecked.
 rebase_onto_base() {
-  local agent=$1 files onto
-  task_base >/dev/null # a base moved by another hand fails here, before the branch moves onto it
+  local agent=$1 files onto base
+  base=$(task_base) || exit 1 # a base moved by another hand fails here, before the branch moves onto it
   onto=$(fetch_base) || die "could not fetch $BASE from origin to bring $BRANCH up to date with it"
+  git -C "$WT" merge-base --is-ancestor "$base" "$onto" \
+    || die "origin's $BASE, at $onto, does not hold $base, the commit $BRANCH is measured from: the pull request would carry commits that origin never had and that no check read as the branch's, such as ones on your $BASE you have not pushed, or an agent's. Push or drop them, or look at $base; if it is wrong, remove $TASK_STATE/base for a rerun to measure the branch from where it forks off then"
   if git -C "$WT" merge-base --is-ancestor "$onto" HEAD; then
     return 0
   fi
@@ -1528,7 +1585,7 @@ rebase_onto_base() {
     tree_dirty "$WT" && die "the worktree is dirty after the rebase; commit or clean it"
     git -C "$WT" merge-base --is-ancestor "$onto" HEAD || die "$BRANCH is still not on top of origin's $BASE"
   fi
-  printf '%s refs/remotes/origin/%s\n' "$onto" "$BASE" >"$TASK_STATE/base"
+  printf '%s %s\n' "$onto" "$(upstream_ref)" >"$TASK_STATE/base"
 }
 
 # pr_checks -> markdown bullets describing what the run directory proves
@@ -1609,9 +1666,11 @@ raise_pr() {
 # pushed_holds: 0 when origin's copy of the branch is the commit Factory pushed; one an agent
 # pushed there itself would be in the pull request unchecked
 pushed_holds() {
-  local url theirs
+  local url own theirs=""
   url=$(origin_url) || return 1
-  theirs=$(GIT_TERMINAL_PROMPT=0 git -C "$WT" ls-remote "$url" "refs/heads/$BRANCH" | cut -f1) || return 1
+  own=$(own_git_dir) || return 1
+  theirs=$(own_git "$own" ls-remote "$url" "refs/heads/$BRANCH" | cut -f1) || theirs=""
+  rm -rf "$own"
   [[ -n $theirs && $theirs == "$(recorded pushed)" ]]
 }
 
@@ -3295,8 +3354,12 @@ cmd_clean() {
       fi
       git -C "$repo" worktree prune
       git -C "$repo" branch -D "$branch" >/dev/null
-      # Factory's state for the task: its base and checks would hold for the task run again
-      if is_bead_id "$id"; then rm -rf "$TASK_STATE"; fi
+      # Factory's state for the task, and its fetch of origin's base: its base and checks would
+      # hold for the task run again
+      if is_bead_id "$id"; then
+        rm -rf "$TASK_STATE"
+        git -C "$repo" for-each-ref --format='delete %(refname)' "refs/factory/$id/" | git -C "$repo" update-ref --stdin
+      fi
       if [[ -n $status && $status != closed ]]; then
         why=merged
         ((force)) && why=dropped

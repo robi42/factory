@@ -156,6 +156,7 @@ on_work_branch() {
   BASE=main
   BRANCH=work
   TASK_REPO=$REPO
+  TASK_ID=${TASK_ID:-toy-1}
   record_base
 }
 
@@ -3597,7 +3598,7 @@ EOF
   run rebase_onto_base builder
   [ "$status" -eq 0 ]
   git -C "$REPO" merge-base --is-ancestor main work
-  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$REPO" rev-parse main) refs/remotes/origin/main" ]
+  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$REPO" rev-parse main) refs/factory/toy-1/upstream/main" ]
   # base changes the same line: conflict, the stubbed builder resolves it
   git -C "$REPO" checkout -q main
   printf 'echo base\n' >"$REPO/run.sh"
@@ -3633,8 +3634,8 @@ EOF
 
 @test "base_ref after the pull request rebase: origin's main, not the stale local one" {
   make_repo
-  on_work_branch
   add_origin
+  on_work_branch
   # upstream main touches a protected file; local main stays behind
   git clone -q -b main "$TMP/origin.git" "$TMP/other"
   git -C "$TMP/other" config user.email t@example.invalid
@@ -3648,7 +3649,7 @@ EOF
   [ "$(base_ref)" = refs/heads/main ]
   GATE=true
   rebase_onto_base builder
-  [ "$(base_ref)" = refs/remotes/origin/main ]
+  [ "$(base_ref)" = refs/factory/toy-1/upstream/main ] # origin's, as Factory fetched it
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"protected path changed: .factory/gate"* ]]
@@ -3681,7 +3682,7 @@ EOF
   run guard_branch
   [ "$status" -eq 0 ]
   [[ $output == *"took in newer commits of origin's main"* ]]
-  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$TMP/other" rev-parse HEAD) refs/remotes/origin/main" ]
+  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$TMP/other" rev-parse HEAD) refs/factory/toy-9/upstream/main" ]
   [ "$(cat "$TASK_STATE/guarded")" = "$(git -C "$TMP/wt-9" rev-parse HEAD)" ]
   # a commit put on the local main, and merged: origin does not hold it, so it is the branch's
   git -C "$REPO" checkout -q main
@@ -3701,7 +3702,8 @@ EOF
   on_work_branch
   GATE=true
   [ "$(cat "$TASK_STATE/origin")" = "$TMP/origin.git" ]
-  # an agent's commit off main, the tracking ref moved to it, the remote's fetch and URL changed
+  [ "$(cat "$TASK_STATE/origin-push")" = "$TMP/origin.git" ]
+  # an agent's commit off main, the tracking ref moved to it, the remote's fetch changed
   git -C "$REPO" checkout -q -b evil main
   printf 'x\n' >"$REPO/evil.txt"
   commit_all evil
@@ -3710,18 +3712,87 @@ EOF
   git -C "$REPO" checkout -q work
   git -C "$REPO" update-ref refs/remotes/origin/main "$evil"
   git -C "$REPO" config remote.origin.fetch '+refs/heads/none:refs/remotes/origin/none'
-  git -C "$REPO" config remote.origin.url "$TMP/elsewhere"
   printf 'mine\n' >"$REPO/mine.txt"
   commit_all work
   rebase_onto_base builder
   run git -C "$REPO" merge-base --is-ancestor "$evil" work
   [ "$status" -eq 1 ]
-  [ "$(git -C "$REPO" rev-parse refs/remotes/origin/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
+  [ "$(git -C "$REPO" rev-parse refs/factory/toy-1/upstream/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
+  [ "$(git -C "$REPO" rev-parse refs/remotes/origin/main)" = "$evil" ] # the remote's own, which Factory neither reads nor writes
   # a rewrite of the recorded URL in the repo's config is refused
   git -C "$REPO" config "url.$TMP/elsewhere.insteadOf" "$TMP/origin.git"
   run rebase_onto_base builder
   [ "$status" -eq 1 ]
-  [[ $output == *"git rewrites origin's URL, $TMP/origin.git, to $TMP/elsewhere"*"could not fetch main from origin"* ]]
+  [[ $output == *"origin's URLs in $REPO are not those toy-1 started with: fetch $TMP/elsewhere (was $TMP/origin.git)"*"could not fetch main from origin"* ]]
+}
+
+@test "rebase_onto_base: never onto what the repo's git config fetches; a push or a rebase with origin's URLs changed since the task started is refused" {
+  make_repo
+  # origin is reached over ssh: a stand-in on the PATH serves the repository it is asked for
+  git clone -q --bare "$REPO" "$TMP/origin.git"
+  mkdir -p "$TMP/bin" "$TMP/evil"
+  cat >"$TMP/bin/ssh" <<'SH'
+#!/bin/sh
+for a; do last=$a; done
+exec sh -c "$last"
+SH
+  # an agent's commit on main, in a repository of its own, and an ssh of its own that serves it
+  git clone -q -b main "$REPO" "$TMP/evil-work"
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/evil-work/.factory/gate"
+  git -C "$TMP/evil-work" -c user.name=t -c user.email=t@example.invalid commit -qam "an agent's"
+  git clone -q --bare "$TMP/evil-work" "$TMP/evil.git"
+  printf '#!/bin/sh\nexec git-upload-pack %q\n' "$TMP/evil.git" >"$TMP/evil/ssh"
+  chmod +x "$TMP/bin/ssh" "$TMP/evil/ssh"
+  PATH=$TMP/bin:$PATH
+  local url="ssh://origin.invalid$TMP/origin.git"
+  git -C "$REPO" remote add origin "$url"
+  on_work_branch
+  printf 'mine\n' >"$REPO/mine.txt"
+  commit_all work
+  GATE=true
+  # the repo's git config, which an agent can write, names its ssh for every fetch from origin's URL
+  git -C "$REPO" config core.sshCommand "$TMP/evil/ssh"
+  rebase_onto_base builder
+  [ "$(git -C "$REPO" rev-parse work^)" = "$(git -C "$TMP/origin.git" rev-parse main)" ] # on origin's main, not the agent's
+  [ "$(git -C "$REPO" rev-parse refs/factory/toy-1/upstream/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
+  git -C "$REPO" config --unset core.sshCommand
+  # origin repointed, whatever the push URL says: refused before the branch moves
+  git -C "$REPO" config remote.origin.pushurl "$url"
+  git -C "$REPO" config remote.origin.url "$TMP/evil.git"
+  run rebase_onto_base builder
+  [ "$status" -eq 1 ]
+  [[ $output == *"origin's URLs in $REPO are not those toy-1 started with: fetch $TMP/evil.git (was $url)"*"could not fetch main from origin"* ]]
+  [ "$(git -C "$REPO" rev-parse work^)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
+  # a push URL added: no push goes out
+  git -C "$REPO" config remote.origin.url "$url"
+  git -C "$REPO" config --add remote.origin.pushurl "$TMP/evil.git"
+  printf '%s\n' "$(git -C "$REPO" rev-parse work)" >"$TASK_STATE/guarded" # the gate and the guardrails passed on it
+  run push_gated -q
+  [ "$status" -eq 1 ]
+  [[ $output == *"push $url $TMP/evil.git (was $url)"*"refusing to push work to origin"* ]]
+  run git -C "$TMP/evil.git" rev-parse -q --verify refs/heads/work
+  [ "$status" -eq 1 ]
+}
+
+@test "rebase_onto_base: refused when origin's base does not hold the commit the branch is measured from, as when an agent moved main before the task started" {
+  make_repo
+  add_origin
+  # an agent's commit on the shared main, which origin never had, then the task's branch off it
+  git -C "$REPO" checkout -q main
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
+  commit_all "an agent's"
+  local agents
+  agents=$(git -C "$REPO" rev-parse HEAD)
+  git -C "$REPO" checkout -q -B work
+  on_work_branch
+  [ "$(cut -d ' ' -f 1 "$TASK_STATE/base")" = "$agents" ] # what every check then reads the branch from
+  printf 'mine\n' >"$REPO/mine.txt"
+  commit_all work
+  GATE=true
+  run rebase_onto_base builder
+  [ "$status" -eq 1 ]
+  [[ $output == *"origin's main, at $(git -C "$TMP/origin.git" rev-parse main), does not hold $agents, the commit work is measured from"* ]]
+  [ "$(cut -d ' ' -f 1 "$TASK_STATE/base")" = "$agents" ]
 }
 
 @test "base_ref: the local main when it is newer than origin's, or when there is no origin" {

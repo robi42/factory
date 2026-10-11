@@ -262,6 +262,12 @@ clean or recommends approval (its nits left open), or until the builder answers 
 without changing anything. Copilot never approves formally, only in its review text.
 `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
 
+Factory fetches the base in a git dir of its own, which none of the repo's git config
+steers, and never rebases onto a local ref. A run whose origin has other URLs than as the
+task started, to fetch or to push, stops before it fetches or pushes, and so does one whose
+fetched base does not hold the commit the branch was measured from, such as a commit on
+your base branch that you have not pushed.
+
 Such a run checks at its start, before it claims a bead, that origin takes a push without a
 prompt: a dry-run push, which sends nothing, has the remote check git's credentials and
 your write access. A missing credential stops the run there, with git's error, rather
@@ -298,13 +304,16 @@ a gate, while it waits, and `approved`, `reject.md` or `aborted`, an answer from
 or `fy approve`, `reject` or `abort`, until the gate takes it; `allow-protected`, your
 waiver of the protected-path check; the planner's `tree-at-ask` and `tree-at-answer`,
 what you changed while its question dialog was open; `base`, the commit the branch is
-measured from and the base branch it was read from, which a rerun keeps, and `origin`, the
-URL that base is fetched from; `gated` and `guarded`, the commits the gate and then the
+measured from and the base branch it was read from, which a rerun keeps, and `origin` and
+`origin-push`, the URL that base is fetched from and the ones a push goes to, as the
+task's worktree opened; `gated` and `guarded`, the commits the gate and then the
 guardrails last passed on, and `pushed`, the one Factory last pushed; `exclude`, a hash
 of the repo's `info/exclude`. A file in the run dir by one of the names Factory kept
 there before (`approved`, `reject.md`, `aborted`, `allow-protected`, `state`,
 `tree-at-ask`, `tree-at-answer`) counts for nothing, stops the next run and fails the
-guardrails: only an agent would put one there. `fy clean` removes it with the task.
+guardrails: only an agent would put one there. Origin's base branch, as Factory fetched
+it, is the ref `refs/factory/<bead-id>/upstream/<base>`. `fy clean` removes them with the
+task.
 
 ## The gate
 

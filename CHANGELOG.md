@@ -137,8 +137,16 @@ recorded no check of it.
   `main` may have been rewritten. `factory clean` removes this state with the task.
 - The rebase before a pull request fetched the base through origin's config and fell back
   to your local branch when the fetch failed, both of which an agent can steer to a commit
-  of its own. Factory now fetches the base by its full name from the URL origin had as
-  the task started, and stops when it cannot.
+  of its own: by the remote's URL or refspec, by its tracking ref, or by the repo's git
+  config, which reaches a server of the agent's with origin's URL unchanged
+  (`core.sshCommand`, a proxy). Factory now records origin's URL and the URLs a push goes
+  to as the task's worktree opens, and stops a fetch or a push when either has changed. It
+  fetches the base by its full name from that URL, in a git dir of its own that none of the
+  repo's config steers, into `refs/factory/<bead-id>/upstream/<base>`, a ref nothing else
+  writes, rebases onto that, and stops when it cannot fetch. It also stops when the base it
+  fetched does not hold the commit the branch was measured from, such as one an agent put
+  on your `main` before the task started, or one you have not pushed: the pull request
+  would carry it unchecked.
 - The gate and the guardrails checked the commit checked out in the worktree, but Factory
   pushed the branch by name: a worktree left on another commit had them pass that commit
   while the push sent the branch's, and a commit made after the gate went out unchecked.
