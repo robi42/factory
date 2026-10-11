@@ -2555,17 +2555,45 @@ $new"
 # changed_since tree-state [worktree] -> the lines of tree_state that the earlier state lacks
 changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "${2:-$WT}" | LC_ALL=C sort); }
 
-# planner_turn planner-agent prompt: one turn of the planner, then the check that it left the
-# code alone. What changed before the turn is not the planner's, nor what the human changed
-# while one of its question dialogs was open: the dialog's hook records that in tree-at-answer,
-# in Factory's state for the task.
+# refs_state worktree -> where its HEAD and each ref of the repo point, a line each, which a
+# planner's turn must leave as they were. Left out are the refs that others move meanwhile and
+# that Factory reads nothing of for the task: other tasks' branches and Factory's refs for them
+# (refs/factory/<id>/), which their own runs check, and the remote-tracking refs, which every
+# fetch moves.
+refs_state() {
+  local head
+  head=$(git -C "$1" symbolic-ref -q HEAD) || head=detached
+  printf 'HEAD %s %s\n' "$(git -C "$1" rev-parse -q --verify HEAD || printf none)" "$head"
+  git -C "$1" for-each-ref --format='%(refname) %(objectname)' | awk -v id="${TASK_ID:?}" '
+    $1 ~ /^refs\/remotes\// { next }
+    $1 ~ /^refs\/(heads\/)?factory\// { n = $1; sub(/^refs\/(heads\/)?factory\//, "", n)
+      if (n != id && index(n, id "-") != 1 && index(n, id "/") != 1) next }
+    { print }'
+}
+
+# planner_left_refs refs-state: refuse a planner turn that moved HEAD or any ref since refs_state
+# was taken. A commit carries the planner's change out of the tree that planner_kept_hands_off
+# reads, and onto the branch or another ref.
+planner_left_refs() {
+  local moved
+  moved=$(LC_ALL=C comm -3 <(LC_ALL=C sort <<<"$1") <(refs_state "$WT" | LC_ALL=C sort) | awk '{print $1}' | LC_ALL=C sort -u | paste -sd ' ')
+  [[ -n $moved ]] || return 0
+  die "the planner's turn moved $moved in the repo of $WT: planning must not commit, check out or move a ref. Look at what it did, put them back, and rerun; if you moved them yourself meanwhile, rerun"
+}
+
+# planner_turn planner-agent prompt: one turn of the planner, then the checks that it left the
+# code and the refs alone. What changed before the turn is not the planner's, nor what the
+# human changed while one of its question dialogs was open: the dialog's hook records that in
+# tree-at-answer, in Factory's state for the task.
 planner_turn() {
-  local before
+  local before refs
   rm -f "${TASK_STATE:?}/tree-at-answer" # tree-at-ask stays: a question still open keeps its snapshot
   before=$(tree_state "$WT")
+  refs=$(refs_state "$WT")
   ask "$1" "$2"
   [[ ! -s $TASK_STATE/tree-at-answer ]] || before+=$'\n'$(<"$TASK_STATE/tree-at-answer")
   planner_kept_hands_off "$1" "$before"
+  planner_left_refs "$refs"
 }
 
 # write_plan planner-agent: ask for a plan; the planner asks the human its questions in its own

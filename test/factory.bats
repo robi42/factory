@@ -2675,6 +2675,39 @@ JSON
   [ -e "$REPO/fixture.csv" ]
 }
 
+@test "planner_turn: a planner that commits, or moves HEAD or any other ref, is refused; other tasks' refs and fetches may move meanwhile" {
+  make_repo
+  add_origin
+  task_opened
+  ask() { # the planner commits its change, which leaves the tree clean
+    printf 'echo planned\n' >"$TMP/wt-9/run.sh"
+    git -C "$TMP/wt-9" commit -qam "the planner's"
+  }
+  run planner_turn planner "plan it"
+  [ "$status" -eq 1 ]
+  [[ $output == *"the planner's turn moved HEAD refs/heads/factory/toy-9 in the repo of $TMP/wt-9"* ]]
+  git -C "$TMP/wt-9" reset -q --hard HEAD~1
+  ask() { git -C "$TMP/wt-9" update-ref refs/heads/main "$(git -C "$TMP/wt-9" commit-tree -p main -m x 'main^{tree}')"; }
+  run planner_turn planner "plan it"
+  [ "$status" -eq 1 ]
+  [[ $output == *"moved refs/heads/main in"* ]]
+  git -C "$REPO" update-ref refs/heads/main main~1
+  ask() { git -C "$TMP/wt-9" checkout -q --detach; }
+  run planner_turn planner "plan it"
+  [ "$status" -eq 1 ]
+  [[ $output == *"moved HEAD in"* ]]
+  git -C "$TMP/wt-9" checkout -q factory/toy-9
+  # meanwhile another task's builder commits, its run fetches origin's base, and a fetch moves
+  # origin's tracking refs
+  git -C "$REPO" branch factory/toy-10 main
+  ask() {
+    git -C "$REPO" update-ref refs/heads/factory/toy-10 "$(git -C "$REPO" commit-tree -p main -m other 'main^{tree}')"
+    git -C "$REPO" update-ref refs/factory/toy-10/upstream/main main
+    git -C "$TMP/wt-9" fetch -q origin
+  }
+  planner_turn planner "plan it"
+}
+
 @test "ask: a prompt Herdr calls stalled that went in late gets its turn waited out, not sent again" {
   herdr() { # the reviewer starts its turn a few looks after the prompt, as Codex did live
     case "$*" in

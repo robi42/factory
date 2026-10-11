@@ -440,6 +440,8 @@ rewrite, could name another clone, whose refs and history every check would read
   files, which no diff shows. Leave such a change for after the merge.
 - No file committed in Factory's own `.factory/run/`, which no other check reads.
 - The planner must leave the code untouched; what one of its turns changes is sent back once.
+  A planner turn that commits, or moves HEAD or any ref but other tasks' and origin's
+  tracking refs, stops the run.
 
 The guardrails keep an agent honest, not contained: its shell runs as you, so an agent
 set on it could still write Factory's state for the task, change what lies outside the
