@@ -1991,12 +1991,12 @@ IN
   printf 'kept\n' >"$TMP/.factory/run/response-1.md"
   [[ $(review_prompt 1) != *"Your notes"* ]]
   [[ $(review_prompt 2 "use a table") == *"Your notes from review round 1 are in .factory/run/review-1.md. The builder said why it left points as they were in .factory/run/response-1.md."*"The human sent this note on the build: use a table"* ]]
-  [[ $(plan_check_prompt 3) == *"Your notes from review round 1 are in .factory/run/review-1-plan.md."* ]]
-  [[ $(plan_check_prompt 3) != *"note on the build"* ]]
+  [[ $(planner_build_review_prompt 3) == *"Your notes from review round 1 are in .factory/run/review-1-plan.md."* ]]
+  [[ $(planner_build_review_prompt 3) != *"note on the build"* ]]
   [[ $(review_prompt 2) == *"review-2.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
-  [[ $(plan_check_prompt 2) == *"review-2-plan.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
+  [[ $(planner_build_review_prompt 2) == *"review-2-plan.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_review_prompt 1) == *"plan-review-1.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
-  [[ $(plan_build_check_prompt 1) == *"plan-review-1-build.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
+  [[ $(builder_plan_review_prompt 1) == *"plan-review-1-build.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_prompt) == *"reply with its content"* ]]
   # the planner asks in its own dialog; the approvals are the human's, in Factory's dialog or typed
   [[ $(plan_prompt) == *"ask the human first with your AskUserQuestion tool"*"The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected"*"!fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
