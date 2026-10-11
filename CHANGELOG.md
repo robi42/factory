@@ -166,6 +166,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   request; the guardrails, the reviewers' prompts and the build's approval read the branch
   from that commit. A base ref that no longer holds it stops the run loudly, as your `main`
   may have been rewritten.
+- A worktree whose `.git` file an agent rewrote to name another clone had the gate and the
+  guardrails read that clone's refs, history and HEAD, and the check for `core.worktree`
+  still passed. Factory now refuses to gate or guard a worktree unless git there reads the
+  task repo's own git dir, through a worktree the repo lists.
 
 ## [0.1.11] - 2026-10-05
 

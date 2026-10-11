@@ -120,6 +120,7 @@ on_work_branch() {
   WT=$REPO
   BASE=main
   BRANCH=work
+  TASK_REPO=$REPO
   record_base
 }
 
@@ -1742,6 +1743,32 @@ IN
   [[ $output != *rebasing* ]]
 }
 
+@test "the gate and the guardrails refuse a worktree whose git reads another clone, or one its repo does not list" {
+  local admin
+  make_repo
+  task_opened
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
+  git -C "$TMP/wt-9" commit -qam "relax the gate"
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam "an honest change"
+  # a clone whose main has the first commit already, with the branch in a worktree of its own,
+  # and the task's worktree pointed at that
+  git clone -q "$REPO" "$TMP/decoy"
+  git -C "$TMP/decoy" update-ref refs/heads/main origin/factory/toy-9~1
+  git -C "$TMP/decoy" worktree add -q -b factory/toy-9 "$TMP/decoy-wt" origin/factory/toy-9
+  admin=$(git -C "$TMP/wt-9" rev-parse --absolute-git-dir)
+  printf 'gitdir: %s\n' "$(git -C "$TMP/decoy-wt" rev-parse --absolute-git-dir)" >"$TMP/wt-9/.git"
+  run gate_then_guards builder 1
+  [ "$status" -eq 1 ]
+  [[ $output == *"git in $TMP/wt-9 reads another repository than $REPO"* ]]
+  # the repo's own git dir, through a worktree entry that names another checkout
+  printf 'gitdir: %s\n' "$admin" >"$TMP/wt-9/.git"
+  printf '%s/.git\n' "$TMP/elsewhere" >"$admin/gitdir"
+  run gate_then_guards builder 1
+  [ "$status" -eq 1 ]
+  [[ $output == *"$TMP/wt-9 is no worktree that $REPO lists"* ]]
+}
+
 @test "build approval: a approves; r and the reject file hand the note back with 4" {
   make_repo
   printf 'echo more\n' >>"$REPO/run.sh"
@@ -2022,8 +2049,8 @@ IN
   REVIEW_AGENT=codex PLAN_AGENT=planner BUILD_AGENT=builder
   FACTORY_ROUNDS=1
   mkdir -p "$TMP/.factory/run"
-  run_gate() { :; }
-  guard_check() { :; }
+  gate_branch() { :; }
+  guard_branch() { :; }
   task_base() { printf main; }
   mark() { :; }
   ask() { printf 'asked %s: %.40s\n' "$1" "$2"; }

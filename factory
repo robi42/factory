@@ -1067,6 +1067,7 @@ base_ref() {
 record_base() {
   local ref sha
   [[ ! -s $TASK_STATE/base ]] || return 0
+  own_worktree
   ref=$(git -C "$WT" rev-parse --symbolic-full-name "$(base_ref)") || die "no base ref $BASE for $BRANCH"
   sha=$(git -C "$WT" merge-base "$ref" HEAD) || die "$BRANCH has no fork point from $ref to be measured from"
   mkdir -p "$TASK_STATE"
@@ -1085,16 +1086,45 @@ task_base() {
   printf '%s' "$sha"
 }
 
+# own_worktree: refuse to go on unless git, run in the worktree, reads the task repo's own git
+# dir, through a worktree that repo lists. Git finds the repository through the worktree's .git
+# file, which an agent can rewrite to name another clone: every check would then read that
+# clone's refs, history and HEAD.
+own_worktree() {
+  local common p listed=0
+  common=$(git -C "$TASK_REPO" rev-parse --path-format=absolute --git-common-dir) || die "$TASK_REPO is no git repository"
+  [[ $(git -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) -ef $common ]] \
+    || die "git in $WT reads another repository than $TASK_REPO, as its .git file names another: refusing to gate or guard it"
+  while IFS= read -r -d '' p; do
+    if [[ $p == "worktree "* && ${p#worktree } -ef $WT ]]; then listed=1; fi
+  done < <(git -C "$TASK_REPO" worktree list --porcelain -z)
+  ((listed)) || die "$WT is no worktree that $TASK_REPO lists: refusing to gate or guard it"
+}
+
+# gate_branch logfile: the gate, in the task's own worktree
+gate_branch() {
+  own_worktree
+  run_gate "$WT" "$GATE" "$1"
+}
+
+# guard_branch: the guardrails on the task's own worktree, the branch measured from its
+# recorded base. Prints the violations.
+guard_branch() {
+  local base
+  own_worktree
+  base=$(task_base) || exit 1
+  guard_check "$WT" "$base"
+}
+
 # gate_then_guards builder-agent label: gate with one fix round, then guardrails. 1 on failure.
 gate_then_guards() {
   local agent=$1 gate_log="$WT/$RUN_DIR/gate-$2.log"
-  if ! run_gate "$WT" "$GATE" "$gate_log"; then
+  if ! gate_branch "$gate_log"; then
     ask "$agent" "$(gate_fix_prompt "$gate_log")"
-    run_gate "$WT" "$GATE" "$gate_log" || return 1
+    gate_branch "$gate_log" || return 1
   fi
-  local violations base
-  base=$(task_base) || exit 1
-  if ! violations=$(guard_check "$WT" "$base"); then
+  local violations
+  if ! violations=$(guard_branch); then
     warn "guardrails failed after $2:"
     printf '%s\n' "$violations" >&2
     return 1
@@ -1847,17 +1877,18 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
 }
 
 # -------------------------------------------------------------- pipeline ----
-# Shared task state: setup_task sets TASK_ID TASK_TITLE TASK_DESC TASK_STATE GATE BASE BRANCH
-#   MEMORY and PLAN_AGENT BUILD_AGENT REVIEW_AGENT; open_task_workspace sets WS WT BUILD_PANE;
-#   build_phase (run_task on resume) sets ROUND VERDICT GATE_LOG; HUMAN_NOTE, COPILOT_NOTE and
-#   STEP pass between the human gates, the Copilot loop and on_interrupt.
+# Shared task state: setup_task sets TASK_ID TASK_TITLE TASK_DESC TASK_REPO TASK_STATE GATE BASE
+#   BRANCH MEMORY and PLAN_AGENT BUILD_AGENT REVIEW_AGENT; open_task_workspace sets WS WT
+#   BUILD_PANE; build_phase (run_task on resume) sets ROUND VERDICT GATE_LOG; HUMAN_NOTE,
+#   COPILOT_NOTE and STEP pass between the human gates, the Copilot loop and on_interrupt.
 
-# task_context repo: from TASK_ID and TASK_TITLE, derive TASK_STATE GATE BASE BRANCH and the
-# agent names. The base is the branch the checkout is on as the task starts, recorded in its run
-# dir (open_task_workspace); a rerun keeps it whatever branch the checkout is on by then, and
-# --fresh, starting the task over, takes the checkout's anew.
+# task_context repo: from TASK_ID and TASK_TITLE, derive TASK_REPO TASK_STATE GATE BASE BRANCH
+# and the agent names. The base is the branch the checkout is on as the task starts, recorded in
+# its run dir (open_task_workspace); a rerun keeps it whatever branch the checkout is on by then,
+# and --fresh, starting the task over, takes the checkout's anew.
 task_context() {
   local slug wt recorded
+  TASK_REPO=$1
   TASK_STATE=$(task_state "$1" "$TASK_ID")
   GATE=$(resolve_gate "$1")
   BASE=$(git -C "$1" rev-parse --abbrev-ref HEAD)
@@ -2162,12 +2193,12 @@ build_phase() {
   VERDICT=""
   while ((ROUND <= limit)); do
     GATE_LOG="$WT/$RUN_DIR/gate-$ROUND.log"
-    if ! run_gate "$WT" "$GATE" "$GATE_LOG"; then
+    if ! gate_branch "$GATE_LOG"; then
       ask "$BUILD_AGENT" "$(gate_fix_prompt "$GATE_LOG")"
       ROUND=$((ROUND + 1))
       continue
     fi
-    if ! violations=$(guard_check "$WT" "$(task_base)"); then
+    if ! violations=$(guard_branch); then
       warn "guardrails: $violations"
       ask "$BUILD_AGENT" "$(guard_fix_prompt "$violations")"
       ROUND=$((ROUND + 1))
@@ -2210,7 +2241,7 @@ finish_task() {
   local repo=$1 pr="" next="merge $BRANCH" copilot=""
   local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}"
   ask "$BUILD_AGENT" "$(memory_prompt)"
-  if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_check "$WT" "$(task_base)" >/dev/null; then
+  if [[ $VERDICT != APPROVE ]] || [[ ! -f $GATE_LOG ]] || ! guard_branch >/dev/null; then
     bd_note "$repo" "$TASK_ID" "needs a human. $summary"
     toast "$TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
     warn "needs a human: $summary"

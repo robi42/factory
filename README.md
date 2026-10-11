@@ -346,7 +346,10 @@ after the gate passes and before review. They read the branch from the commit it
 from, which Factory records when it opens the task's worktree and moves only when it
 rebases the branch itself, before a pull request: never from where `main` or `origin/main`
 is now, which an agent can move, and your `main` with it. A base ref that no longer holds
-the recorded commit stops the run, as your `main` may have been rewritten.
+the recorded commit stops the run, as your `main` may have been rewritten. Before the gate
+and the guardrails, Factory also checks that git in the worktree reads the task repo's own
+git dir, through a worktree the repo lists: the worktree's `.git` file, which an agent can
+rewrite, could name another clone, whose refs and history every check would read instead.
 
 - No added lines matching `guardrails.txt`: suppressions such as `noqa`, `type: ignore`,
   `eslint-disable`, `shellcheck disable`; skipped tests; `|| true`. Adapted from
