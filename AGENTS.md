@@ -26,3 +26,5 @@ Code and Codex sessions in Herdr panes, with Beads for tasks and mechanical guar
 - Never add a suppression comment; fix the finding or restructure so the checker agrees.
 - Keep prompts short and mechanical checks strict; a new step must earn its place on a
   real task before it stays.
+- A user-visible change gets an entry under `[Unreleased]` in `CHANGELOG.md`: what was
+  wrong, what happens now. A release bumps `FACTORY_VERSION` in `factory`.

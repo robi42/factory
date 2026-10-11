@@ -73,7 +73,7 @@ usage() {
   row '  flags: --pr, --auto, --no-copilot, --fresh' 'open a PR; skip both approvals; no Copilot review; do not resume'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory tasks   <repo> [--all]' 'open tasks in the order next takes them; args (--all) go to bd list'
-  row 'factory sync    <repo>' 'pull, then push the beads database to its git remote'
+  row 'factory sync    <repo>' 'pull, then push the Beads database to its git remote'
   row 'factory init    <repo> [bd init args...]' 'lean bd init with a short prefix, detect the gate, AGENTS.md stub'
   row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the plan or build; --allow-protected (plan only) waives protected paths'
   row "factory reject  <repo> <bead-id> '<note>'" 'send a note back; the plan or build comes back revised'
@@ -82,9 +82,9 @@ usage() {
   row 'factory pr      <repo> <bead-id> [--no-copilot]' 'check, push an existing task branch and open a pull request'
   row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
   row 'factory check   <worktree> <base>' 'run gate + guardrails on a branch, no agents'
-  row 'factory status' 'live factory agents in Herdr'
+  row 'factory status' 'live Factory agents in Herdr'
   row 'factory doctor' 'check prerequisites'
-  row 'factory --version' 'print the version'
+  row 'factory help | --version' 'this help; the version'
   printf '\nknobs (env, or the repo'"'"'s .factory/env; current values):\n'
   row "FACTORY_PLAN_MODEL=$FACTORY_PLAN_MODEL" 'planner (Claude Code)'
   row "FACTORY_BUILD_MODEL=$FACTORY_BUILD_MODEL" 'builder (Claude Code)'
@@ -2032,7 +2032,7 @@ file_answer() {
   if [[ -e $dir/aborted ]]; then
     rm -f "$dir/aborted" "$dir/waiting"
     printf '\n' >&2
-    log "aborted in a pane or with fy abort"
+    log "aborted in a pane or with factory abort"
     record_answer "$dir" "$role aborted"
     return 3
   fi
@@ -2041,7 +2041,7 @@ file_answer() {
     rm -f "$dir/reject.md"
     close_gate "$role" "$dir" "$agent"
     printf '\n' >&2
-    log "note received from a pane or fy reject"
+    log "note received from a pane or factory reject"
     record_answer "$dir" "note on the $role: $note"
     pause_for_pane_reply
     take_note "$role" "$agent" "$note" || return $?
@@ -2050,7 +2050,7 @@ file_answer() {
   if [[ -e $dir/approved ]]; then
     rm -f "$dir/approved" "$dir/waiting"
     printf '\n' >&2
-    log "approved in a pane or with fy approve"
+    log "approved in a pane or with factory approve"
     if [[ $role == plan ]] && waived; then
       record_answer "$dir" "plan approved, protected paths allowed"
     else

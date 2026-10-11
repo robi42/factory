@@ -810,7 +810,7 @@ context_of() {
   }
   run human_gate plan planner "$TMP" <<<$'y\nn\nr\n'
   [ "$status" -eq 0 ]
-  [[ $output == *"a, p, r or b?"*"a, p, r or b?"*"gate while typing: typing"*"a, p, r or b?"*"gate after the note: plan"*"approved in a pane or with fy approve"* ]]
+  [[ $output == *"a, p, r or b?"*"a, p, r or b?"*"gate while typing: typing"*"a, p, r or b?"*"gate after the note: plan"*"approved in a pane or with factory approve"* ]]
   [ "$(grep -c 'plan for toy-1' <<<"$output")" -eq 1 ]
   # a pane's answer that came in while the terminal waited for its key goes before that r
   read() { # every read in the script passes -r first
@@ -824,7 +824,7 @@ context_of() {
   run human_gate plan planner "$TMP" <<<$'r\nsplit it\na'
   unset -f read
   [ "$status" -eq 0 ]
-  [[ $output == *"approved in a pane or with fy approve"* ]]
+  [[ $output == *"approved in a pane or with factory approve"* ]]
   [[ $output != *"note for the planner"* ]]
 }
 
@@ -1025,9 +1025,9 @@ context_of() {
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 0 ]
-  [[ $output == *"note received from a pane or fy reject"*"pause for the reply, gate note"*"asked planner: "*"too big, split it"*"gate in the round: note"* ]]
+  [[ $output == *"note received from a pane or factory reject"*"pause for the reply, gate note"*"asked planner: "*"too big, split it"*"gate in the round: note"* ]]
   # the plan comes back after the note, and with it where to answer
-  [[ $output == *"note received from a pane or fy reject"*"plan for toy-1"*"no terminal to answer from; waiting for your answer in one of the task's panes: !fy approve, !fy reject '<note>' or !fy abort"*"approved in a pane or with fy approve"*"pause for the reply, gate closed" ]]
+  [[ $output == *"note received from a pane or factory reject"*"plan for toy-1"*"no terminal to answer from; waiting for your answer in one of the task's panes: !fy approve, !fy reject '<note>' or !fy abort"*"approved in a pane or with factory approve"*"pause for the reply, gate closed" ]]
   [ "$(cat "$TMP/recorded")" = $'note on the plan: too big, split it\nplan approved' ]
   [ "$(grep -c 'no terminal to answer from' <<<"$output")" -eq 2 ]
   [ ! -e "$TMP/approved" ]
@@ -1047,7 +1047,7 @@ context_of() {
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 3 ]
-  [[ $output == *"aborted in a pane or with fy abort"* ]]
+  [[ $output == *"aborted in a pane or with factory abort"* ]]
   [ "$(cat "$TMP/seen")" = "plan $$" ]
   [ ! -e "$TMP/waiting" ]
   [ ! -e "$TMP/aborted" ]
