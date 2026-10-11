@@ -12,10 +12,12 @@ an image, a PDF, a font, an archive, audio or video fails the branch; and a subm
 added or moved, a symlink to a place git does not show, or an ignored file at a protected
 path fails it whatever you waive. A typo in a knob now stops the run instead of being
 read as something else. The agents may no longer run `git push`, `gh` or Factory itself.
-A task 0.1.x started resumes where it was, but a waiver 0.1.x kept in its run dir fails
-the guardrails: remove `.factory/run/allow-protected` and waive again at the plan's
-approval, or rerun with `--fresh`. A build 0.1.x approved goes through one more round of
-gate, reviews and your approval, as 0.1.x recorded no check of it.
+A task 0.1.x started stops at its rerun on the files 0.1.x kept in its run dir, which
+Factory reads from there no longer: move `.factory/run/state` to the task's state dir, as
+the message says, for the task to resume where it was, remove the others, and waive the
+protected paths again at the plan's approval if you had, or rerun with `--fresh`. A build
+0.1.x approved goes through one more round of gate, reviews and your approval, as 0.1.x
+recorded no check of it.
 
 ### Added
 - The approvals ask you in a question dialog in the agent's pane, the planner's for the
@@ -208,6 +210,15 @@ gate, reviews and your approval, as 0.1.x recorded no check of it.
   every other file's lines are checked all the same.
 - A committed build artifact slipped past the build-artifact check when git read it as a
   rename of a deleted file of like content. A rename no longer hides one.
+- An agent could approve its own plan or build, abort it, hand the planner a note as yours,
+  or have a rerun skip the reviews: the gate's answers (`approved`, `reject.md`,
+  `aborted`) and what it waits for (`waiting`) were files in the run dir, which the agents
+  write, a resume point there (`state`, such as `built 1`) was taken for Factory's own
+  when the task had no base recorded, and the planner's `tree-at-answer` there excused
+  whatever changes it listed as yours. Factory now keeps all of them in its own state for
+  the task, which only it, your `fy approve`, `reject` and `abort`, and the dialogs' hooks
+  write. A file in the run dir by one of those names stops the next run before any agent
+  works, and fails the guardrails: only an agent would put it there.
 - A builder could waive its own protected-path check: the waiver was a file in the run
   dir, which the agents write, and the pull request then recorded it as yours. Factory now
   keeps your waiver in its own state for the task, under

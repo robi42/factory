@@ -90,6 +90,12 @@ task_opened() {
   run_gate() { :; }
 }
 
+# as_task bead-id: TASK_ID and TASK_STATE, as a run of that task in REPO has them
+as_task() {
+  TASK_ID=$1
+  TASK_STATE=$(task_state "$REPO" "$1")
+}
+
 # waive: the human's waiver of the protected-path check, where Factory keeps it for the run
 waive() { mkdir -p "$TASK_STATE" && : >"$TASK_STATE/allow-protected"; }
 
@@ -105,20 +111,21 @@ plan_ready() {
   fake_task
   FACTORY_APPROVAL=ask
   WT=$TMP
+  mkdir -p "$TASK_STATE" # where the gate takes its answers
   printf 'the plan\n' >"$TMP/plan.md"
   planner_kept_hands_off() { :; }
   tree_state() { :; } # its snapshot of the tree, which is no git repo here
   plan_round() { printf 'plan round %s on the note: %s\n' "$1" "$2"; }
 }
 
-# gate_opens [kind]: wait until the gate in $TMP listens for the plan (or the build), as a
+# gate_opens [kind]: wait until the gate in $TASK_STATE listens for the plan (or the build), as a
 # human in a pane would: an answer sent before would be one the gate drops as stale. After a
 # minute it gives up and lets the answer go, so that a gate that never opens fails its test
 # instead of hanging it; on a busy machine a gate can take many seconds to open.
 gate_opens() {
   local _
   for _ in $(seq 600); do
-    grep -qs "^${1:-plan} " "$TMP/waiting" && return 0
+    grep -qs "^${1:-plan} " "$TASK_STATE/waiting" && return 0
     sleep 0.1
   done
 }
@@ -792,10 +799,10 @@ context_of() {
   FACTORY_APPROVAL=ask
   ask() {
     printf 'asked %s: %s\n' "$1" "$2"
-    printf 'gate in the round: %s\n' "$(gate_waiting "$TMP" || printf closed)"
+    printf 'gate in the round: %s\n' "$(gate_waiting "$TASK_STATE" || printf closed)"
   }
   role_of() { # the note prompt: the panes are told the terminal has the answer
-    printf 'gate while typing: %s\n' "$(gate_waiting "$TMP" || printf closed)" >&2
+    printf 'gate while typing: %s\n' "$(gate_waiting "$TASK_STATE" || printf closed)" >&2
     printf planner
   }
   run human_gate plan planner "$TMP" <<<$'r\nsplit the module\na'
@@ -805,8 +812,8 @@ context_of() {
   # only the keys shown mean anything: y, n and an empty note ask again, without re-rendering;
   # after the empty note the gate listens to the panes again
   no_terminal_hint() { # the terminal is gone; a pane answers
-    printf 'gate after the note: %s\n' "$(gate_waiting "$TMP" || printf closed)" >&2
-    : >"$TMP/approved"
+    printf 'gate after the note: %s\n' "$(gate_waiting "$TASK_STATE" || printf closed)" >&2
+    : >"$TASK_STATE/approved"
   }
   run human_gate plan planner "$TMP" <<<$'y\nn\nr\n'
   [ "$status" -eq 0 ]
@@ -816,7 +823,7 @@ context_of() {
   read() { # every read in the script passes -r first
     if [[ $* == "-r -t "* && ! -e $TMP/seeded ]]; then
       : >"$TMP/seeded"
-      : >"$TMP/approved"
+      : >"$TASK_STATE/approved"
     fi
     shift
     builtin read -r "$@"
@@ -830,15 +837,15 @@ context_of() {
 
 @test "an approval gate opens afresh: answers left from before go, and a plan waiver with them" {
   plan_ready
-  printf 'stale\n' >"$TMP/reject.md"
-  : >"$TMP/aborted"
-  : >"$TMP/approved"
+  printf 'stale\n' >"$TASK_STATE/reject.md"
+  : >"$TASK_STATE/aborted"
+  : >"$TASK_STATE/approved"
   waive
   run human_gate plan planner "$TMP" <<<"a"
   [ "$status" -eq 0 ]
   [[ $output != *"via file"* ]]
-  [ ! -e "$TMP/reject.md" ]
-  [ ! -e "$TMP/aborted" ]
+  [ ! -e "$TASK_STATE/reject.md" ]
+  [ ! -e "$TASK_STATE/aborted" ]
   [ ! -e "$TASK_STATE/allow-protected" ]
 }
 
@@ -993,7 +1000,7 @@ context_of() {
   hint_marked
   (
     hint_seen
-    : >"$TMP/approved"
+    : >"$TASK_STATE/approved"
   ) 3>&- &
   run human_gate plan planner "$TMP" </dev/null
   wait
@@ -1008,19 +1015,19 @@ context_of() {
   FACTORY_POLL_SECONDS=0.1
   ask() { # the note's turn: the gate is closed meanwhile, and an approval sent anyway is dropped
     printf 'asked %s: %s\n' "$1" "$2"
-    printf 'gate in the round: %s\n' "$(gate_waiting "$TMP" || printf closed)"
-    : >"$TMP/approved"
+    printf 'gate in the round: %s\n' "$(gate_waiting "$TASK_STATE" || printf closed)"
+    : >"$TASK_STATE/approved"
     ( # the human approves once the plan is back; had the gate taken the approval above, this one would be left over
       gate_opens
-      : >"$TMP/approved"
+      : >"$TASK_STATE/approved"
     ) >/dev/null 2>&1 3>&- &
   }
-  pause_for_pane_reply() { printf 'pause for the reply, gate %s\n' "$(gate_waiting "$TMP" || printf closed)"; }
+  pause_for_pane_reply() { printf 'pause for the reply, gate %s\n' "$(gate_waiting "$TASK_STATE" || printf closed)"; }
   # the human's reject arrives once the factory waits and has said where to answer
   hint_marked
   (
     hint_seen
-    printf 'too big, split it\n' >"$TMP/reject.md"
+    printf 'too big, split it\n' >"$TASK_STATE/reject.md"
   ) 3>&- &
   run human_gate plan planner "$TMP" </dev/null
   wait
@@ -1030,76 +1037,79 @@ context_of() {
   [[ $output == *"note received from a pane or factory reject"*"plan for toy-1"*"no terminal to answer from; waiting for your answer in one of the task's panes: !fy approve, !fy reject '<note>' or !fy abort"*"approved in a pane or with factory approve"*"pause for the reply, gate closed" ]]
   [ "$(cat "$TMP/recorded")" = $'note on the plan: too big, split it\nplan approved' ]
   [ "$(grep -c 'no terminal to answer from' <<<"$output")" -eq 2 ]
-  [ ! -e "$TMP/approved" ]
-  [ ! -e "$TMP/waiting" ]
+  [ ! -e "$TASK_STATE/approved" ]
+  [ ! -e "$TASK_STATE/waiting" ]
   # the gate names itself and this run while it waits; an abort file ends it with 3
   (
     gate_opens
-    if [[ -e $TMP/waiting ]]; then cp "$TMP/waiting" "$TMP/seen"; fi
-    : >"$TMP/aborted"
+    if [[ -e $TASK_STATE/waiting ]]; then cp "$TASK_STATE/waiting" "$TMP/seen"; fi
+    : >"$TASK_STATE/aborted"
     # a gate that ignores the abort is ended, so that a regression fails instead of hanging
     for _ in $(seq 1 100); do
-      if [[ ! -e $TMP/waiting ]]; then exit; fi
+      if [[ ! -e $TASK_STATE/waiting ]]; then exit; fi
       sleep 0.1
     done
-    : >"$TMP/approved"
+    : >"$TASK_STATE/approved"
   ) 3>&- &
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 3 ]
   [[ $output == *"aborted in a pane or with factory abort"* ]]
   [ "$(cat "$TMP/seen")" = "plan $$" ]
-  [ ! -e "$TMP/waiting" ]
-  [ ! -e "$TMP/aborted" ]
+  [ ! -e "$TASK_STATE/waiting" ]
+  [ ! -e "$TASK_STATE/aborted" ]
 }
 
 @test "approve, reject and abort find the task worktree and need a run waiting there" {
   make_repo
   task_worktree
   local run="$TMP/wt-9/.factory/run"
+  local st
+  st=$(task_state "$REPO" toy-9) # where the commands answer a waiting run
+  mkdir -p "$st"
   run cmd_approve "$REPO" toy-9
   [ "$status" -eq 1 ]
   [[ $output == *"nothing of toy-9 waits for approval"* ]]
-  [ ! -e "$run/approved" ]
-  printf 'plan %s\n' "$$" >"$run/waiting" # a live run at plan approval
+  [ ! -e "$st/approved" ]
+  printf 'plan %s\n' "$$" >"$st/waiting" # a live run at plan approval
   cmd_approve "$REPO" toy-9
-  [ -e "$run/approved" ]
+  [ -e "$st/approved" ]
   cmd_reject "$REPO" toy-9 "use argparse"
-  [ "$(cat "$run/reject.md")" = "use argparse" ]
+  [ "$(cat "$st/reject.md")" = "use argparse" ]
   run cmd_reject "$REPO" toy-9 " "
   [ "$status" -eq 1 ]
   [[ $output == *"empty note"* ]]
   cmd_abort "$REPO" toy-9
-  [ -e "$run/aborted" ]
-  rm -f "$run/approved" "$run/reject.md" "$run/aborted"
-  printf 'note %s\n' "$$" >"$run/waiting" # the review round after a plan note
+  [ -e "$st/aborted" ]
+  rm -f "$st/approved" "$st/reject.md" "$st/aborted"
+  printf 'note %s\n' "$$" >"$st/waiting" # the review round after a plan note
   for c in "cmd_approve $REPO toy-9" "cmd_reject $REPO toy-9 later" "cmd_abort $REPO toy-9"; do
     run $c
     [ "$status" -eq 1 ]
     [[ $output == *"the plan of toy-9 is in the review round after your note; answer once it is back"* ]]
   done
-  printf 'typing %s\n' "$$" >"$run/waiting" # a note typed at Factory's terminal
+  printf 'typing %s\n' "$$" >"$st/waiting" # a note typed at Factory's terminal
   for c in "cmd_approve $REPO toy-9" "cmd_reject $REPO toy-9 later" "cmd_abort $REPO toy-9"; do
     run $c
     [ "$status" -eq 1 ]
     [[ $output == *"Factory's terminal is taking a note on toy-9; finish it there"* ]]
   done
-  [ ! -e "$run/approved" ]
-  [ ! -e "$run/reject.md" ]
-  [ ! -e "$run/aborted" ]
-  printf 'build %s\n' "$$" >"$run/waiting"
+  [ ! -e "$st/approved" ]
+  [ ! -e "$st/reject.md" ]
+  [ ! -e "$st/aborted" ]
+  printf 'build %s\n' "$$" >"$st/waiting"
   run cmd_approve "$REPO" toy-9 --allow-protected
   [ "$status" -eq 1 ]
   [[ $output == *"--allow-protected is for the plan"* ]]
-  printf 'questions %s\n' "$$" >"$run/waiting" # questions wait, not an approval
+  printf 'questions %s\n' "$$" >"$st/waiting" # questions wait, not an approval
   run cmd_approve "$REPO" toy-9
   [ "$status" -eq 1 ]
   [[ $output == *"nothing of toy-9 waits for approval"* ]]
-  printf 'plan 999999999\n' >"$run/waiting" # a run that is gone
+  printf 'plan 999999999\n' >"$st/waiting" # a run that is gone
   run cmd_abort "$REPO" toy-9
   [ "$status" -eq 1 ]
   [[ $output == *"nothing of toy-9 waits for approval"* ]]
-  [ ! -e "$run/aborted" ]
+  [ ! -e "$st/aborted" ]
   run cmd_approve "$REPO" toy-404
   [ "$status" -eq 1 ]
   [[ $output == *"no worktree"* ]]
@@ -1122,6 +1132,9 @@ context_of() {
   task_worktree
   local run="$TMP/wt-9/.factory/run" opts='[{"label":"Approve"},{"label":"Approve, allow protected paths"},{"label":"Abort"}]'
   local q="Approve the plan for toy-9, or type a note to have it revised?"
+  local st
+  st=$(task_state "$REPO" toy-9) # where the commands answer a waiting run
+  mkdir -p "$st"
   hook() { # event [cwd] -> a hook's input with no answer in it
     jq -n --arg e "$1" --arg cwd "${2:-$TMP/wt-9}" --arg tp "$TMP/transcript.jsonl" \
       '{cwd: $cwd, hook_event_name: $e, tool_name: "AskUserQuestion", tool_use_id: "toolu_1", transcript_path: $tp}'
@@ -1139,8 +1152,8 @@ context_of() {
   printf 'id,n\n' >"$TMP/wt-9/sample.csv"
   CWD=$TMP/wt-9/src dialog Format "Which format?" '[{"label":"CSV"},{"label":"JSON"}]' CSV "keep the header" | cmd_dialog_hook plan toy-9 "$run"
   [ ! -e "$run/asking-plan" ]
-  [ ! -e "$run/tree-at-ask" ]
-  [ "$(cat "$run/tree-at-answer")" = "?? sample.csv" ]
+  [ ! -e "$st/tree-at-ask" ]
+  [ "$(cat "$st/tree-at-answer")" = "?? sample.csv" ]
   [ "$(cat "$TMP/recorded")" = "the planner asked: Which format? Answer: CSV Notes: keep the header" ]
   dialog Format "Which?" '[{"label":"CSV"}]' "(notes only)" "either works" | cmd_dialog_hook plan toy-9 "$run"
   [ "$(tail -1 "$TMP/recorded")" = "the planner asked: Which? Answer: (no option) Notes: either works" ]
@@ -1150,9 +1163,9 @@ context_of() {
   printf 'more\n' >"$TMP/wt-9/notes.txt"
   hook Stop | cmd_dialog_hook plan toy-9 "$run"
   [ ! -e "$run/asking-plan" ]
-  [ "$(tail -1 "$run/tree-at-answer")" = "?? notes.txt" ]
+  [ "$(tail -1 "$st/tree-at-answer")" = "?? notes.txt" ]
   git -C "$TMP/wt-9" checkout -q -- run.sh
-  rm -f "$TMP/wt-9/sample.csv" "$TMP/wt-9/notes.txt" "$run/tree-at-answer"
+  rm -f "$TMP/wt-9/sample.csv" "$TMP/wt-9/notes.txt" "$st/tree-at-answer"
   # the hook as Claude Code runs it, through main
   run main dialog-hook build toy-9 "$run" < <(hook PreToolUse)
   [ "$status" -eq 0 ]
@@ -1166,39 +1179,39 @@ context_of() {
   [[ $output == *"no run dir of a task for this dialog; the answer went to the agent only"* ]]
   [ ! -e "$TMP/gone" ]
   # Factory's own dialog, while the plan waits
-  printf 'plan %s\n' "$$" >"$run/waiting"
+  printf 'plan %s\n' "$$" >"$st/waiting"
   dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan toy-9 "$run"
-  [ -e "$run/approved" ]
+  [ -e "$st/approved" ]
   [ ! -e "$(task_state "$REPO" toy-9)/allow-protected" ]
-  rm -f "$run/approved"
+  rm -f "$st/approved"
   dialog "fy plan" "$q" "$opts" "Approve, allow protected paths" | cmd_dialog_hook plan toy-9 "$run"
-  [ -e "$run/approved" ]
+  [ -e "$st/approved" ]
   [ -e "$(task_state "$REPO" toy-9)/allow-protected" ]
   [ ! -e "$run/allow-protected" ]
-  rm -f "$run/approved" "$(task_state "$REPO" toy-9)/allow-protected"
+  rm -f "$st/approved" "$(task_state "$REPO" toy-9)/allow-protected"
   dialog "fy plan" "$q" "$opts" Abort | cmd_dialog_hook plan toy-9 "$run"
-  [ -e "$run/aborted" ]
-  rm -f "$run/aborted"
+  [ -e "$st/aborted" ]
+  rm -f "$st/aborted"
   local note=$'keep `x` as is, don\'t touch $HOME\nand split it'
   dialog "fy plan" "$q" "$opts" "$note" | cmd_dialog_hook plan toy-9 "$run"
-  [ "$(cat "$run/reject.md")" = "$note" ]
-  rm -f "$run/reject.md"
+  [ "$(cat "$st/reject.md")" = "$note" ]
+  rm -f "$st/reject.md"
   # a dialog for another gate, a closed gate, or a choice Factory did not offer: nothing sent
-  printf 'build %s\n' "$$" >"$run/waiting"
+  printf 'build %s\n' "$$" >"$st/waiting"
   run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" "$opts" Approve)
   [ "$status" -eq 1 ]
   [[ $output == *"that dialog was about the plan of toy-9, whose build waits now"* ]]
-  rm -f "$run/waiting"
+  rm -f "$st/waiting"
   run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" "$opts" Approve)
   [ "$status" -eq 1 ]
   [[ $output == *"nothing of toy-9 waits for approval"* ]]
-  printf 'plan %s\n' "$$" >"$run/waiting"
+  printf 'plan %s\n' "$$" >"$st/waiting"
   run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" '[{"label":"Approve"},{"label":"Maybe"}]' Maybe)
   [ "$status" -eq 1 ]
   [[ $output == *'choice "Maybe" is none Factory knows'* ]]
-  [ ! -e "$run/approved" ]
-  [ ! -e "$run/reject.md" ]
-  [ ! -e "$run/aborted" ]
+  [ ! -e "$st/approved" ]
+  [ ! -e "$st/reject.md" ]
+  [ ! -e "$st/aborted" ]
 }
 
 @test "record_answer: each answer goes into the run dir's decisions and onto the bead" {
@@ -1219,7 +1232,10 @@ context_of() {
   make_repo
   task_worktree
   local run="$TMP/wt-9/.factory/run"
-  printf 'plan %s\n' "$$" >"$run/waiting"
+  local st
+  st=$(task_state "$REPO" toy-9) # where the commands answer a waiting run
+  mkdir -p "$st"
+  printf 'plan %s\n' "$$" >"$st/waiting"
   cd "$TMP/wt-9"
   task_args use argparse
   [ "${TARGS[*]}" = "$REPO toy-9 use argparse" ]
@@ -1227,18 +1243,18 @@ context_of() {
   [ "${TARGS[*]}" = "$REPO toy-9 --allow-protected" ]
   run main approve --allow-protected
   [ "$status" -eq 0 ]
-  [ -e "$run/approved" ]
+  [ -e "$st/approved" ]
   [ -e "$(task_state "$REPO" toy-9)/allow-protected" ]
   run main reject use argparse, not getopt
-  [ "$(cat "$run/reject.md")" = "use argparse, not getopt" ]
+  [ "$(cat "$st/reject.md")" = "use argparse, not getopt" ]
   run main abort
-  [ -e "$run/aborted" ]
+  [ -e "$st/aborted" ]
   # a repo named with an id of another shape is an error, never a note for the task here
-  rm -f "$run/reject.md"
+  rm -f "$st/reject.md"
   run main reject "$REPO" my_repo-x7k use argparse
   [ "$status" -eq 1 ]
   [[ $output == *"my_repo-x7k is not a bead id Factory takes"* ]]
-  [ ! -e "$run/reject.md" ]
+  [ ! -e "$st/reject.md" ]
   cd "$REPO" # the repo's own checkout is no task's worktree
   run main approve
   [ "$status" -eq 1 ]
@@ -1799,12 +1815,14 @@ IN
 @test "approve --allow-protected and the p answer write the waiver, into Factory's state" {
   make_repo
   task_worktree
-  printf 'plan %s\n' "$$" >"$TMP/wt-9/.factory/run/waiting"
+  mkdir -p "$(task_state "$REPO" toy-9)"
+  printf 'plan %s\n' "$$" >"$(task_state "$REPO" toy-9)/waiting"
   cmd_approve "$REPO" toy-9 --allow-protected
   [[ $(task_state "$REPO" toy-9) == "$XDG_STATE_HOME/factory/tasks/repo-"*/toy-9 ]]
   [ -e "$(task_state "$REPO" toy-9)/allow-protected" ]
   [ ! -e "$TMP/wt-9/.factory/run/allow-protected" ]
-  [ -e "$TMP/wt-9/.factory/run/approved" ]
+  [ -e "$(task_state "$REPO" toy-9)/approved" ]
+  [ ! -e "$TMP/wt-9/.factory/run/approved" ]
   plan_ready
   human_gate plan planner "$TMP" <<<"p"
   [ -e "$TASK_STATE/allow-protected" ]
@@ -1823,7 +1841,7 @@ IN
   [[ $output == *".factory/run/allow-protected found: a waiver there can only be an agent's"* ]]
   # the human's, from fy approve, holds in the run and in fy check
   rm "$TMP/wt-9/$RUN_DIR/allow-protected"
-  printf 'plan %s\n' "$$" >"$TMP/wt-9/$RUN_DIR/waiting"
+  printf 'plan %s\n' "$$" >"$(task_state "$REPO" toy-9)/waiting"
   cmd_approve "$REPO" toy-9 --allow-protected
   run gate_then_guards builder 1
   [ "$status" -eq 0 ]
@@ -1838,6 +1856,48 @@ IN
   run guard_check "$TMP/wt-9" main
   [ "$status" -eq 1 ]
   [[ $output == *".factory/run/allow-protected found"* ]]
+}
+
+@test "an answer, a resume point or a tree an agent leaves in the run dir decides nothing, and the next run stops on it" {
+  make_repo
+  task_opened
+  # the planner changes code and lists the change as the human's, made while it asked
+  ask() {
+    printf 'echo planned\n' >"$TMP/wt-9/run.sh"
+    printf ' M run.sh\n' >"$TMP/wt-9/$RUN_DIR/tree-at-answer"
+  }
+  run planner_turn planner "plan it"
+  [ "$status" -eq 1 ]
+  [[ $output == *"the planner left changes"* ]]
+  git -C "$TMP/wt-9" checkout -q -- run.sh
+  # the next run stops on it before any agent works, as on a resume point that skips the reviews
+  run open_task_workspace "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"$TMP/wt-9 holds .factory/run/tree-at-answer: Factory keeps your answers"* ]]
+  rm "$TMP/wt-9/$RUN_DIR/tree-at-answer"
+  printf 'built 1\n' >"$TMP/wt-9/$RUN_DIR/state"
+  rm "$TASK_STATE/base"
+  run open_task_workspace "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"holds .factory/run/state"* ]]
+  [ ! -e "$TASK_STATE/state" ]
+  # and the guardrails, as on the waiver
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam work
+  : >"$TMP/wt-9/$RUN_DIR/approved"
+  run guard_check "$TMP/wt-9" main
+  [ "$status" -eq 1 ]
+  [[ $output == *".factory/run/approved found"*".factory/run/state found"* ]]
+  # the builder answers the plan's gate in the run dir as the gate opens; the human's answer counts
+  plan_ready
+  show_dialog() { : >"$TMP/approved"; }
+  run human_gate plan planner "$TMP" <<<"b"
+  [ "$status" -eq 3 ]
+  [[ $output != *"approved in a pane"* ]]
+  show_dialog() { : >"$TMP/aborted"; }
+  run human_gate plan planner "$TMP" <<<"a"
+  [ "$status" -eq 0 ]
+  [[ $output != *"aborted in a pane"* ]]
 }
 
 @test "the guardrails measure the branch from the base recorded with its worktree, not from where main is now" {
@@ -1969,9 +2029,9 @@ IN
   [ "$HUMAN_NOTE" = "rename it" ]
   (
     gate_opens build
-    printf 'use a table\n' >"$TMP/reject.md"
+    printf 'use a table\n' >"$TASK_STATE/reject.md"
   ) 3>&- &
-  pause_for_pane_reply() { gate_waiting "$TMP" >"$TMP/paused" || printf closed >"$TMP/paused"; }
+  pause_for_pane_reply() { gate_waiting "$TASK_STATE" >"$TMP/paused" || printf closed >"$TMP/paused"; }
   rc=0
   human_gate build builder "$TMP" </dev/null || rc=$?
   wait
@@ -2049,6 +2109,7 @@ IN
   make_repo
   task_worktree
   fake_task
+  as_task toy-9 # whose state its dialogs' hook records what the human changed in
   WT=$TMP/wt-9
   TASK_DESC="" GATE=true MEMORY=""
   hook() {
@@ -3108,7 +3169,8 @@ JSON
   : >"$tp" # the dead session's: the call, never its result
   printf 'toolu_1\t%s\n' "$tp" >"$run/asking-plan"
   printf 'toolu_2\t%s\n' "$tp" >"$run/asking-build"
-  : >"$run/tree-at-ask"
+  mkdir -p "$TASK_STATE"
+  : >"$TASK_STATE/tree-at-ask"
   herdr() {
     case "$*" in
       "agent list"*) printf '{"result":{"agents":[]}}' ;;
@@ -3123,8 +3185,8 @@ JSON
   run start_or_adopt_agents "$TMP/repo"
   [ "$status" -eq 0 ]
   [ "$(paste -sd, "$TMP/started")" = toy-1-plan,toy-1-build,toy-1-review ]
-  for f in asking-plan asking-build tree-at-ask; do
-    [ ! -e "$run/$f" ]
+  for f in "$run/asking-plan" "$run/asking-build" "$TASK_STATE/tree-at-ask"; do
+    [ ! -e "$f" ]
   done
   # the task's live agents are adopted with their questions, which may still be open
   printf 'toolu_1\t%s\n' "$tp" >"$run/asking-plan"

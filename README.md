@@ -283,24 +283,28 @@ closed, Factory checks that origin's copy of the branch is the commit it pushed.
 They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
 `decisions.md` (your answers, with the time), `hooks-plan.json` and `hooks-build.json`
 (the agents' settings: the dialog hooks, which keep `asking-plan` or `asking-build` while
-a dialog is open, and the planner's `tree-at-ask` and `tree-at-answer`, and what the agents
-may not run), `plan-review-N.md` (Codex), `plan-review-N-build.md` (builder),
+a dialog is open, and what the agents may not run), `plan-review-N.md` (Codex),
+`plan-review-N-build.md` (builder),
 `review-N.md` (Codex), `review-N-plan.md` (planner), `response-N.md` (builder's
 pushback), `plan-changes.md` (what the planner changed after your note; shown once at the
 approval prompt, then removed), `copilot-N.md` and `copilot-N-response.md` (Copilot's
 comments and the builder's pushback), `gate-N.log` (also `gate-pr.log` and
-`gate-copilot-N.log`), `waiting` (what the run waits for, while it waits), `approved`,
-`reject.md` or `aborted` (an answer from a dialog or `fy approve`, `reject` or `abort`,
-until the gate takes it), and `env.sh` (the PATH the panes' shells start with).
+`gate-copilot-N.log`), and `env.sh` (the PATH the panes' shells start with).
 
 The agents write the worktree, so what only you and Factory decide is kept out of it, in
 Factory's own state for the task under `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`:
-`state`, where a rerun resumes (`--fresh` clears it); `allow-protected`, your waiver of
-the protected-path check; `base`, the commit the branch is measured from and the base
-branch it was read from, which a rerun keeps, and `origin`, the URL that base is fetched
-from; `gated` and `guarded`, the commits the gate and then the guardrails last passed on,
-and `pushed`, the one Factory last pushed; `exclude`, a hash of the repo's
-`info/exclude`. `fy clean` removes it with the task.
+`state`, where a rerun resumes (`--fresh` clears it); `waiting`, what the run waits for at
+a gate, while it waits, and `approved`, `reject.md` or `aborted`, an answer from a dialog
+or `fy approve`, `reject` or `abort`, until the gate takes it; `allow-protected`, your
+waiver of the protected-path check; the planner's `tree-at-ask` and `tree-at-answer`,
+what you changed while its question dialog was open; `base`, the commit the branch is
+measured from and the base branch it was read from, which a rerun keeps, and `origin`, the
+URL that base is fetched from; `gated` and `guarded`, the commits the gate and then the
+guardrails last passed on, and `pushed`, the one Factory last pushed; `exclude`, a hash
+of the repo's `info/exclude`. A file in the run dir by one of the names Factory kept
+there before (`approved`, `reject.md`, `aborted`, `allow-protected`, `state`,
+`tree-at-ask`, `tree-at-answer`) counts for nothing, stops the next run and fails the
+guardrails: only an agent would put one there. `fy clean` removes it with the task.
 
 ## The gate
 
@@ -421,7 +425,8 @@ rewrite, could name another clone, whose refs and history every check would read
   protected paths, or `fy approve <repo> <bead-id> --allow-protected`), which Factory keeps
   in its own state, where the agents do not write; the pull request body records it. An
   `allow-protected` file in the run dir, where the waiver used to be, waives nothing and
-  fails the guardrails: only an agent would put one there.
+  fails the guardrails: only an agent would put one there; so does an answer or a resume
+  point there (see Run artifacts).
 - No ignored file at a protected path, waiver or not: git leaves it out of the branch and
   its diff, but the gate reads it, as mise reads an ignored `.mise.local.toml` in a repo
   that protects mise's configs. Factory's own `.factory/run/` is exempt, and so is your
