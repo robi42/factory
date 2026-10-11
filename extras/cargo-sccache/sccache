@@ -7,13 +7,17 @@
 # The compiler runs alone, without the cache, when no sccache but this file is on the PATH,
 # and when CODEX_SANDBOX_NETWORK_DISABLED is set: Codex's sandbox denies the connection to
 # sccache's server, and sccache then fails the compile instead of running it.
+# Every sccache on the PATH is read before the first other than this file is taken: a loop
+# that stopped reading early would leave type writing into a closed pipe, which, with SIGPIPE
+# ignored as mise exec leaves it, prints an error on the compile's stderr.
 real=""
-while IFS= read -r found; do
-  if [[ ! $found -ef ${BASH_SOURCE[0]} ]]; then
-    real=$found
+mapfile -t found < <(type -aP sccache)
+for f in "${found[@]}"; do
+  if [[ ! $f -ef ${BASH_SOURCE[0]} ]]; then
+    real=$f
     break
   fi
-done < <(type -aP sccache)
+done
 if [[ -z $real || -n ${CODEX_SANDBOX_NETWORK_DISABLED:-} ]]; then
   (($#)) || exit 2
   exec -- "$@"

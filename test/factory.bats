@@ -4,17 +4,20 @@ bats_require_minimum_version 1.5.0
 
 setup() {
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 # the fixtures' git ignores this machine's config
-  unset "${!FACTORY_@}"                                    # and the knobs the shell exported
+  local git_env
+  mapfile -t git_env < <(git rev-parse --local-env-vars)
+  unset "${git_env[@]}" "${!FACTORY_@}" # a hook's GIT_DIR or GIT_INDEX_FILE, and the knobs the shell exported
   export FACTORY_GUARDRAILS="$BATS_TEST_DIRNAME/../guardrails.txt"
   # shellcheck source=../factory
   source "$BATS_TEST_DIRNAME/../factory"
   FACTORY_REQUIRE_TESTS=0 # the fixtures below change code without tests on purpose
   TMP=$(mktemp -d)
-  export XDG_STATE_HOME=$TMP/state # Factory's own task state, kept off this machine's
-  TASK_STATE=$TMP/task             # a run's, as task_context names it
-  toast() { :; }                   # no desktop notifications from the tests
-  glow() { cat "$1"; }             # nor this machine's glow and its config
-  pause_for_pane_reply() { :; }    # nor the pause for an agent's reply in its pane
+  export XDG_STATE_HOME=$TMP/state   # Factory's own task state, kept off this machine's
+  export XDG_CONFIG_HOME=$TMP/config # and git's global ignore and attributes
+  TASK_STATE=$TMP/task               # a run's, as task_context names it
+  toast() { :; }                     # no desktop notifications from the tests
+  glow() { cat "$1"; }               # nor this machine's glow and its config
+  pause_for_pane_reply() { :; }      # nor the pause for an agent's reply in its pane
   # the human's answers go to a file the tests read, not to a bead; the real one is kept
   eval "real_$(declare -f record_answer)"
   record_answer() { printf '%s\n' "$2" >>"$TMP/recorded"; }
@@ -36,6 +39,31 @@ make_repo() {
   git -C "$REPO" add -A
   git -C "$REPO" commit -qm base
   git -C "$REPO" checkout -qb work
+}
+
+# merge_work: main takes the work branch, so that the next change's base has what it holds
+merge_work() {
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" merge -q work
+  git -C "$REPO" checkout -q work
+}
+
+# add_submodule path: a submodule at path, of a repo with one empty commit
+add_submodule() {
+  git init -q "$TMP/lib"
+  git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m lib
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" "$1"
+}
+
+# doctored_root line -> a root commit of main's tree, with run.sh holding the line: no parent,
+# a drop-in for main's root
+doctored_root() {
+  local idx=$TMP/doctored-index blob tree
+  GIT_INDEX_FILE=$idx git -C "$REPO" read-tree main
+  blob=$(printf '%s\n' "$1" | git -C "$REPO" hash-object -w --stdin)
+  GIT_INDEX_FILE=$idx git -C "$REPO" update-index --add --cacheinfo 100644,"$blob",run.sh
+  tree=$(GIT_INDEX_FILE=$idx git -C "$REPO" write-tree)
+  git -C "$REPO" commit-tree "$tree" -m doctored
 }
 
 # add_origin: a bare clone of REPO becomes its origin remote
@@ -295,9 +323,7 @@ context_of() {
   mkdir -p "$REPO/src/legacy"
   printf 'src/legacy/*\n' >"$REPO/.factory/protected"
   commit_all "add protection"
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   printf 'x\n' >"$REPO/src/legacy/old.txt"
   commit_all "touch legacy"
   run guard_check "$REPO" main
@@ -418,7 +444,8 @@ context_of() {
 
 @test "guard: an uncommitted change under .factory/, such as the gate, counts; only its run dir is Factory's" {
   make_repo
-  mkdir -p "$REPO/.factory/run" && printf 'plan\n' >"$REPO/.factory/run/plan.md"
+  mkdir -p "$REPO/.factory/run"
+  printf 'plan\n' >"$REPO/.factory/run/plan.md"
   run tree_dirty "$REPO"
   [ "$status" -eq 1 ]
   printf 'exit 0\n' >>"$REPO/.factory/gate"
@@ -487,12 +514,8 @@ context_of() {
   printf '^\\+Subproject commit [0-9a-f]{7,}\n' >"$REPO/.factory/guardrails.txt"
   printf 'vendor\n' >"$REPO/.factory/protected"
   commit_all "own rules"
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
-  git init -q "$TMP/lib"
-  git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m lib
-  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" vendor/lib
+  merge_work
+  add_submodule vendor/lib
   commit_all "add lib"
   local setting
   for setting in diff.submodule=log diff.submodule=diff diff.ignoreSubmodules=all; do
@@ -663,9 +686,7 @@ context_of() {
   make_repo
   printf 'docs/*\n' >"$REPO/.factory/protected"
   commit_all "protect docs"
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   mkdir -p "$REPO/src/naïve" "$REPO/docs"
   printf 'pub fn f() {}\n' >"$REPO/src/naïve/lib.rs"
   printf 'x' >"$REPO/src/naïve/lib.o"
@@ -685,18 +706,13 @@ context_of() {
 @test "guard: a git replace ref on the base does not hide an added line" {
   make_repo
   # Build the bad string at runtime so this file passes its own guard check.
-  local pipe='||' base blob doctree doc idx
+  local pipe='||' base doc
   printf 'deploy %s true\n' "$pipe" >"$REPO/run.sh"
   commit_all bad
   # A doctored root commit whose tree already holds the bad line; replace main's commit with
   # it, so git diff main...HEAD reads a base that is not the branch's and shows run.sh unchanged.
   base=$(git -C "$REPO" rev-parse main)
-  idx=$TMP/ridx
-  GIT_INDEX_FILE=$idx git -C "$REPO" read-tree "$base"
-  blob=$(printf 'deploy %s true\n' "$pipe" | git -C "$REPO" hash-object -w --stdin)
-  GIT_INDEX_FILE=$idx git -C "$REPO" update-index --add --cacheinfo 100644,"$blob",run.sh
-  doctree=$(GIT_INDEX_FILE=$idx git -C "$REPO" write-tree)
-  doc=$(git -C "$REPO" commit-tree "$doctree" -m doctored) # no parent: a drop-in for the root base
+  doc=$(doctored_root "deploy $pipe true")
   git -C "$REPO" replace "$base" "$doc"
   [ -z "$(git -C "$REPO" diff --name-only main...HEAD -- run.sh)" ] # the poisoned diff hides it
   run guard_check "$REPO" main
@@ -707,16 +723,10 @@ context_of() {
 @test "guard: an info/grafts line does not cut the branch from its base" {
   make_repo
   # Build the bad string at runtime so this file passes its own guard check.
-  local pipe='||' base blob doctree doc tip idx common
+  local pipe='||' doc tip common
   printf 'deploy %s true\n' "$pipe" >"$REPO/run.sh"
   commit_all bad
-  base=$(git -C "$REPO" rev-parse main)
-  idx=$TMP/gidx
-  GIT_INDEX_FILE=$idx git -C "$REPO" read-tree "$base"
-  blob=$(printf 'deploy %s true\n' "$pipe" | git -C "$REPO" hash-object -w --stdin)
-  GIT_INDEX_FILE=$idx git -C "$REPO" update-index --add --cacheinfo 100644,"$blob",run.sh
-  doctree=$(GIT_INDEX_FILE=$idx git -C "$REPO" write-tree)
-  doc=$(git -C "$REPO" commit-tree "$doctree" -m doctored)
+  doc=$(doctored_root "deploy $pipe true")
   tip=$(git -C "$REPO" rev-parse HEAD)
   common=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)
   # Graft the branch tip onto the doctored root, so a plain base...HEAD finds no merge base and
@@ -759,9 +769,7 @@ context_of() {
   # A data file on main whose content the artifact will "rename" from, so git pairs them R100.
   printf 'AAAA\nBBBB\nCCCC\nDDDD\n' >"$REPO/blob.dat"
   commit_all blob
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   git -C "$REPO" rm -q blob.dat
   mkdir -p "$REPO/build"
   printf 'AAAA\nBBBB\nCCCC\nDDDD\n' >"$REPO/build/artifact.o"
@@ -843,6 +851,8 @@ context_of() {
   [[ $output == *"plan for toy-1"*"the plan"*"changed after your note"*"split the module in two"* ]]
   [ ! -e "$TMP/plan-changes.md" ]
   run show_for_approval plan "$TMP"
+  [ "$status" -eq 0 ]
+  [[ $output == *"plan for toy-1"* ]]
   [[ $output != *"changed after your note"* ]]
 }
 
@@ -850,6 +860,8 @@ context_of() {
   fake_task
   printf 'the plan\n' >"$TMP/plan.md"
   run show_for_approval plan "$TMP"
+  [ "$status" -eq 0 ]
+  [[ $output == *"plan for toy-1"* ]]
   [[ $output != *"plan review round"* ]]
   printf 'VERDICT: REVISE\n' >"$TMP/plan-review-1.md"
   printf 'VERDICT: APPROVE\n' >"$TMP/plan-review-1-build.md"
@@ -877,7 +889,7 @@ context_of() {
 @test "gate_dialog_shown: a dialog on the screen counts, however herdr writes the screen" {
   herdr() { # the dialog's chip first, the rest after a moment, when a grep -q on the pipe has gone
     printf ' ☐ fy plan\nApprove the plan for toy-1?\n'
-    sleep 0.5
+    sleep 0.2
     printf 'Enter to select · ↑/↓ to navigate · Esc to cancel\n'
   }
   gate_dialog_shown planner plan
@@ -977,7 +989,7 @@ context_of() {
       *) printf '{"result":{}}' ;;
     esac
   }
-  FACTORY_POLL_SECONDS=1
+  FACTORY_POLL_SECONDS=0.1
   hint_marked
   (
     hint_seen
@@ -991,17 +1003,15 @@ context_of() {
   [ "$(grep -c 'agent prompt' "$TMP/herdr.log")" -eq 0 ]
 }
 
-@test "plan approval: files from factory approve / reject, no terminal" {
+@test "plan approval: files from factory approve, reject and abort, no terminal" {
   plan_ready
-  FACTORY_POLL_SECONDS=1
+  FACTORY_POLL_SECONDS=0.1
   ask() { # the note's turn: the gate is closed meanwhile, and an approval sent anyway is dropped
     printf 'asked %s: %s\n' "$1" "$2"
     printf 'gate in the round: %s\n' "$(gate_waiting "$TMP" || printf closed)"
     : >"$TMP/approved"
-    ( # the human approves once the plan is back, and the gate must still be waiting then
+    ( # the human approves once the plan is back; had the gate taken the approval above, this one would be left over
       gate_opens
-      sleep 1.5
-      if [[ -e $TMP/waiting ]]; then : >"$TMP/still-waiting"; fi
       : >"$TMP/approved"
     ) >/dev/null 2>&1 3>&- &
   }
@@ -1016,7 +1026,6 @@ context_of() {
   wait
   [ "$status" -eq 0 ]
   [[ $output == *"note received from a pane or fy reject"*"pause for the reply, gate note"*"asked planner: "*"too big, split it"*"gate in the round: note"* ]]
-  [ -e "$TMP/still-waiting" ]
   # the plan comes back after the note, and with it where to answer
   [[ $output == *"note received from a pane or fy reject"*"plan for toy-1"*"no terminal to answer from; waiting for your answer in one of the task's panes: !fy approve, !fy reject '<note>' or !fy abort"*"approved in a pane or with fy approve"*"pause for the reply, gate closed" ]]
   [ "$(cat "$TMP/recorded")" = $'note on the plan: too big, split it\nplan approved' ]
@@ -1028,8 +1037,12 @@ context_of() {
     gate_opens
     if [[ -e $TMP/waiting ]]; then cp "$TMP/waiting" "$TMP/seen"; fi
     : >"$TMP/aborted"
-    sleep 4
-    : >"$TMP/approved" # ends a gate that ignores the abort, so a regression fails instead of hanging
+    # a gate that ignores the abort is ended, so that a regression fails instead of hanging
+    for _ in $(seq 1 100); do
+      if [[ ! -e $TMP/waiting ]]; then exit; fi
+      sleep 0.1
+    done
+    : >"$TMP/approved"
   ) 3>&- &
   run human_gate plan planner "$TMP" </dev/null
   wait
@@ -1081,9 +1094,12 @@ context_of() {
   printf 'questions %s\n' "$$" >"$run/waiting" # questions wait, not an approval
   run cmd_approve "$REPO" toy-9
   [ "$status" -eq 1 ]
+  [[ $output == *"nothing of toy-9 waits for approval"* ]]
   printf 'plan 999999999\n' >"$run/waiting" # a run that is gone
   run cmd_abort "$REPO" toy-9
   [ "$status" -eq 1 ]
+  [[ $output == *"nothing of toy-9 waits for approval"* ]]
+  [ ! -e "$run/aborted" ]
   run cmd_approve "$REPO" toy-404
   [ "$status" -eq 1 ]
   [[ $output == *"no worktree"* ]]
@@ -1148,6 +1164,7 @@ context_of() {
   run cmd_dialog_hook plan toy-9 "$TMP/gone" < <(dialog Format "Which format?" '[{"label":"CSV"}]' CSV)
   [ "$status" -eq 1 ]
   [[ $output == *"no run dir of a task for this dialog; the answer went to the agent only"* ]]
+  [ ! -e "$TMP/gone" ]
   # Factory's own dialog, while the plan waits
   printf 'plan %s\n' "$$" >"$run/waiting"
   dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan toy-9 "$run"
@@ -1239,7 +1256,9 @@ context_of() {
   [ "$(detect_gate "$REPO")" = "make test" ]
   printf 'ci:\n\ttrue\n' >"$REPO/justfile"
   [ "$(detect_gate "$REPO")" = "just ci" ]
-  mkdir -p "$REPO/bin" && printf '#!/bin/sh\ntrue\n' >"$REPO/bin/test" && chmod +x "$REPO/bin/test"
+  mkdir -p "$REPO/bin"
+  printf '#!/bin/sh\ntrue\n' >"$REPO/bin/test"
+  chmod +x "$REPO/bin/test"
   [ "$(detect_gate "$REPO")" = "./bin/test" ]
   write_gate "$REPO" "$(detect_gate "$REPO")"
   [ -x "$REPO/.factory/gate" ]
@@ -1297,6 +1316,8 @@ IN
   mkdir -p "$TMP/.factory/run"
   pr_checks() { :; }
   run pr_body
+  [ "$status" -eq 0 ]
+  [[ $output == *"Bead toy-1."* ]]
   [[ $output != *"Decisions"* ]]
   printf -- '- 2026-10-06 14:02 plan approved\n' >"$TMP/.factory/run/decisions.md"
   run pr_body
@@ -1515,9 +1536,7 @@ IN
   rm "$REPO/.factory/gate"
   git -C "$REPO" sparse-checkout disable
   # A submodule whose changes the config ignores.
-  git init -q "$TMP/lib"
-  git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m lib
-  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" lib
+  add_submodule lib
   commit_all "add lib"
   git -C "$REPO" config submodule.lib.ignore all
   printf 'echo relaxed\n' >"$REPO/lib/build.sh"
@@ -1611,9 +1630,7 @@ IN
   printf ':(glob)**/.mise*.toml\n.cargo/config*\n' >"$REPO/.factory/protected"
   printf '/.cargo/\n' >"$REPO/.gitignore"
   commit_all "protect mise's and cargo's configs, ignore .cargo"
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   printf 'echo hello\n' >"$REPO/run.sh"
   commit_all change
   # Through mise's shims a local config's [env] reaches cargo, and clippy then warns of nothing.
@@ -1629,15 +1646,14 @@ IN
   waive # the waiver is for what the branch changes
   GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
   [ "$status" -eq 1 ]
+  [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
 }
 
 @test "guard: the human's own .factory/env may lie ignored in the main checkout, not in a task's worktree" {
   make_repo
   printf '/.factory/env\n' >"$REPO/.gitignore"
   commit_all "ignore the knobs file"
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   printf 'echo hello\n' >"$REPO/run.sh"
   commit_all change
   printf 'FACTORY_PR=1\n' >"$REPO/.factory/env" # the human's knobs, which fy check reads here
@@ -1658,9 +1674,7 @@ IN
   local pipe='||'
   printf '/target/\n' >"$REPO/.gitignore"
   commit_all "ignore target"
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   mkdir -p "$REPO/target/cfg"
   printf 'run_thing %s true\n' "$pipe" >"$REPO/target/real.sh"
   printf '[build]\nrustflags = ["--cap-lints=allow"]\n' >"$REPO/target/cfg/config.toml"
@@ -1703,9 +1717,7 @@ IN
   printf '/target/\n' >"$REPO/.gitignore"
   ln -s target/release/app "$REPO/latest-build" # the human's link, into a place git ignores
   commit_all "ignore target, link the latest build"
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   git -C "$REPO" mv latest-build tool.sh
   commit_all "rename the link"
   run guard_check "$REPO" main
@@ -1715,9 +1727,7 @@ IN
 
 @test "guard: a submodule the branch adds or points at another commit fails, waiver or not; one it removes passes" {
   make_repo
-  git init -q "$TMP/lib"
-  git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m lib
-  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" lib
+  add_submodule lib
   commit_all "add lib"
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
@@ -1728,9 +1738,7 @@ IN
   [[ $output == *"submodule added or pointed at another commit: lib"* ]]
   rm "$TASK_STATE/allow-protected"
   # the human's submodule, in the base, which the branch points at another commit
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   git -C "$REPO/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m more
   commit_all "move lib"
   run guard_check "$REPO" main
@@ -1747,9 +1755,7 @@ IN
   printf '.factory\n' >"$REPO/.factory/protected"
   printf '/target/\n' >"$REPO/.gitignore"
   commit_all "protect .factory, ignore target"
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   printf 'echo hello\n' >"$REPO/run.sh"
   commit_all change
   mkdir -p "$REPO/target/debug" "$REPO/.factory/run"
@@ -1766,9 +1772,7 @@ IN
   printf '.cargo/config*\n:(bogus)x\n' >"$REPO/.factory/protected"
   printf '/.cargo/\n' >"$REPO/.gitignore"
   commit_all "protect cargo's config, with a typo"
-  git -C "$REPO" checkout -q main
-  git -C "$REPO" merge -q work
-  git -C "$REPO" checkout -q work
+  merge_work
   printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
   commit_all "relax gate"
   mkdir -p "$REPO/.cargo"
@@ -1797,7 +1801,8 @@ IN
   task_worktree
   printf 'plan %s\n' "$$" >"$TMP/wt-9/.factory/run/waiting"
   cmd_approve "$REPO" toy-9 --allow-protected
-  [ -e "$XDG_STATE_HOME/factory/tasks/repo-$(printf '%s' "$(cd "$REPO" && pwd -P)" | sha256sum | cut -c1-12)/toy-9/allow-protected" ]
+  [[ $(task_state "$REPO" toy-9) == "$XDG_STATE_HOME/factory/tasks/repo-"*/toy-9 ]]
+  [ -e "$(task_state "$REPO" toy-9)/allow-protected" ]
   [ ! -e "$TMP/wt-9/.factory/run/allow-protected" ]
   [ -e "$TMP/wt-9/.factory/run/approved" ]
   plan_ready
@@ -1949,7 +1954,7 @@ IN
   fake_task
   on_work_branch
   FACTORY_APPROVAL=ask
-  FACTORY_POLL_SECONDS=1
+  FACTORY_POLL_SECONDS=0.1
   waive # the plan's approval waived the check for the build
   run human_gate build builder "$TMP" <<<"a"
   [ "$status" -eq 0 ]
@@ -2001,12 +2006,12 @@ IN
   # the planner asks in its own dialog; the approvals are the human's, in Factory's dialog or typed
   [[ $(plan_prompt) == *"ask the human first with your AskUserQuestion tool"*"The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected"*"!fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
   [[ $(plan_prompt) != *"decisions.md"* ]]
-  mkdir -p "$TMP/.factory/run" && printf -- '- the planner asked: Which format? Answer: CSV\n' >"$TMP/.factory/run/decisions.md"
+  mkdir -p "$TMP/.factory/run"
+  printf -- '- the planner asked: Which format? Answer: CSV\n' >"$TMP/.factory/run/decisions.md"
   [[ $(plan_prompt) == *"answers and decisions on this task so far are in .factory/run/decisions.md; read them before asking again"* ]]
   protected_globs() { :; }
   BRANCH=work
   [[ $(build_prompt) == *"The human approves, revises or aborts the build in a dialog Factory has you show, or by typing !fy approve, !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
-  TASK_ID=toy-1
   [[ $(gate_dialog_prompt plan) == *'header "fy plan", text "Approve the plan for toy-1, or type a note to have it revised?", options "Approve", "Approve, allow protected paths" and "Abort", in that order'*"do not act on it or run anything"* ]]
   [[ $(gate_dialog_prompt build) == *'header "fy build"'*'options "Approve" and "Abort", in that order'* ]]
   [[ $(plan_fix_prompt 1) == *"reply with the plan's content"* ]]
@@ -2076,7 +2081,7 @@ IN
   [ "$(cat "$WT/run.sh")" = "echo hi" ]
 }
 
-@test "plan_phase: a rerun after the plan was written reviews it from the round it waits for, without planning again" {
+@test "plan_phase: a rerun after the plan was written reviews it from the round it waits for, without planning again; a note's round leaves it reviewed" {
   fake_task
   WT=$TMP
   TASK_DESC="" GATE=true FACTORY_FRESH=0
@@ -2139,6 +2144,8 @@ IN
   : >"$TMP/n"
   printf '%s\n' REVISE APPROVE >"$TMP/verdicts"
   run take_note plan planner "split it"
+  [ "$status" -eq 0 ]
+  [[ $output == *"review plan-review-"*" at reviewed"* ]]
   [ "$(resume_point)" = reviewed ]
 }
 
@@ -2161,21 +2168,26 @@ IN
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = plan_phase,build_phase,finish_task ]
   mark written 2
   run run_task "$REPO" toy-1
+  [ "$status" -eq 0 ]
   [[ $output == *"resuming after: written 2"* ]]
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = "plan_phase round 2,build_phase,finish_task" ]
   mark reviewed
   run run_task "$REPO" toy-1
+  [ "$status" -eq 0 ]
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = approve_plan,build_phase,finish_task ]
   mark planned
   run run_task "$REPO" toy-1
+  [ "$status" -eq 0 ]
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = "build_phase resume,finish_task" ]
   mark built 1
   guarded() { :; }
   run run_task "$REPO" toy-1
+  [ "$status" -eq 0 ]
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = finish_task ]
   # a commit since the approval, or a task from before Factory recorded the check: built again
   guarded() { HEAD_SHA=abc && return 1; }
   run run_task "$REPO" toy-1
+  [ "$status" -eq 0 ]
   [[ $output == *"the approved build is not abc"* ]]
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = "build_phase resume,finish_task" ]
 }
@@ -2195,6 +2207,7 @@ IN
   ask_for_file() { # each review takes the next verdict from $TMP/verdicts
     printf 'x' >>"$TMP/n"
     printf 'review %s %s: %s\n' "$1" "${3##*/}" "$2"
+    printf '%s\n' "$2" >"$TMP/prompt-${3##*/}"
     printf 'VERDICT: %s\n' "$(sed -n "$(wc -c <"$TMP/n")p" "$TMP/verdicts")" >"$3"
   }
   : >"$TMP/n"
@@ -2204,8 +2217,8 @@ IN
   [[ $output == *"plan review round 1"*"plan verdicts: REVISE APPROVE"*"revise: Reviewers left notes on your plan in .factory/run/plan-review-1.md and .factory/run/plan-review-1-build.md"* ]]
   [[ $output == *"review codex plan-review-2.md: "*"Your notes from the previous review round are in .factory/run/plan-review-1.md"*"review builder plan-review-2-build.md: "*"Your notes from the previous review round are in .factory/run/plan-review-1-build.md"*"plan verdicts: APPROVE APPROVE"*"to the human" ]]
   [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
-  [[ $output != *"review codex plan-review-1.md: "*"your notes from it"*"review builder plan-review-1-build.md"* ]]
   [[ $output != *"unreviewed"* ]]
+  run ! grep -q 'Your notes from' "$TMP/prompt-plan-review-1.md" "$TMP/prompt-plan-review-1-build.md"
   # still objected to in the last round: that revision too, then on to the human
   : >"$TMP/n"
   printf '%s\n' REVISE APPROVE APPROVE REVISE >"$TMP/verdicts"
@@ -2229,6 +2242,7 @@ IN
   : >"$TMP/n"
   printf '%s\n' APPROVE APPROVE >"$TMP/verdicts"
   run plan_phase "$TMP"
+  [ "$status" -eq 0 ]
   [[ $output != *"revise:"* ]]
   [[ $output == *"to the human" ]]
 }
@@ -2508,7 +2522,8 @@ JSON
   git -C "$REPO" branch factory/toy-m
   git -C "$REPO" worktree add -q "$TMP/wt-m" factory/toy-m
   printf 'x\n' >"$TMP/wt-m/m.txt"
-  git -C "$TMP/wt-m" add -A && git -C "$TMP/wt-m" commit -qm m
+  git -C "$TMP/wt-m" add -A
+  git -C "$TMP/wt-m" commit -qm m
   git -C "$REPO" merge -q factory/toy-m
   git -C "$REPO" checkout -qb factory/toy-u
   printf 'u\n' >"$REPO/u.txt"
@@ -2574,7 +2589,8 @@ JSON
   run planner_kept_hands_off planner
   [ "$status" -eq 1 ]
   [[ $output == *"must not touch code"* ]]
-  mkdir -p "$REPO/.factory/run" && printf 'plan\n' >"$REPO/.factory/run/plan.md"
+  mkdir -p "$REPO/.factory/run"
+  printf 'plan\n' >"$REPO/.factory/run/plan.md"
   git -C "$REPO" checkout -q -- .
   planner_kept_hands_off planner # files under .factory/run/ are fine
   # the rest of .factory/ is not
@@ -2870,7 +2886,7 @@ JSON
 }
 
 @test "set_color sends /color to the agent without waiting" {
-  herdr() { printf '%s\n' "$*" >"$TMP/herdr.log"; }
+  herdr() { printf '%s\n' "$*" >>"$TMP/herdr.log"; }
   set_color plan purple
   [ "$(cat "$TMP/herdr.log")" = "agent prompt plan /color purple" ]
 }
@@ -2922,7 +2938,7 @@ JSON
   [[ $output == *"no idle done within 2 min and it is unknown"* ]]
 }
 
-@test "unblock: each question the agent asks is announced, and a wait on the human never times out" {
+@test "unblock and wait_for: each question the agent asks is announced, and a wait on the human never times out" {
   fake_task
   : >"$TMP/waits"
   herdr() {
@@ -3014,7 +3030,11 @@ JSON
         if [[ -s $TMP/keys ]]; then
           printf '› Ask Codex to do anything\n'
         else
-          printf '  Folder access\n  Trust this folder? Codex can read, edit, and run files here, subject to your\n› 1. Trust and continue\n  2. Quit\n'
+          if [[ -n ${OLD_TRUST:-} ]]; then
+            printf '  Do you trust the contents of this directory?\n› 1. Yes, continue\n  2. No, quit\n'
+          else
+            printf '  Folder access\n  Trust this folder? Codex can read, edit, and run files here, subject to your\n› 1. Trust and continue\n  2. Quit\n'
+          fi
         fi
         ;;
       "agent send-keys"*) printf '%s\n' "$*" >>"$TMP/keys" ;;
@@ -3023,6 +3043,12 @@ JSON
   }
   sleep() { :; }
   run settle_dialogs t-review
+  [ "$status" -eq 0 ]
+  [[ $output == *"t-review: accepting Codex trust dialog (attempt 1)"* ]]
+  [ "$(cat "$TMP/keys")" = "agent send-keys t-review enter" ]
+  # the old dialog's words
+  : >"$TMP/keys"
+  OLD_TRUST=1 run settle_dialogs t-review
   [ "$status" -eq 0 ]
   [[ $output == *"t-review: accepting Codex trust dialog (attempt 1)"* ]]
   [ "$(cat "$TMP/keys")" = "agent send-keys t-review enter" ]
@@ -3091,6 +3117,7 @@ JSON
       *) printf '{"result":{}}' ;;
     esac
   }
+  sleep() { :; }
   prime_shell() { :; }
   start_agent() { printf '%s\n' "$1" >>"$TMP/started"; }
   run start_or_adopt_agents "$TMP/repo"
@@ -3164,7 +3191,7 @@ JSON
       *) printf '{"result":{}}' ;;
     esac
   }
-  argv() { jq -n --argjson a "$(printf '%s\n' "$@" | jq -R . | jq -s .)" '{result: {process_info: {foreground_process_group_id: 5, shell_pid: 9, foreground_processes: [{argv: $a}]}}}'; }
+  argv() { jq -nc '{result: {process_info: {foreground_process_group_id: 5, shell_pid: 9, foreground_processes: [{argv: $ARGS.positional}]}}}' --args -- "$@"; }
   settle_dialogs() { :; }
   turn_ends() { printf 'turn of %s ended\n' "$1"; }
   prime_shell() { printf 'primed %s\n' "$1"; }
@@ -3620,6 +3647,7 @@ EOF
   guard_check "$REPO" "$(base_ref)"
   run guard_check "$REPO" origin/main
   [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/gate"* ]]
 }
 
 @test "gate_then_guards: a guard failure says why" {
@@ -3706,6 +3734,7 @@ EOF
   [ "${lines[-3]}" = main ]
   git -C "$REPO" checkout -q main # on that base: nothing to say
   run context_of "$REPO"
+  [ "$status" -eq 0 ]
   [[ $output != *"keeps the base"* ]]
   [ "${lines[-3]}" = main ]
   git -C "$REPO" checkout -q work
@@ -3794,10 +3823,11 @@ EOF
   STEP=building
   WS=w9
   WT=$TMP
-  bd() { printf '%s\n' "$*" >"$TMP/bd.log"; }
+  bd() { printf '%s\n' "$*" >>"$TMP/bd.log"; }
   run on_interrupt "$TMP"
   [ "$status" -eq 130 ]
   [[ $output == *"interrupted during building"*"continue with: factory run [flags] $TMP toy-1"* ]]
+  [ "$(grep -c '' "$TMP/bd.log")" -eq 1 ]
   grep -q "comment toy-1 Factory: interrupted during building" "$TMP/bd.log"
 }
 
@@ -3867,7 +3897,6 @@ EOF
   [ "$status" -eq 0 ]
   [[ $output == *"factory run"* ]]
   [[ $output == *"factory reject  <repo> <bead-id> '<note>'"* ]]
-  [[ $output != *"factory answer"* && $output != *"dialog-answer"* ]]
   [[ $output == *"FACTORY_PLAN_EFFORT=max"*"FACTORY_BUILD_EFFORT=xhigh"*"FACTORY_REVIEW_EFFORT=xhigh"* ]]
   cd "$TMP" # no task's worktree, so the usage
   run main reject

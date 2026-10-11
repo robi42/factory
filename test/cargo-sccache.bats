@@ -54,11 +54,24 @@ teardown() {
   export CODEX_SANDBOX_NETWORK_DISABLED=1
   PATH="$TMP/bin:$PATH" run "$WRAPPER" "$TMP/cc" --cfg 'feature="a b"'
   [ "$output" = "compiled"$'\n'"--cfg"$'\n''feature="a b"' ]
-  [ ! -e "$LOG" ]
   CC_STATUS=3 PATH="$TMP/bin:$PATH" run "$WRAPPER" "$TMP/cc" -c x.c
   [ "$status" -eq 3 ]
   PATH="$TMP/bin:$PATH" run "$WRAPPER" cat <<<"piped source"
   [ "$output" = "piped source" ]
+  [ ! -e "$LOG" ] # none of the three went through sccache
+}
+
+@test "cargo-sccache: many sccaches on the PATH, SIGPIPE ignored as mise exec leaves it: nothing but the compile's output" {
+  local dirs="" i
+  for i in $(seq 1 40); do
+    mkdir "$TMP/many-$i"
+    ln -s "$TMP/bin/sccache" "$TMP/many-$i/sccache"
+    dirs+="$TMP/many-$i:"
+  done
+  for i in $(seq 1 20); do
+    run bash -c 'trap "" PIPE && exec "$@"' _ env PATH="$dirs$PATH" "$WRAPPER" "$TMP/cc" -c x.c
+    [ "$output" = "compiled"$'\n'"-c"$'\n'"x.c" ]
+  done
 }
 
 @test "cargo-sccache: runs the compiler alone when sccache is not installed" {
