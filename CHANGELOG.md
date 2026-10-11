@@ -152,6 +152,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 - A submodule the branch added, or pointed at another commit, brought in files that the gate
   read and no diff showed, so that no rule saw a line of them. The guardrails now refuse it,
   waiver or not; such a change is yours to commit.
+- A builder could waive its own protected-path and symlink checks: the waiver was a file in
+  the run dir, which the agents write, and the pull request then recorded it as yours.
+  Factory now keeps your waiver in its own state for the task, under
+  `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`, which only your answer at the plan's
+  approval writes (`p`, the dialog, or `fy approve <repo> <bead-id> --allow-protected`). An
+  `allow-protected` file in the run dir, or on the branch, waives nothing and fails the
+  guardrails. `fy check` in a task's worktree honours the task's waiver.
 
 ## [0.1.11] - 2026-10-05
 

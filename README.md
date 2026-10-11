@@ -268,6 +268,10 @@ and `gate-copilot-N.log`), `state` (where a rerun resumes; `--fresh` clears it),
 from, which a rerun keeps), `waiting`
 (what the run waits for, while it waits).
 
+The agents write the worktree, so what only you and Factory decide is kept out of it, in
+Factory's own state for the task under `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`:
+`allow-protected`, your waiver of the protected-path check.
+
 `fy init` writes a short `AGENTS.md` (with `CLAUDE.md` linking to it) only when a repo
 has neither. Keep it to what the code cannot tell a new engineer: how to verify, layout
 where not obvious, rules and reasons. Workflow lives in the prompts, not there.
@@ -368,8 +372,11 @@ after the gate passes and before review:
   any other file a repo keeps there, but Factory's own `.factory/run/`; and every glob
   listed in `.factory/protected`, which git reads as a pathspec; a line git cannot read
   fails the guardrails. A task that legitimately must change them, such as adding the gate,
-  gets a one-task waiver from you at plan approval (`p`, or `--allow-protected`); the pull
-  request body records it.
+  gets a one-task waiver from you at plan approval (`p`, the dialog's Approve, allow
+  protected paths, or `fy approve <repo> <bead-id> --allow-protected`), which Factory keeps
+  in its own state, where the agents do not write; the pull request body records it. An
+  `allow-protected` file in the run dir, where the waiver used to be, waives nothing and
+  fails the guardrails: only an agent would put one there.
 - No ignored file at a protected path, waiver or not: git leaves it out of the branch and
   its diff, but the gate reads it, as mise reads an ignored `.mise.local.toml` in a repo
   that protects mise's configs. Factory's own `.factory/run/` is exempt, and so is your

@@ -10,9 +10,11 @@ setup() {
   source "$BATS_TEST_DIRNAME/../factory"
   FACTORY_REQUIRE_TESTS=0 # the fixtures below change code without tests on purpose
   TMP=$(mktemp -d)
-  toast() { :; }                # no desktop notifications from the tests
-  glow() { cat "$1"; }          # nor this machine's glow and its config
-  pause_for_pane_reply() { :; } # nor the pause for an agent's reply in its pane
+  export XDG_STATE_HOME=$TMP/state # Factory's own task state, kept off this machine's
+  TASK_STATE=$TMP/task             # a run's, as task_context names it
+  toast() { :; }                   # no desktop notifications from the tests
+  glow() { cat "$1"; }             # nor this machine's glow and its config
+  pause_for_pane_reply() { :; }    # nor the pause for an agent's reply in its pane
   # the human's answers go to a file the tests read, not to a bead; the real one is kept
   eval "real_$(declare -f record_answer)"
   record_answer() { printf '%s\n' "$2" >>"$TMP/recorded"; }
@@ -48,6 +50,20 @@ task_worktree() {
   git -C "$REPO" worktree add -q -b factory/toy-9 "$TMP/wt-9"
   mkdir -p "$TMP/wt-9/.factory/run"
 }
+
+# task_opened: the toy-9 task once its run has the worktree open (task_context, then
+# open_task_workspace on Herdr's answer), with a gate that passes at once
+task_opened() {
+  task_worktree
+  TASK_ID=toy-9 TASK_TITLE=t
+  task_context "$REPO"
+  open_workspace() { WS=w9 WT=$TMP/wt-9 BUILD_PANE=p9; }
+  open_task_workspace "$REPO" 2>/dev/null
+  run_gate() { :; }
+}
+
+# waive: the human's waiver of the protected-path check, where Factory keeps it for the run
+waive() { mkdir -p "$TASK_STATE" && : >"$TASK_STATE/allow-protected"; }
 
 # the globals human_gate reads for its messages
 fake_task() {
@@ -796,13 +812,13 @@ context_of() {
   printf 'stale\n' >"$TMP/reject.md"
   : >"$TMP/aborted"
   : >"$TMP/approved"
-  : >"$TMP/allow-protected"
+  waive
   run human_gate plan planner "$TMP" <<<"a"
   [ "$status" -eq 0 ]
   [[ $output != *"via file"* ]]
   [ ! -e "$TMP/reject.md" ]
   [ ! -e "$TMP/aborted" ]
-  [ ! -e "$TMP/allow-protected" ]
+  [ ! -e "$TASK_STATE/allow-protected" ]
 }
 
 @test "plan approval: the planner's change note is shown once, below the revised plan" {
@@ -1125,12 +1141,13 @@ context_of() {
   printf 'plan %s\n' "$$" >"$run/waiting"
   dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan toy-9 "$run"
   [ -e "$run/approved" ]
-  [ ! -e "$run/allow-protected" ]
+  [ ! -e "$(task_state "$REPO" toy-9)/allow-protected" ]
   rm -f "$run/approved"
   dialog "fy plan" "$q" "$opts" "Approve, allow protected paths" | cmd_dialog_hook plan toy-9 "$run"
   [ -e "$run/approved" ]
-  [ -e "$run/allow-protected" ]
-  rm -f "$run/approved" "$run/allow-protected"
+  [ -e "$(task_state "$REPO" toy-9)/allow-protected" ]
+  [ ! -e "$run/allow-protected" ]
+  rm -f "$run/approved" "$(task_state "$REPO" toy-9)/allow-protected"
   dialog "fy plan" "$q" "$opts" Abort | cmd_dialog_hook plan toy-9 "$run"
   [ -e "$run/aborted" ]
   rm -f "$run/aborted"
@@ -1183,7 +1200,7 @@ context_of() {
   run main approve --allow-protected
   [ "$status" -eq 0 ]
   [ -e "$run/approved" ]
-  [ -e "$run/allow-protected" ]
+  [ -e "$(task_state "$REPO" toy-9)/allow-protected" ]
   run main reject use argparse, not getopt
   [ "$(cat "$run/reject.md")" = "use argparse, not getopt" ]
   run main abort
@@ -1294,7 +1311,7 @@ IN
   : >"$REPO/.factory/run/gate-2.log"
   printf 'VERDICT: APPROVE\n' >"$REPO/.factory/run/review-2.md"
   printf 'VERDICT: REVISE\n' >"$REPO/.factory/run/review-2-plan.md"
-  : >"$REPO/.factory/run/allow-protected"
+  waive
   run pr_body
   [[ $output == *"passed (gate-2)"*"review-2: APPROVE"*"review-2-plan: REVISE"*"waived by the human"* ]]
 }
@@ -1492,8 +1509,7 @@ IN
   [ "$status" -eq 1 ]
   [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
   [[ $output == *"ignored file at a protected path: .cargo/config.toml"* ]]
-  mkdir -p "$REPO/.factory/run"
-  : >"$REPO/.factory/run/allow-protected" # the waiver is for what the branch changes
+  waive # the waiver is for what the branch changes
   GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
   [ "$status" -eq 1 ]
 }
@@ -1542,8 +1558,7 @@ IN
   [[ $output == *"symlink to a place git does not show: .cargo -> target/cfg"* ]]
   [[ $output == *"symlink to a place git does not show: out.sh -> ../outside.sh"* ]]
   [[ $output == *"symlink to a place git does not show: hooks -> .git/hooks"* ]]
-  mkdir -p "$REPO/.factory/run"
-  : >"$REPO/.factory/run/allow-protected" # the waiver is for what the branch's diff shows
+  waive # the waiver is for what the branch's diff shows
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"symlink to a place git does not show: tool.sh"* ]]
@@ -1561,8 +1576,7 @@ IN
   [ "$status" -eq 1 ]
   [[ $output == *"symlink to a directory: .cargo -> conf"* ]]
   [[ $output != *"CLAUDE.md"* ]]
-  mkdir -p "$REPO/.factory/run"
-  : >"$REPO/.factory/run/allow-protected"
+  waive
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
 }
@@ -1591,12 +1605,11 @@ IN
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"submodule added or pointed at another commit: lib"* ]]
-  mkdir -p "$REPO/.factory/run"
-  : >"$REPO/.factory/run/allow-protected" # the waiver is for what the branch's diff shows
+  waive # the waiver is for what the branch's diff shows
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"submodule added or pointed at another commit: lib"* ]]
-  rm "$REPO/.factory/run/allow-protected"
+  rm "$TASK_STATE/allow-protected"
   # the human's submodule, in the base, which the branch points at another commit
   git -C "$REPO" checkout -q main
   git -C "$REPO" merge -q work
@@ -1652,8 +1665,7 @@ IN
   make_repo
   printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
   commit_all "relax gate"
-  mkdir -p "$REPO/.factory/run"
-  : >"$REPO/.factory/run/allow-protected"
+  waive
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
   [[ $output == *"$TAG guardrails: protected-path check waived by the human"* ]]
@@ -1663,16 +1675,47 @@ IN
   [[ $output == *"uncommitted"* ]]
 }
 
-@test "approve --allow-protected and the p answer write the waiver" {
+@test "approve --allow-protected and the p answer write the waiver, into Factory's state" {
   make_repo
   task_worktree
   printf 'plan %s\n' "$$" >"$TMP/wt-9/.factory/run/waiting"
   cmd_approve "$REPO" toy-9 --allow-protected
-  [ -e "$TMP/wt-9/.factory/run/allow-protected" ]
+  [ -e "$XDG_STATE_HOME/factory/tasks/repo-$(printf '%s' "$(cd "$REPO" && pwd -P)" | sha256sum | cut -c1-12)/toy-9/allow-protected" ]
+  [ ! -e "$TMP/wt-9/.factory/run/allow-protected" ]
   [ -e "$TMP/wt-9/.factory/run/approved" ]
   plan_ready
   human_gate plan planner "$TMP" <<<"p"
-  [ -e "$TMP/allow-protected" ]
+  [ -e "$TASK_STATE/allow-protected" ]
+  [ ! -e "$TMP/allow-protected" ]
+}
+
+@test "a waiver an agent leaves in the run dir waives nothing and fails the guardrails; the human's holds" {
+  make_repo
+  task_opened
+  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
+  git -C "$TMP/wt-9" commit -qam "relax the gate"
+  : >"$TMP/wt-9/$RUN_DIR/allow-protected" # the builder waives its own check
+  run gate_then_guards builder 1
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/gate"* ]]
+  [[ $output == *".factory/run/allow-protected found: a waiver there can only be an agent's"* ]]
+  # the human's, from fy approve, holds in the run and in fy check
+  rm "$TMP/wt-9/$RUN_DIR/allow-protected"
+  printf 'plan %s\n' "$$" >"$TMP/wt-9/$RUN_DIR/waiting"
+  cmd_approve "$REPO" toy-9 --allow-protected
+  run gate_then_guards builder 1
+  [ "$status" -eq 0 ]
+  [[ $output == *"protected-path check waived by the human"* ]]
+  TASK_STATE="" run cmd_check "$TMP/wt-9" main
+  [ "$status" -eq 0 ]
+  [[ $output == *"protected-path check waived by the human"*"guardrails passed"* ]]
+  : >"$TMP/wt-9/$RUN_DIR/allow-protected" # an agent's on the branch, gone from the worktree
+  git -C "$TMP/wt-9" add -f "$RUN_DIR/allow-protected"
+  git -C "$TMP/wt-9" commit -qm waive
+  rm "$TMP/wt-9/$RUN_DIR/allow-protected"
+  run guard_check "$TMP/wt-9" main
+  [ "$status" -eq 1 ]
+  [[ $output == *".factory/run/allow-protected found"* ]]
 }
 
 @test "build approval: a approves; r and the reject file hand the note back with 4" {
@@ -1683,11 +1726,11 @@ IN
   on_work_branch
   FACTORY_APPROVAL=ask
   FACTORY_POLL_SECONDS=1
-  : >"$TMP/allow-protected" # the plan's approval waived the check for the build
+  waive # the plan's approval waived the check for the build
   run human_gate build builder "$TMP" <<<"a"
   [ "$status" -eq 0 ]
   [[ $output == *"build for toy-1 on work"*"change"*"run.sh"* ]]
-  [ -e "$TMP/allow-protected" ]
+  [ -e "$TASK_STATE/allow-protected" ]
   run human_gate build builder "$TMP" <<<$'p\na'
   [ "$status" -eq 0 ]
   [[ $output == *"a, r or b?"* ]]
@@ -1933,14 +1976,14 @@ IN
   : >"$TMP/n"
   printf 'the last run'"'"'s note\n' >"$TMP/.factory/run/plan-changes.md"
   printf 'the last run'"'"'s plan\n' >"$TMP/.factory/run/plan.md"
-  : >"$TMP/.factory/run/allow-protected"
+  waive
   FACTORY_PLAN_ROUNDS=1 run plan_phase "$TMP"
   [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
   [[ $output != *"round 2"* ]]
   [ ! -e "$TMP/.factory/run/plan-review-2.md" ]
   [ ! -e "$TMP/.factory/run/plan-changes.md" ]
   [ ! -e "$TMP/.factory/run/plan.md" ] # write_plan is stubbed here and writes none
-  [ ! -e "$TMP/.factory/run/allow-protected" ]
+  [ ! -e "$TASK_STATE/allow-protected" ]
   # and two approvals need none
   : >"$TMP/n"
   printf '%s\n' APPROVE APPROVE >"$TMP/verdicts"

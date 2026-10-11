@@ -774,6 +774,20 @@ masked() {
 # tree_dirty worktree: 0 when tree_state lists a file
 tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 
+# task_state repo bead-id -> Factory's own directory for the task, in the user's state dir:
+# what only Factory and the human decide is kept there, out of the worktree and its run dir,
+# which the agents write. The repo is named by its checkout's path, as cd resolves it.
+task_state() {
+  local top
+  top=$(cd "$1" && pwd -P) || return 1
+  printf '%s/factory/tasks/%s-%s/%s' "${XDG_STATE_HOME:-$HOME/.local/state}" "$(basename "$top")" \
+    "$(printf '%s' "$top" | sha256sum | cut -c1-12)" "$2"
+}
+
+# waived: 0 when the human waived the protected-path check for the task at the plan's approval
+# (p, the dialog's choice, fy approve --allow-protected), which Factory keeps in its own state
+waived() { [[ -n ${TASK_STATE:-} && -e $TASK_STATE/allow-protected ]]; }
+
 # guard_check worktree base: mechanical guardrails on the branch. Prints violations. Git lists
 # the paths NUL-terminated (-z), as it stores them: a name it would quote, such as one with a
 # non-ASCII character, would match no check, and :(literal) keeps a name from being read as
@@ -838,13 +852,20 @@ guard_check() {
   if ! err=$(git -C "$wt" ls-files -- "${globs[@]}" 2>&1 >/dev/null); then
     printf 'protected paths unchecked: %s (fix that line of .factory/protected)\n' "${err#fatal: }"
     bad=1
-  elif [[ -e $wt/$RUN_DIR/allow-protected ]]; then
+  elif waived; then
     log "guardrails: protected-path check waived by the human"
   else
     while IFS= read -r -d '' f; do
       printf 'protected path changed: %s\n' "$f"
       bad=1
     done < <(guard_diff "$wt" --name-only -z "$base...HEAD" -- "${globs[@]}")
+  fi
+  # The waiver was a file in the run dir, which the agents write: one there or on the branch can
+  # only be an agent's, and waives nothing.
+  if [[ -e $wt/$RUN_DIR/allow-protected || -L $wt/$RUN_DIR/allow-protected ]] \
+    || git -C "$wt" cat-file -e "HEAD:$RUN_DIR/allow-protected" 2>/dev/null; then
+    printf "%s/allow-protected found: a waiver there can only be an agent's; the human's is Factory's to keep (remove it)\n" "$RUN_DIR"
+    bad=1
   fi
   # A protected path is one that steers the gate, and an ignored file there steers it unseen:
   # git leaves it out of the branch and its diff, so the waiver, which is for those, has no say.
@@ -861,7 +882,7 @@ guard_check() {
     if ! in_view "$wt" "$(realpath -m --relative-to="$wt" "$wt/$f")"; then
       printf 'symlink to a place git does not show: %s -> %s (the gate would read what no diff shows)\n' "$f" "$(readlink "$wt/$f")"
       bad=1
-    elif [[ -d $wt/$f && ! -e $wt/$RUN_DIR/allow-protected ]]; then
+    elif [[ -d $wt/$f ]] && ! waived; then
       printf 'symlink to a directory: %s -> %s (the paths under it escape the protected globs)\n' "$f" "$(readlink "$wt/$f")"
       bad=1
     fi
@@ -1071,7 +1092,7 @@ pr_checks() { # -> markdown bullets describing what the run directory proves
       printf -- '- %s: %s\n' "$(basename "$f" .md)" "$v"
     done < <(printf '%s\n' "${reviews[@]}" | sort -V)
   fi
-  [[ -e $d/allow-protected ]] && printf -- '- Protected-path check waived by the human\n'
+  waived && printf -- '- Protected-path check waived by the human\n'
   return 0
 }
 
@@ -1490,7 +1511,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
         rm -f "$dir/approved" "$dir/waiting"
         printf '\n' >&2
         log "approved via file"
-        if [[ $kind == plan && -e $dir/allow-protected ]]; then
+        if [[ $kind == plan ]] && waived; then
           record_answer "$dir" "plan approved, protected paths allowed"
         else
           record_answer "$dir" "$kind approved"
@@ -1509,7 +1530,7 @@ await_human() { # plan|build agent dir: human_gate's waiting
               ;;
             p | P)
               if [[ $kind == plan ]]; then
-                : >"$dir/allow-protected"
+                mkdir -p "$TASK_STATE" && : >"$TASK_STATE/allow-protected"
                 log "protected-path check waived for this task"
                 record_answer "$dir" "plan approved, protected paths allowed"
                 return 0
@@ -1565,7 +1586,7 @@ drop_dead_dialog() {
 # were about something else, and no plan approval stands, so neither does its waiver.
 open_gate() {
   rm -f "$2/approved" "$2/reject.md" "$2/aborted"
-  [[ $1 == build ]] || rm -f "$2/allow-protected"
+  [[ $1 == build ]] || rm -f "${TASK_STATE:?}/allow-protected"
   printf '%s %s\n' "$1" "$$" >"$2/waiting"
 }
 
@@ -1795,17 +1816,18 @@ open_workspace() { # repo branch label -> WS WT BUILD_PANE
 }
 
 # -------------------------------------------------------------- pipeline ----
-# Shared task state: setup_task sets TASK_ID TASK_TITLE TASK_DESC GATE BASE BRANCH MEMORY and
-#   PLAN_AGENT BUILD_AGENT REVIEW_AGENT; open_task_workspace sets WS WT BUILD_PANE; build_phase
-#   (run_task on resume) sets ROUND VERDICT GATE_LOG; HUMAN_NOTE, COPILOT_NOTE and STEP pass
-#   between the human gates, the Copilot loop and on_interrupt.
+# Shared task state: setup_task sets TASK_ID TASK_TITLE TASK_DESC TASK_STATE GATE BASE BRANCH
+#   MEMORY and PLAN_AGENT BUILD_AGENT REVIEW_AGENT; open_task_workspace sets WS WT BUILD_PANE;
+#   build_phase (run_task on resume) sets ROUND VERDICT GATE_LOG; HUMAN_NOTE, COPILOT_NOTE and
+#   STEP pass between the human gates, the Copilot loop and on_interrupt.
 
-# task_context repo: from TASK_ID and TASK_TITLE, derive GATE BASE BRANCH and the agent names.
-# The base is the branch the checkout is on as the task starts, recorded in its run dir
-# (open_task_workspace); a rerun keeps it whatever branch the checkout is on by then, and
+# task_context repo: from TASK_ID and TASK_TITLE, derive TASK_STATE GATE BASE BRANCH and the
+# agent names. The base is the branch the checkout is on as the task starts, recorded in its run
+# dir (open_task_workspace); a rerun keeps it whatever branch the checkout is on by then, and
 # --fresh, starting the task over, takes the checkout's anew.
 task_context() {
   local slug wt recorded
+  TASK_STATE=$(task_state "$1" "$TASK_ID")
   GATE=$(resolve_gate "$1")
   BASE=$(git -C "$1" rev-parse --abbrev-ref HEAD)
   wt=$(worktree_of "$1" "$TASK_ID")
@@ -2070,8 +2092,8 @@ plan_phase() {
   else
     round=1
     log "planning"
-    rm -f "$WT/$RUN_DIR/state"                                                                                                 # a marker left from before would claim this plan is written
-    rm -f "$WT/$RUN_DIR/plan.md" "$WT/$RUN_DIR"/plan-review-*.md "$WT/$RUN_DIR/plan-changes.md" "$WT/$RUN_DIR/allow-protected" # an earlier plan's would pass as this one's
+    rm -f "$WT/$RUN_DIR/state"                                                                                                    # a marker left from before would claim this plan is written
+    rm -f "$WT/$RUN_DIR/plan.md" "$WT/$RUN_DIR"/plan-review-*.md "$WT/$RUN_DIR/plan-changes.md" "${TASK_STATE:?}/allow-protected" # an earlier plan's would pass as this one's
     write_plan "$PLAN_AGENT"
     mark written 1
   fi
@@ -2488,12 +2510,13 @@ gate_open() {
 }
 
 cmd_approve() { # repo bead-id [--allow-protected]
-  local dir kind
+  local dir kind state
   dir=$(task_run_dir "$1" "$2") || return 1
   kind=$(gate_open "$dir" "$2") || return 1
   if [[ ${3:-} == --allow-protected ]]; then
     [[ $kind == plan ]] || die "--allow-protected is for the plan; $2 waits with its build"
-    : >"$dir/allow-protected"
+    state=$(task_state "$1" "$2") || return 1 # Factory's own, not the run dir the agents write
+    mkdir -p "$state" && : >"$state/allow-protected"
     log "protected-path check waived for $2"
   fi
   : >"$dir/approved"
@@ -2702,8 +2725,12 @@ clean_targets() {
 }
 
 cmd_check() { # worktree base
-  local gate
+  local gate task
   gate=$(resolve_gate "$1")
+  # in a task's worktree, the human's waiver for the task holds as in its run
+  if task=$(cd "$1" && task_args && printf '%s\n%s' "${TARGS[@]}"); then
+    TASK_STATE=$(task_state "${task%$'\n'*}" "${task##*$'\n'}")
+  fi
   CHECK_LOG=$(mktemp)
   trap 'rm -f "$CHECK_LOG"' EXIT
   run_gate "$1" "$gate" "$CHECK_LOG" || {
