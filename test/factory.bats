@@ -207,17 +207,26 @@ context_of() {
   [[ $output == *"not a knob"* ]]
 }
 
-@test "check_efforts: the defaults pass, ultra only for the reviewer, a typo dies" {
-  run check_efforts
+@test "check_knobs: the defaults pass, ultra only for the reviewer; a typo in an effort, the approval, a flag or a count dies" {
+  run check_knobs
   [ "$status" -eq 0 ]
-  FACTORY_PLAN_EFFORT=max FACTORY_BUILD_EFFORT=low FACTORY_REVIEW_EFFORT=ultra run check_efforts
+  FACTORY_PLAN_EFFORT=max FACTORY_BUILD_EFFORT=low FACTORY_REVIEW_EFFORT=ultra FACTORY_APPROVAL=auto FACTORY_POLL_SECONDS=0.5 run check_knobs
   [ "$status" -eq 0 ]
-  FACTORY_BUILD_EFFORT=ultra run check_efforts
+  FACTORY_BUILD_EFFORT=ultra run check_knobs
   [ "$status" -eq 1 ]
   [[ $output == *"FACTORY_BUILD_EFFORT=ultra: not an effort level (low, medium, high, xhigh, max)"* ]]
-  FACTORY_REVIEW_EFFORT='high xhigh' run check_efforts
+  FACTORY_REVIEW_EFFORT='high xhigh' run check_knobs
   [ "$status" -eq 1 ]
   [[ $output == *"(low, medium, high, xhigh, max, ultra)"* ]]
+  FACTORY_APPROVAL=Ask run check_knobs # anything but ask would pass both gates unasked
+  [ "$status" -eq 1 ]
+  [[ $output == *"FACTORY_APPROVAL=Ask: ask or auto"* ]]
+  FACTORY_PR=true run check_knobs
+  [ "$status" -eq 1 ]
+  [[ $output == *"FACTORY_PR=true: 0 or 1"* ]]
+  FACTORY_ROUNDS=0 run check_knobs
+  [ "$status" -eq 1 ]
+  [[ $output == *"FACTORY_ROUNDS=0: a whole number above 0"* ]]
 }
 
 @test "check_push: a run that opens a pull request first checks that origin takes a push without a prompt, and pushes nothing" {
@@ -1087,6 +1096,8 @@ context_of() {
   [ "$(jq -r '.hooks.Stop[0].matcher // "every turn"' <<<"$output")" = "every turn" ]
   [ "$(jq -r '.hooks.Stop[0].hooks[0].command' <<<"$output")" = "$TMP/my\\ factory/factory dialog-hook plan toy-9 $TMP/wt-9/.factory/run" ]
   [ "$(jq -r '[.hooks[][0].hooks[0].command] | unique | length' <<<"$output")" -eq 1 ]
+  # what is Factory's or the human's to run, the agent may not
+  [ "$(jq -r '.permissions.deny | join(",")' <<<"$output")" = "Bash(git push:*),Bash(gh:*),Bash(fy:*),Bash(factory:*),Bash($FACTORY_HOME/factory:*)" ]
 }
 
 @test "dialog-hook: Factory's approval dialog answers the gate as approve, reject and abort do; other answers are recorded" {
@@ -1336,6 +1347,88 @@ IN
   [[ $output == *"uncommitted changes in the worktree"* ]]
 }
 
+@test "guard: a renamed file's lines count only where it changed, a copy's all; a pattern grep cannot read fails the check" {
+  make_repo
+  printf 'relaxed\n' >"$TMP/rules"
+  FACTORY_GUARDRAILS=$TMP/rules
+  printf 'x = 1  # relaxed\n' >"$REPO/mod.py"
+  printf 'SQLite\0\1\377 rows' >"$REPO/data.sqlite"
+  commit_all "a module with a suppression, a fixture"
+  git -C "$REPO" branch -f main
+  mkdir "$REPO/pkg"
+  git -C "$REPO" mv mod.py pkg/mod.py
+  git -C "$REPO" mv data.sqlite pkg/data.sqlite
+  commit_all "move them"
+  guard_check "$REPO" main
+  printf 'y = 2\n' >>"$REPO/pkg/mod.py"
+  git -C "$REPO" mv pkg/mod.py pkg/core.py
+  commit_all "move and change"
+  guard_check "$REPO" main
+  git -C "$REPO" config diff.renames copies # git reads a copy as one
+  cp "$REPO/pkg/core.py" "$REPO/pkg/copy.py"
+  commit_all "copy it"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"pkg/copy.py: x = 1  # relaxed"* ]]
+  [[ $output != *"pkg/core.py: x = 1"* ]]
+  git -C "$REPO" reset -q --hard HEAD~1
+  printf '[unclosed\nrelaxed\n' >"$TMP/rules"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"forbidden patterns unreadable: "*"(fix that line of $TMP/rules)"* ]]
+}
+
+@test "guard: files git converts on checkout as the committed .gitattributes or your own git config say pass: eol=crlf, a global core.autocrlf, a global filter as Git LFS's" {
+  make_repo
+  export GIT_CONFIG_GLOBAL=$TMP/gitconfig
+  git config --global filter.fake.clean 'sed s/^/pointer:/'
+  git config --global filter.fake.smudge 'sed s/^pointer://'
+  printf '*.bat text eol=crlf\n*.bin filter=fake\n' >"$REPO/.gitattributes"
+  printf 'echo hi\n' >"$REPO/run.bat"
+  printf 'payload\n' >"$REPO/asset.bin"
+  commit_all "converted files"
+  git -C "$REPO" branch -f main
+  rm "$REPO/run.bat" "$REPO/asset.bin"
+  git -C "$REPO" checkout -- run.bat asset.bin
+  [ "$(cat "$REPO/asset.bin")" = payload ]
+  [[ $(cat "$REPO/run.bat") == *$'\r' ]]
+  printf 'echo x\n' >"$REPO/run.sh"
+  commit_all change
+  guard_check "$REPO" main
+  git config --global core.autocrlf true
+  rm "$REPO/run.sh"
+  git -C "$REPO" checkout -- run.sh
+  [[ $(cat "$REPO/run.sh") == *$'\r' ]]
+  guard_check "$REPO" main
+}
+
+@test "guard: an untracked .gitignore that ignores itself in a tracked directory, or a line added to info/exclude, hides files and fails the check" {
+  make_repo
+  mkdir "$REPO/tests"
+  printf 'def test(): pass\n' >"$REPO/tests/test_a.py"
+  commit_all "tests"
+  git -C "$REPO" branch -f main
+  printf 'echo x\n' >"$REPO/run.sh"
+  commit_all change
+  printf '*\n' >"$REPO/tests/.gitignore"
+  printf 'import pytest\n' >"$REPO/tests/conftest.py"
+  mkdir "$REPO/.pytest_cache"
+  printf '*\n' >"$REPO/.pytest_cache/.gitignore" # a tool's own, in a directory of its own
+  [ -z "$(git -C "$REPO" status --porcelain)" ]
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"untracked .gitignore that ignores itself: tests/.gitignore"* ]]
+  [[ $output != *".pytest_cache"* ]]
+  rm "$REPO/tests/.gitignore" "$REPO/tests/conftest.py"
+  guard_check "$REPO" main
+  mkdir -p "$TASK_STATE"
+  file_hash "$REPO/.git/info/exclude" >"$TASK_STATE/exclude"
+  printf 'tests/conftest.py\n' >>"$REPO/.git/info/exclude"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"info/exclude changed since the task started"* ]]
+}
+
 @test "guard: a change still counts when the worktree's index marks the file unchanged" {
   make_repo
   printf 'echo hello\n' >"$REPO/run.sh"
@@ -1443,8 +1536,9 @@ IN
   [ -z "$(git -C "$REPO" status --porcelain)" ]
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
-  [[ $output == *"uncommitted changes in the worktree"* ]]
-  [[ $output == *" M .factory/guardrails.txt (bytes differ from the commit's; git's conversions hide it)"* ]]
+  [[ $output != *"uncommitted changes in the worktree"* ]] # committing would not help
+  [[ $output == *"files that are not the commit's, though git shows no change"* ]]
+  [[ $output == *" M .factory/guardrails.txt $MASKED"* ]]
   git -C "$REPO" config --unset core.autocrlf
   printf 'skip\n' >"$REPO/.factory/guardrails.txt"
   # An edited recipe, and a clean filter, named in info/attributes, that hands git the commit's.
@@ -1455,7 +1549,7 @@ IN
   [ -z "$(git -C "$REPO" status --porcelain)" ]
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
-  [[ $output == *" M justfile (bytes differ from the commit's; git's conversions hide it)"* ]]
+  [[ $output == *" M justfile $MASKED"* ]]
   printf 'ci:\n\tjust test\n' >"$REPO/justfile"
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
@@ -1767,6 +1861,9 @@ IN
   run gate_then_guards builder 1
   [ "$status" -eq 1 ]
   [[ $output == *"$TMP/wt-9 is no worktree that $REPO lists"* ]]
+  # listed by a path relative to its entry, as worktree.useRelativePaths writes it
+  realpath -m --relative-to="$admin" "$TMP/wt-9/.git" >"$admin/gitdir"
+  own_worktree
 }
 
 @test "the gate, the guardrails and the push hold to one commit: the branch's tip the gate passed" {
@@ -1787,9 +1884,12 @@ IN
   gate_then_guards builder 1
   printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
   git -C "$TMP/wt-9" commit -qam "relax the gate after the gate"
-  run raise_pr builder
+  run raise_pr builder # checked again before the push, and refused
   [ "$status" -eq 1 ]
-  [[ $output == *"refusing to push a commit the gate has not passed"* ]]
+  [[ $output == *"protected path changed: .factory/gate"*"gate or guardrails fail on the tip of factory/toy-9"* ]]
+  run push_gated -q
+  [ "$status" -eq 1 ]
+  [[ $output == *"refusing to push what they have not passed"* ]]
   run git -C "$TMP/origin.git" rev-parse --verify -q refs/heads/factory/toy-9
   [ "$status" -ne 0 ]
   # back on the gated commit, exactly that one is pushed
@@ -1797,6 +1897,29 @@ IN
   raise_pr builder
   [ "$(git -C "$TMP/origin.git" rev-parse refs/heads/factory/toy-9)" = "$(git -C "$TMP/wt-9" rev-parse HEAD)" ]
   [ "$(git -C "$TMP/wt-9" rev-parse --abbrev-ref '@{upstream}')" = origin/factory/toy-9 ]
+  # a fixup committed by hand after the run: checked on the new tip, then pushed
+  printf 'echo y\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam "a fixup by hand"
+  raise_pr builder
+  [ "$(git -C "$TMP/origin.git" rev-parse refs/heads/factory/toy-9)" = "$(git -C "$TMP/wt-9" rev-parse HEAD)" ]
+}
+
+@test "open_task_workspace: a task that starts on a checkout git reads as changed stops before any agent works" {
+  make_repo
+  task_worktree
+  TASK_ID=toy-9 TASK_TITLE=t
+  task_context "$REPO"
+  open_workspace() { WS=w9 WT=$TMP/wt-9 BUILD_PANE=p9; }
+  printf 'left over\n' >"$TMP/wt-9/junk.txt"
+  run open_task_workspace "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"?? junk.txt"*"$TMP/wt-9 reads as changed before any work on toy-9"* ]]
+  rm "$TMP/wt-9/junk.txt"
+  open_task_workspace "$REPO"
+  # once work is under way, its changes are the run's to check
+  mark planned
+  printf 'half done\n' >"$TMP/wt-9/junk.txt"
+  open_task_workspace "$REPO"
 }
 
 @test "build approval: a approves; r and the reject file hand the note back with 4" {
@@ -1837,8 +1960,9 @@ IN
 @test "prompts: agents reply with what they write; reviews name their step and round" {
   fake_task
   WT=$TMP
-  TASK_DESC="" GATE=true MEMORY=""
+  TASK_DESC="" GATE=true MEMORY="" BASE=main BRANCH=factory/toy-1
   task_base() { printf main; }
+  [[ $(build_prompt) == *"do not rebase onto or merge main: Factory brings the branch up to date itself"* ]]
   [[ $(review_prompt 2) == *"review-2.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_check_prompt 2) == *"review-2-plan.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_review_prompt 1) == *"plan-review-1.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
@@ -1968,7 +2092,7 @@ IN
   # no plan to go on with, or no round given: planned anew, and the marker goes before the
   # planner starts, so that a run stopped while it plans does not take its plan for written
   rm "$run/plan.md"
-  printf 'written 2\n' >"$run/state"
+  mark written 2
   write_plan() {
     printf 'planned at %s\n' "$(resume_point)"
     printf 'the plan\n' >"$run/plan.md"
@@ -1990,7 +2114,7 @@ IN
 
 @test "run_task: a rerun goes on after the milestone its state names" {
   make_repo
-  setup_task() { TASK_ID=toy-1; }
+  setup_task() { TASK_ID=toy-1 BRANCH=factory/toy-1; }
   open_task_workspace() {
     WT=$TMP/wt
     mkdir -p "$WT/$RUN_DIR"
@@ -2005,19 +2129,25 @@ IN
   run run_task "$REPO" toy-1
   [ "$status" -eq 0 ]
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = plan_phase,build_phase,finish_task ]
-  printf 'written 2\n' >"$TMP/wt/$RUN_DIR/state"
+  mark written 2
   run run_task "$REPO" toy-1
   [[ $output == *"resuming after: written 2"* ]]
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = "plan_phase round 2,build_phase,finish_task" ]
-  printf 'reviewed\n' >"$TMP/wt/$RUN_DIR/state"
+  mark reviewed
   run run_task "$REPO" toy-1
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = approve_plan,build_phase,finish_task ]
-  printf 'planned\n' >"$TMP/wt/$RUN_DIR/state"
+  mark planned
   run run_task "$REPO" toy-1
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = "build_phase resume,finish_task" ]
-  printf 'built 1\n' >"$TMP/wt/$RUN_DIR/state"
+  mark built 1
+  guarded() { :; }
   run run_task "$REPO" toy-1
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = finish_task ]
+  # a commit since the approval, or a task from before Factory recorded the check: built again
+  guarded() { HEAD_SHA=abc && return 1; }
+  run run_task "$REPO" toy-1
+  [[ $output == *"the approved build is not abc"* ]]
+  [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = "build_phase resume,finish_task" ]
 }
 
 @test "plan_phase: a revised plan goes back to both reviewers, up to FACTORY_PLAN_ROUNDS" {
@@ -2368,9 +2498,12 @@ JSON
   [ ! -e "$TMP/wt-m" ]
   run git -C "$REPO" branch --list 'factory/*' --format='%(refname:short)'
   [ "$output" = "factory/toy-u" ]
+  mkdir -p "$(task_state "$REPO" toy-u)"
+  printf 'abc refs/heads/main\n' >"$(task_state "$REPO" toy-u)/base"
   run cmd_clean "$REPO" toy-u --force
   [[ $output == *"cleaned factory/toy-u"* ]]
   [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
+  [ ! -e "$(task_state "$REPO" toy-u)" ] # a task of that id run again starts with no base or checks
 }
 
 @test "clean: a task still in planning stays, though its branch has no commits of its own" {
@@ -2817,7 +2950,7 @@ JSON
   [ "$status" -eq 0 ]
   run settle_dialogs t-plan
   [ "$status" -eq 0 ]
-  [[ $output == *"t-plan is blocked on a dialog I could not clear; answer it in its pane"* ]]
+  [[ $output == *"t-plan is blocked on a dialog Factory could not clear; answer it in its pane"* ]]
   [ ! -s "$TMP/keys" ]
 }
 
@@ -3247,7 +3380,11 @@ JSON
   [[ $output == *"no open tasks in $TMP"* ]]
 }
 
-@test "next claims atomically through bd ready --claim" {
+@test "next claims atomically through bd ready --claim; a bd that fails is no empty queue" {
+  run cmd_next "$TMP"
+  [ "$status" -eq 1 ]
+  [[ $output == *"no beads in $TMP"* ]]
+  mkdir "$TMP/.beads"
   bd() {
     printf '%s\n' "$*" >>"$TMP/bd.log"
     printf '[]'
@@ -3255,44 +3392,65 @@ JSON
   run cmd_next "$TMP"
   [ "$status" -eq 3 ]
   grep -q 'ready --claim --json' "$TMP/bd.log"
+  bd() { printf 'database is locked\n' >&2 && return 1; }
+  run cmd_next "$TMP"
+  [ "$status" -eq 1 ]
+  [[ $output == *"database is locked"*"bd could not hand out a ready task in $TMP"* ]]
 }
 
-@test "cmd_queue: runs tasks until none is ready, warns about a failed one, stops at max" {
-  cmd_next() { # one scripted status per call, from stdin
-    local rc
-    read -r rc || rc=3
-    printf 'next %s\n' "$1"
-    return "$rc"
-  }
-  run cmd_queue repo <<<$'0\n2\n3\n0'
+@test "cmd_queue: each task a factory next of its own, with the flags; goes on past a failed one, stops when none is ready, at max, or on an interrupt" {
+  mkdir "$TMP/fy"
+  cat >"$TMP/fy/factory" <<'EOF'
+#!/usr/bin/env bash
+# factory next, scripted: the next status from the file, 3 once it is used up
+rc=$(head -n 1 "$TMP/rcs")
+sed -i 1d "$TMP/rcs"
+printf '%s %s pr=%s approval=%s\n' "$1" "$2" "$FACTORY_PR" "$FACTORY_APPROVAL"
+exit "${rc:-3}"
+EOF
+  chmod +x "$TMP/fy/factory"
+  export TMP
+  FACTORY_HOME=$TMP/fy FACTORY_PR=1 FACTORY_APPROVAL=auto
+  printf '%s\n' 0 2 3 0 >"$TMP/rcs"
+  run cmd_queue repo
   [ "$status" -eq 0 ]
-  [ "$(grep -c '^next repo' <<<"$output")" -eq 3 ]
+  [ "$(grep -c '^next repo pr=1 approval=auto' <<<"$output")" -eq 3 ]
   [[ $output == *"task stopped with status 2; continuing"*"queue finished after 2 task(s)"* ]]
-  run cmd_queue repo 2 <<<$'0\n0\n0'
+  printf '%s\n' 0 0 0 >"$TMP/rcs"
+  run cmd_queue repo 2
   [ "$(grep -c '^next repo' <<<"$output")" -eq 2 ]
   [[ $output == *"queue finished after 2 task(s)"* ]]
+  printf '%s\n' 0 130 0 >"$TMP/rcs"
+  run cmd_queue repo
+  [ "$status" -eq 130 ]
+  [ "$(grep -c '^next repo' <<<"$output")" -eq 2 ]
+  [[ $output == *"queue interrupted after 1 task(s)"* ]]
 }
 
 @test "rebase_onto_base: up to date, clean rebase, and conflicts handed to the builder" {
   make_repo
+  add_origin
   on_work_branch
   GATE=true
   # up to date: nothing to do
   rebase_onto_base builder
-  # base moves on another file: clean rebase
+  # origin's base moves on another file: clean rebase, measured from there on
   git -C "$REPO" checkout -q main
   printf 'other\n' >"$REPO/other.txt"
   commit_all "base moves"
+  git -C "$REPO" push -q origin main
   git -C "$REPO" checkout -q work
   printf 'mine\n' >"$REPO/mine.txt"
   commit_all "work"
   run rebase_onto_base builder
-  [ "$status" -eq 10 ]
+  [ "$status" -eq 0 ]
   git -C "$REPO" merge-base --is-ancestor main work
+  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$REPO" rev-parse main) refs/remotes/origin/main" ]
   # base changes the same line: conflict, the stubbed builder resolves it
   git -C "$REPO" checkout -q main
   printf 'echo base\n' >"$REPO/run.sh"
   commit_all "base edits run.sh"
+  git -C "$REPO" push -q origin main
   git -C "$REPO" checkout -q work
   printf 'echo work\n' >"$REPO/run.sh"
   commit_all "work edits run.sh"
@@ -3302,7 +3460,7 @@ JSON
     GIT_EDITOR=true git -C "$REPO" rebase --continue >/dev/null 2>&1
   }
   run rebase_onto_base builder
-  [ "$status" -eq 10 ]
+  [ "$status" -eq 0 ]
   [[ $output == *"rebase conflicts in: run.sh"* ]]
   [ "$(cat "$REPO/run.sh")" = "echo both" ]
   git -C "$REPO" merge-base --is-ancestor main work
@@ -3310,6 +3468,7 @@ JSON
   git -C "$REPO" checkout -q main
   printf 'echo base2\n' >"$REPO/run.sh"
   commit_all "base again"
+  git -C "$REPO" push -q origin main
   git -C "$REPO" checkout -q work
   printf 'echo work2\n' >"$REPO/run.sh"
   commit_all "work again"
@@ -3334,12 +3493,10 @@ JSON
   git -C "$TMP/other" push -q origin main
   printf 'mine\n' >"$REPO/mine.txt"
   commit_all "work"
-  [ "$(base_ref)" = main ]
+  [ "$(base_ref)" = refs/heads/main ]
   GATE=true
-  rc=0
-  rebase_onto_base builder || rc=$?
-  [ "$rc" -eq 10 ]
-  [ "$(base_ref)" = origin/main ]
+  rebase_onto_base builder
+  [ "$(base_ref)" = refs/remotes/origin/main ]
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"protected path changed: .factory/gate"* ]]
@@ -3351,14 +3508,74 @@ JSON
   git -C "$TMP/other" commit -qm "upstream moves on"
   git -C "$TMP/other" push -q origin main
   git -C "$REPO" fetch -q origin main
-  [ "$(base_ref)" = origin/main ]
+  [ "$(base_ref)" = refs/remotes/origin/main ]
   gate_then_guards builder copilot-1
+}
+
+@test "guard_branch: a branch that took in newer commits of origin's base is measured from the newest it holds; one only a local ref holds counts as the branch's" {
+  make_repo
+  add_origin
+  task_opened
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam work
+  # a teammate's change to the gate lands on origin's main, and the branch merges it
+  git clone -q -b main "$TMP/origin.git" "$TMP/other"
+  printf '#!/bin/sh\nexit 0 # stricter\n' >"$TMP/other/.factory/gate"
+  git -C "$TMP/other" -c user.email=t@example.invalid -c user.name=t commit -qam "upstream touches the gate"
+  git -C "$TMP/other" push -q origin main
+  git -C "$TMP/wt-9" fetch -q origin
+  git -C "$TMP/wt-9" merge -q --no-edit origin/main
+  gate_branch "$TMP/gate.log"
+  run guard_branch
+  [ "$status" -eq 0 ]
+  [[ $output == *"took in newer commits of origin's main"* ]]
+  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$TMP/other" rev-parse HEAD) refs/remotes/origin/main" ]
+  [ "$(cat "$TASK_STATE/guarded")" = "$(git -C "$TMP/wt-9" rev-parse HEAD)" ]
+  # a commit put on the local main, and merged: origin does not hold it, so it is the branch's
+  git -C "$REPO" checkout -q main
+  printf 'relaxed\n' >"$REPO/.factory/rules"
+  commit_all "a rule on main"
+  git -C "$TMP/wt-9" merge -q --no-edit main
+  gate_branch "$TMP/gate.log"
+  run guard_branch
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/rules"* ]]
+  [[ $output != *".factory/gate"* ]]
+}
+
+@test "rebase_onto_base: origin's base as fetched from the URL the task recorded, whatever the tracking ref or the remote's config say" {
+  make_repo
+  add_origin
+  on_work_branch
+  GATE=true
+  [ "$(cat "$TASK_STATE/origin")" = "$TMP/origin.git" ]
+  # an agent's commit off main, the tracking ref moved to it, the remote's fetch and URL changed
+  git -C "$REPO" checkout -q -b evil main
+  printf 'x\n' >"$REPO/evil.txt"
+  commit_all evil
+  local evil
+  evil=$(git -C "$REPO" rev-parse HEAD)
+  git -C "$REPO" checkout -q work
+  git -C "$REPO" update-ref refs/remotes/origin/main "$evil"
+  git -C "$REPO" config remote.origin.fetch '+refs/heads/none:refs/remotes/origin/none'
+  git -C "$REPO" config remote.origin.url "$TMP/elsewhere"
+  printf 'mine\n' >"$REPO/mine.txt"
+  commit_all work
+  rebase_onto_base builder
+  run git -C "$REPO" merge-base --is-ancestor "$evil" work
+  [ "$status" -eq 1 ]
+  [ "$(git -C "$REPO" rev-parse refs/remotes/origin/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
+  # a rewrite of the recorded URL in the repo's config is refused
+  git -C "$REPO" config "url.$TMP/elsewhere.insteadOf" "$TMP/origin.git"
+  run rebase_onto_base builder
+  [ "$status" -eq 1 ]
+  [[ $output == *"git rewrites origin's URL, $TMP/origin.git, to $TMP/elsewhere"*"could not fetch main from origin"* ]]
 }
 
 @test "base_ref: the local main when it is newer than origin's, or when there is no origin" {
   make_repo
   on_work_branch
-  [ "$(base_ref)" = main ]
+  [ "$(base_ref)" = refs/heads/main ]
   add_origin
   git -C "$REPO" fetch -q origin
   # an unpushed commit on main touches the gate; a branch cut from it is not blamed for that
@@ -3369,7 +3586,7 @@ JSON
   git -C "$REPO" rebase -q main
   printf 'mine\n' >"$REPO/mine.txt"
   commit_all "work"
-  [ "$(base_ref)" = main ]
+  [ "$(base_ref)" = refs/heads/main ]
   guard_check "$REPO" "$(base_ref)"
   run guard_check "$REPO" origin/main
   [ "$status" -eq 1 ]
@@ -3537,9 +3754,9 @@ JSON
   gh() { printf '%s\n' "$GH_OUT"; }
   GH_OUT="https://example.test/pr/7" run existing_pr
   [ "$output" = "https://example.test/pr/7" ]
-  gh() { return 1; }
+  gh() { return 1; } # gh failing is no "none open"
   run existing_pr
-  [ -z "$output" ]
+  [ "$status" -eq 1 ]
 }
 
 @test "on_interrupt notes the bead and exits 130" {
@@ -3567,9 +3784,11 @@ JSON
   [ "$(resume_point)" = planned ]
   mark built 2
   [ "$(resume_point)" = "built 2" ]
+  [ -s "$TASK_STATE/state" ] # Factory's, out of the run dir the agents write
+  [ ! -e "$TMP/.factory/run/state" ]
   FACTORY_FRESH=1
   [ -z "$(resume_point)" ]
-  [ ! -e "$TMP/.factory/run/state" ]
+  [ ! -e "$TASK_STATE/state" ]
 }
 
 @test "show_md: glow renders when present, plain indent otherwise" {
@@ -3605,8 +3824,12 @@ JSON
   run copilot_loop builder https://example.invalid/pull/7
   [ "$status" -eq 1 ]
   sha=$(git -C "$REPO" rev-parse HEAD)
-  [[ $output == *"replied round 1 on $sha"*"resolved $sha"*"answered without changes"* ]]
+  [[ $output == *"replied round 1 on $sha"*"resolved $sha"* ]]
   [[ $output != *"round 2"* ]]
+  rc=0
+  copilot_loop builder https://example.invalid/pull/7 >/dev/null || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$COPILOT_NOTE" = "Copilot's comments answered without changes" ]
 }
 
 @test "help and unknown command" {
@@ -3624,4 +3847,28 @@ JSON
   run main bogus
   [ "$status" -eq 1 ]
   [[ $output == *"unknown command"* ]]
+}
+
+@test "finish_task: hands over saying why the guardrails failed, or that origin's branch is not the commit Factory pushed" {
+  make_repo
+  add_origin
+  task_opened
+  ask() { :; }
+  bd() { :; }
+  gh() { :; }
+  ROUND=1 VERDICT=APPROVE FACTORY_PR=0
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam work
+  run finish_task "$REPO"
+  [ "$status" -eq 2 ]
+  [[ $output == *"needs a human"*"guardrails: the gate has not passed on $(git -C "$TMP/wt-9" rev-parse HEAD)"* ]]
+  gate_then_guards builder 1
+  FACTORY_PR=1 FACTORY_COPILOT=1
+  copilot_loop() { # an agent's push behind Factory's back
+    git -C "$TMP/wt-9" commit -q --allow-empty -m sneaky
+    git -C "$TMP/wt-9" push -q origin HEAD:refs/heads/factory/toy-9
+  }
+  run finish_task "$REPO"
+  [ "$status" -eq 2 ]
+  [[ $output == *"needs a human"*"origin's factory/toy-9 is not "*", the commit Factory checked and pushed"* ]]
 }
