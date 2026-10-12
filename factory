@@ -1867,6 +1867,7 @@ Task $TASK_ID: $TASK_TITLE
 $TASK_DESC
 
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
+End the plan with one line, Protected paths: none, or Protected paths: and the ones the build must change; the build may change them only if the human allows protected paths at approval. Protected are these git pathspecs: $(protected_globs "$WT" | tr '\n' ' ')
 Do not write the code itself and do not change any file outside $RUN_DIR/; Factory checks.
 If the task is ambiguous in a way that would change the design, ask the human first with your AskUserQuestion tool (up to four questions, with options where they help); prefer a plan with stated assumptions when the ambiguity is minor.$([[ ! -s $TASK_STATE/decisions.md ]] || printf ' The human'"'"'s answers and decisions on this task so far are in %s; read them before asking again.' "$RUN_DIR/decisions.md")
 The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected to waive protected paths), !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
@@ -1881,12 +1882,24 @@ build_prompt() {
 Task $TASK_ID: $TASK_TITLE
 
 Re-read $RUN_DIR/plan.md now; it is final and may have changed since you checked it. Implement it on this branch ($BRANCH) in this worktree. Run the gate until it passes: $GATE
-Commit when done; do not push, and do not rebase onto or merge $BASE: Factory brings the branch up to date itself. Factory tracks and closes bead $TASK_ID. Files under $RUN_DIR/ are ignored by git. Do not change: $(protected_globs "$WT" | tr '\n' ' ')
+Commit when done; do not push, and do not rebase onto or merge $BASE: Factory brings the branch up to date itself. Factory tracks and closes bead $TASK_ID. Files under $RUN_DIR/ are ignored by git. $(protected_rule)
 No skipped tests, suppressed warnings, or swallowed errors; fix things properly.
 The human approves, revises or aborts the build in a dialog Factory has you show, or by typing !fy approve, !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 $MEMORY
 Reply with just DONE when finished.
 P
+}
+
+# protected_rule: the builder's rule on the protected paths: leave them alone, or, once the
+# human allowed them at the plan's approval, change those the plan names and no others
+protected_rule() {
+  local globs
+  globs=$(protected_globs "$WT" | tr '\n' ' ')
+  if waived; then
+    printf 'The human allowed protected paths for this task: change those the plan names, and no others of: %s' "$globs"
+  else
+    printf 'Do not change: %s' "$globs"
+  fi
 }
 
 # gate_fix_prompt logfile
@@ -2350,6 +2363,14 @@ plan_rounds() {
   printf '%s' "$n"
 }
 
+# says_protected plan-file: 0 when the plan ends as the planner is asked to, with its line on
+# the protected paths the build must change (Protected paths: none, or which), markdown or not
+says_protected() {
+  local line re='^[[:space:]#>*_-]*protected paths[*_]*:'
+  line=$(awk 'NF {line = $0} END {print line}' "$1" 2>/dev/null) || line=""
+  [[ ${line,,} =~ $re ]]
+}
+
 # show_for_approval plan|build dir: the plan, or the branch's commits and diff stat, with the keys to answer
 show_for_approval() {
   local n v color=never width=80 a p r b esc="" base
@@ -2370,6 +2391,7 @@ show_for_approval() {
       [[ $2/plan.md -nt $2/plan-review-$n-build.md ]] && v+=" (plan changed since)" # the last revision, a note or a hand edit
       printf '\n%s plan review round %s: %s, notes in %s and %s\n' "$TAG" "$n" "$v" "$2/plan-review-$n.md" "$2/plan-review-$n-build.md" >&2
     fi
+    says_protected "$2/plan.md" || warn "the plan does not end with its Protected paths line: ask the planner whether the build must change protected paths"
     printf '\n%s [%s]pprove (edit the file or talk to the planner%s first if you like), a[%s]prove and allow protected paths, [%s]evise with a note, a[%s]ort? (%s/%s/%s/%s) ' "$TAG" "$a" "$esc" "$p" "$r" "$b" "$a" "$p" "$r" "$b" >&2
   else
     base=$(task_base) || exit 1

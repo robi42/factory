@@ -887,6 +887,23 @@ context_of() {
   [[ $output == *"plan review round 2: APPROVE APPROVE (plan changed since), notes in"* ]]
 }
 
+@test "plan approval: a plan that does not end saying which protected paths the build changes is flagged" {
+  fake_task
+  printf '# Plan\nchange src/x\n' >"$TMP/plan.md"
+  run show_for_approval plan "$TMP"
+  [ "$status" -eq 0 ]
+  [[ $output == *"the plan does not end with its Protected paths line: ask the planner whether the build must change protected paths"*"pprove"* ]]
+  printf '# Plan\nchange src/x\n\nProtected paths: none\n\n' >"$TMP/plan.md"
+  run show_for_approval plan "$TMP"
+  [[ $output != *"Protected paths line"* ]]
+  printf '# Plan\nchange justfile\n\n**Protected paths:** justfile (the new recipe)\n' >"$TMP/plan.md"
+  run show_for_approval plan "$TMP"
+  [[ $output != *"Protected paths line"* ]]
+  printf 'Protected paths: none\n\n# Verify\nrun the gate\n' >"$TMP/plan.md" # not where it ends
+  run show_for_approval plan "$TMP"
+  [[ $output == *"the plan does not end with its Protected paths line"* ]]
+}
+
 @test "approval keys: coloured by what they do at a terminal, plain otherwise" {
   [ "$(key a)$(key p)$(key r)$(key b)" = aprb ] # the tests' stderr is no terminal
   run script -qec "bash -c 'source \"$BATS_TEST_DIRNAME/../factory\"; key a; key p; key r; key b'" /dev/null
@@ -2132,6 +2149,19 @@ IN
   # the step and round sit above the verdict, which still ends the file
   printf 'notes\nCODE REVIEW round 2\nVERDICT: REVISE\n' >"$TMP/review.md"
   [ "$(verdict_of "$TMP/review.md")" = REVISE ]
+}
+
+@test "prompts: the plan ends saying which protected paths the build changes, which it may once the human allows them" {
+  fake_task
+  WT=$TMP
+  TASK_DESC="" GATE=true MEMORY="" BASE=main BRANCH=factory/toy-1
+  mkdir -p "$TMP/.factory"
+  printf 'src/legacy/*\n' >"$TMP/.factory/protected"
+  [[ $(plan_prompt) == *"End the plan with one line, Protected paths: none, or Protected paths: and the ones the build must change; the build may change them only if the human allows protected paths at approval. Protected are these git pathspecs: .factory :(exclude).factory/run src/legacy/* "* ]]
+  [[ $(build_prompt) == *"Do not change: .factory :(exclude).factory/run src/legacy/* "* ]]
+  waive
+  [[ $(build_prompt) == *"The human allowed protected paths for this task: change those the plan names, and no others of: .factory :(exclude).factory/run src/legacy/* "* ]]
+  [[ $(build_prompt) != *"Do not change"* ]]
 }
 
 @test "write_plan: the planner's turn ends with its plan, or gets one nudge, then the run stops" {

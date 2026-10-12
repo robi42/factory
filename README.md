@@ -227,7 +227,10 @@ note, and the planner revises once more if either objects. The plan comes back w
 short note on what changed and why and that round's verdicts, and you are asked again;
 until then `fy approve`, `reject` and `abort` say the plan is in review. For a change no
 reviewer needs to see, edit `plan.md`, or talk to the planner in its pane after Esc on its
-dialog, first; the builder reads the file.
+dialog, first; the builder reads the file. The plan ends saying whether the build must
+change protected paths, `Protected paths: none` or which, so you know whether to allow
+them; Factory warns when it does not. With them allowed, the builder is told to change the
+ones the plan names and no others.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
 the branch's commits and diff stat and waits the same way: the builder's dialog, `a`

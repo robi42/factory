@@ -49,6 +49,10 @@ Factory looks for it.
   instead of failing every check after hours of work.
 - `factory doctor` also checks that `fy` resolves from a login shell, as the `!fy`
   commands in a pane need, and that git is 2.31 or newer.
+- The plan ends saying whether the build must change protected paths, as
+  `Protected paths: none` or which, so you know at approval whether to allow them. The
+  planner is told which paths are protected; Factory warns at the approval when the plan
+  does not say.
 
 ### Changed
 - The planner asks its questions in its own question dialog, with options where they
@@ -89,6 +93,8 @@ Factory looks for it.
   dialog instead.
 
 ### Fixed
+- A build whose plan you approved with protected paths allowed was still told to change
+  none of them; it is told to change those the plan names, and no others.
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.
