@@ -1114,15 +1114,40 @@ context_of() {
   run cmd_approve "$REPO" toy-404
   [ "$status" -eq 1 ]
   [[ $output == *"no worktree"* ]]
+  # any dir of the repo names it: one below its top, the task's worktree, one cd finds on CDPATH
+  printf 'plan %s\n' "$$" >"$st/waiting"
+  mkdir "$REPO/src"
+  cmd_approve "$REPO/src" toy-9
+  [ -e "$st/approved" ]
+  cmd_reject "$TMP/wt-9" toy-9 "later"
+  [ -e "$st/reject.md" ]
+  (cd "$TMP" && CDPATH=$TMP cmd_abort repo toy-9)
+  [ -e "$st/aborted" ]
 }
 
-@test "dialog_hooks: the agents' question dialogs report to factory dialog-hook, told the task and its run dir, as they open, when answered, and as each turn ends" {
+@test "task_state: one dir for a task from any dir of its repo, any worktree of it, a bare repo's beside its worktrees" {
+  make_repo
+  local st
+  st=$(task_state "$REPO" toy-9)
+  [[ $st == "$XDG_STATE_HOME/factory/tasks/repo-"*/toy-9 ]]
+  mkdir "$REPO/src"
+  git -C "$REPO" worktree add -q "$TMP/linked" -b other
+  [ "$(task_state "$REPO/src" toy-9)" = "$st" ]
+  [ "$(task_state "$TMP/linked" toy-9)" = "$st" ]
+  git clone -q --bare "$REPO" "$TMP/app/.bare"
+  git -C "$TMP/app/.bare" worktree add -q "$TMP/app/main" main
+  st=$(task_state "$TMP/app/main" toy-9)
+  [[ $st == "$XDG_STATE_HOME/factory/tasks/app-"*/toy-9 ]]
+  [ "$(task_state "$TMP/app/.bare" toy-9)" = "$st" ]
+}
+
+@test "dialog_hooks: the agents' question dialogs report to factory dialog-hook, told the task, its run dir and state, as they open, when answered, and as each turn ends" {
   FACTORY_HOME="$TMP/my factory" TASK_ID=toy-9 WT=$TMP/wt-9
   run dialog_hooks plan
   [ "$status" -eq 0 ]
   [ "$(jq -r '.hooks.PreToolUse[0].matcher, .hooks.PostToolUse[0].matcher' <<<"$output" | paste -sd,)" = AskUserQuestion,AskUserQuestion ]
   [ "$(jq -r '.hooks.Stop[0].matcher // "every turn"' <<<"$output")" = "every turn" ]
-  [ "$(jq -r '.hooks.Stop[0].hooks[0].command' <<<"$output")" = "$TMP/my\\ factory/factory dialog-hook plan toy-9 $TMP/wt-9/.factory/run" ]
+  [ "$(jq -r '.hooks.Stop[0].hooks[0].command' <<<"$output")" = "$TMP/my\\ factory/factory dialog-hook plan toy-9 $TMP/wt-9/.factory/run $TMP/task" ]
   [ "$(jq -r '[.hooks[][0].hooks[0].command] | unique | length' <<<"$output")" -eq 1 ]
   # what is Factory's or the human's to run, the agent may not
   [ "$(jq -r '.permissions.deny | join(",")' <<<"$output")" = "Bash(git push:*),Bash(gh:*),Bash(fy:*),Bash(factory:*),Bash($FACTORY_HOME/factory:*)" ]
@@ -1167,8 +1192,8 @@ context_of() {
   [ "$(tail -1 "$st/tree-at-answer")" = "?? notes.txt" ]
   git -C "$TMP/wt-9" checkout -q -- run.sh
   rm -f "$TMP/wt-9/sample.csv" "$TMP/wt-9/notes.txt" "$st/tree-at-answer"
-  # the hook as Claude Code runs it, through main
-  run main dialog-hook build toy-9 "$run" < <(hook PreToolUse)
+  # the hook as Claude Code runs it, through main, told the task's state
+  run main dialog-hook build toy-9 "$run" "$st" < <(hook PreToolUse)
   [ "$status" -eq 0 ]
   [ -e "$run/asking-build" ]
   hook Stop | cmd_dialog_hook build toy-9 "$run"

@@ -2,6 +2,7 @@
 # Factory: a simple software factory on Herdr. CLI name: factory.
 # Claude Code plans (Fable) and builds (Opus), Codex reviews (GPT), Beads remembers.
 set -euo pipefail
+unset CDPATH # a cd to a relative dir would print it into the $(...) around it
 
 FACTORY_HOME=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 FACTORY_VERSION=0.1.11
@@ -313,13 +314,13 @@ settle_dialogs() {
 
 # dialog_hooks plan|build -> Claude Code settings for the task's planner or builder: its
 # question dialogs report to factory dialog-hook as they open (PreToolUse), when answered
-# (PostToolUse), and at the end of each turn (Stop). The hook is told the task and its run dir,
-# not left to find them from wherever the agent's shell is. The agent may not run what is
+# (PostToolUse), and at the end of each turn (Stop). The hook is told the task, its run dir and
+# Factory's state for it, not left to find them from wherever the agent's shell is. The agent may not run what is
 # Factory's or the human's to run (permissions.deny, a check on its commands, not a sandbox): a
 # push, which would put unchecked commits in the pull request, gh, and Factory itself, whose
 # approve would answer the human's gate. A hook runs outside these rules.
 dialog_hooks() {
-  jq -n --arg cmd "$(printf '%q dialog-hook %s %q %q' "$FACTORY_HOME/factory" "$1" "$TASK_ID" "$WT/$RUN_DIR")" \
+  jq -n --arg cmd "$(printf '%q dialog-hook %s %q %q %q' "$FACTORY_HOME/factory" "$1" "$TASK_ID" "$WT/$RUN_DIR" "$TASK_STATE")" \
     --arg self "$FACTORY_HOME/factory" \
     '[{hooks: [{type: "command", command: $cmd}]}] as $h | ($h | map(. + {matcher: "AskUserQuestion"})) as $q
      | {hooks: {PreToolUse: $q, PostToolUse: $q, Stop: $h},
@@ -946,14 +947,22 @@ file_hash() { [[ ! -f $1 ]] || sha256sum <"$1" | cut -d ' ' -f 1; }
 # tree_dirty worktree: 0 when tree_state lists a file
 tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 
-# task_state repo bead-id -> Factory's own directory for the task, in the user's state dir:
+# task_state dir bead-id -> Factory's own directory for the task, in the user's state dir:
 # what only Factory and the human decide is kept there, out of the worktree and its run dir,
-# which the agents write. The repo is named by its checkout's path, as cd resolves it.
+# which the agents write. The repo is named by its git dir, which any dir in any of its
+# worktrees names alike, wherever that is: a bare repo's beside its worktrees, a submodule's.
 task_state() {
-  local top
-  top=$(cd "$1" && pwd -P) || return 1
-  printf '%s/factory/tasks/%s-%s/%s' "${XDG_STATE_HOME:-$HOME/.local/state}" "$(basename "$top")" \
-    "$(printf '%s' "$top" | sha256sum | cut -c1-12)" "$2"
+  local common name
+  common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  common=$(cd "$common" && pwd -P) || return 1
+  name=${common%/.git}
+  name=${name##*/}
+  if [[ $name == .* ]]; then # app/.bare, say
+    name=${common%/*}
+    name=${name##*/}
+  fi
+  printf '%s/factory/tasks/%s-%s/%s' "${XDG_STATE_HOME:-$HOME/.local/state}" "${name%.git}" \
+    "$(printf '%s' "$common" | sha256sum | cut -c1-12)" "$2"
 }
 
 # waive_protected task-state-dir: the human waives the protected-path check for the task
@@ -3152,37 +3161,57 @@ gate_open() {
   printf '%s' "$role"
 }
 
+# answer_gate task-state-dir bead-id approve|waive|reject|abort [note]: the human's answer to the
+# approval a live run waits for there (gate_open); waive approves the plan and waives the
+# protected-path check
+answer_gate() {
+  local state=$1 id=$2 role
+  role=$(gate_open "$state" "$id") || return 1
+  case $3 in
+    waive)
+      [[ $role == plan ]] || die "--allow-protected is for the plan; $id waits with its build"
+      waive_protected "$state"
+      log "protected-path check waived for $id"
+      ;&
+    approve)
+      : >"$state/approved"
+      log "approved the $role of $id"
+      ;;
+    reject)
+      [[ $4 =~ [^[:space:]] ]] || die "empty note"
+      printf '%s\n' "$4" >"$state/reject.md"
+      log "sent your note on the $role to $id"
+      ;;
+    abort)
+      : >"$state/aborted"
+      log "aborted $id at its $role"
+      ;;
+  esac
+}
+
 # cmd_approve repo bead-id [--allow-protected]
 cmd_approve() {
-  local state role
+  local state
   state=$(gate_state "$1" "$2") || return 1
-  role=$(gate_open "$state" "$2") || return 1
   if [[ ${3:-} == --allow-protected ]]; then
-    [[ $role == plan ]] || die "--allow-protected is for the plan; $2 waits with its build"
-    waive_protected "$state"
-    log "protected-path check waived for $2"
+    answer_gate "$state" "$2" waive
+  else
+    answer_gate "$state" "$2" approve
   fi
-  : >"$state/approved"
-  log "approved the $role of $2"
 }
 
 # cmd_reject repo bead-id note
 cmd_reject() {
-  local state role
+  local state
   state=$(gate_state "$1" "$2") || return 1
-  role=$(gate_open "$state" "$2") || return 1
-  [[ $3 =~ [^[:space:]] ]] || die "empty note"
-  printf '%s\n' "$3" >"$state/reject.md"
-  log "sent your note on the $role to $2"
+  answer_gate "$state" "$2" reject "$3"
 }
 
 # cmd_abort repo bead-id
 cmd_abort() {
-  local state role
+  local state
   state=$(gate_state "$1" "$2") || return 1
-  role=$(gate_open "$state" "$2") || return 1
-  : >"$state/aborted"
-  log "aborted $2 at its $role"
+  answer_gate "$state" "$2" abort
 }
 
 # task_args args... -> TARGS: repo, bead-id, then the rest. The first two arguments when they
@@ -3205,14 +3234,14 @@ task_args() {
   TARGS=("$(repo_of "$top")" "$id" "$@")
 }
 
-# cmd_dialog_hook plan|build task-id run-dir: Claude Code runs this with a hook's JSON on stdin
+# cmd_dialog_hook plan|build task-id run-dir [task-state-dir]: Claude Code runs this with a hook's JSON on stdin
 # (see dialog_hooks). A question dialog opening leaves a mark naming its tool call (asking), and
 # the planner's also takes the tree, into Factory's state for the task, so that what the human
 # changes while it is open is not the planner's (planner_turn). The answer to Factory's approval
 # dialog goes to the gate as approve, reject or abort would send it; any other answer goes into
 # the task's decisions.
 cmd_dialog_hook() {
-  local role=$1 in event dir repo n i header q a notes topic TASK_ID TASK_STATE # the hook's task alone
+  local role=$1 in event dir n i header q a notes topic TASK_ID TASK_STATE # the hook's task alone
   in=$(cat)
   event=$(jq -r '.hook_event_name // ""' <<<"$in")
   if (($# >= 3)); then
@@ -3222,8 +3251,7 @@ cmd_dialog_hook() {
     [[ $event == PostToolUse ]] || return 0
     die "no run dir of a task for this dialog; the answer went to the agent only"
   fi
-  repo=$(repo_of "$dir") || return 1
-  TASK_STATE=$(task_state "$repo" "$TASK_ID") || return 1
+  TASK_STATE=${4:-$(task_state "$dir" "$TASK_ID")} || return 1 # an agent started before the hook was told
   case $event in
     PreToolUse)
       jq -r '[.tool_use_id // "", .transcript_path // ""] | @tsv' <<<"$in" >"$dir/asking-$role"
@@ -3249,7 +3277,7 @@ cmd_dialog_hook() {
     case $topic in
       "fy plan" | "fy build")
         [[ -n $a ]] || continue
-        gate_dialog_answer "$repo" "${topic#fy }" "$a" "$(jq -r --argjson i "$i" '.tool_input.questions[$i].options[].label' <<<"$in")" || return 1
+        gate_dialog_answer "${topic#fy }" "$a" "$(jq -r --argjson i "$i" '.tool_input.questions[$i].options[].label' <<<"$in")" || return 1
         ;;
       *)
         [[ $a != "(notes only)" ]] || a="" # Claude Code's answer when the human wrote only notes
@@ -3260,21 +3288,21 @@ cmd_dialog_hook() {
   done
 }
 
-# gate_dialog_answer repo role answer option-labels: Factory's approval dialog answered. A
-# choice goes to the gate as its command would send it; what the human typed is the note.
+# gate_dialog_answer role answer option-labels: Factory's approval dialog answered. A choice
+# goes to the gate as its command would send it; what the human typed is the note.
 gate_dialog_answer() {
-  local repo=$1 role=$2 a=$3 waiting label
+  local role=$1 a=$2 waiting label
   waiting=$(gate_open "$TASK_STATE" "$TASK_ID") || return 1
   [[ $waiting == "$role" ]] || die "that dialog was about the $role of $TASK_ID, whose $waiting waits now"
   case $a in
-    Approve) cmd_approve "$repo" "$TASK_ID" ;;
-    "Approve, allow protected paths") cmd_approve "$repo" "$TASK_ID" --allow-protected ;;
-    Abort) cmd_abort "$repo" "$TASK_ID" ;;
+    Approve) answer_gate "$TASK_STATE" "$TASK_ID" approve ;;
+    "Approve, allow protected paths") answer_gate "$TASK_STATE" "$TASK_ID" waive ;;
+    Abort) answer_gate "$TASK_STATE" "$TASK_ID" abort ;;
     *)
       while IFS= read -r label; do
         [[ $a != "$label" ]] || die "the $role dialog's choice \"$a\" is none Factory knows; answer in Factory's terminal or with fy"
-      done <<<"$4"
-      cmd_reject "$repo" "$TASK_ID" "$a"
+      done <<<"$3"
+      answer_gate "$TASK_STATE" "$TASK_ID" reject "$a"
       ;;
   esac
 }
