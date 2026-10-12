@@ -206,8 +206,8 @@ with deny them Factory, `gh` and `git push`, while your own `!` commands run as 
 `--auto` skips both approvals; the planner's questions still wait for your answer.
 
 Every answer you give on a task, the planner's questions included, is recorded: in
-`.factory/run/decisions.md`, as a comment on the bead, and in the pull request's
-description.
+Factory's state for the task, which the planner reads as `.factory/run/decisions.md`, as a
+comment on the bead, and in the pull request's description.
 
 **Questions.** When the task is ambiguous in a way that changes the design, the planner
 asks you in its own question dialog, with options where they help, and goes on with your
@@ -290,7 +290,8 @@ closed, Factory checks that origin's copy of the branch is the commit it pushed.
 ### Run artifacts
 
 They live in `.factory/run/` inside the worktree, ignored by Git: `plan.md`,
-`decisions.md` (your answers, with the time), `hooks-plan.json` and `hooks-build.json`
+`decisions.md` (your answers, with the time, which Factory writes there from its own record
+before each planner turn), `hooks-plan.json` and `hooks-build.json`
 (the agents' settings: the dialog hooks, which keep `asking-plan` or `asking-build` while
 a dialog is open, and what the agents may not run), `plan-review-N.md` (Codex),
 `plan-review-N-build.md` (builder),
@@ -306,14 +307,16 @@ Factory's own state for the task under `${XDG_STATE_HOME:-~/.local/state}/factor
 a gate, while it waits, and `approved`, `reject.md` or `aborted`, an answer from a dialog
 or `fy approve`, `reject` or `abort`, until the gate takes it; `allow-protected`, your
 waiver of the protected-path check; the planner's `tree-at-ask` and `tree-at-answer`,
-what you changed while its question dialog was open; `base`, the commit the branch is
+what you changed while its question dialog was open; `decisions.md`, your answers;
+`base`, the commit the branch is
 measured from and the base branch it was read from, which a rerun keeps; `gated` and
 `guarded`, the commits the gate and then the guardrails last passed on from that base, and
 `pushed`, the one Factory last pushed; `exclude`, a hash
 of the repo's `info/exclude`. A file in the run dir by one of the names Factory kept
 there before (`approved`, `reject.md`, `aborted`, `allow-protected`, `state`,
 `tree-at-ask`, `tree-at-answer`) counts for nothing, stops the next run and fails the
-guardrails: only an agent would put one there. Origin's base branch, as Factory fetched
+guardrails: only an agent would put one there. `--fresh` removes one, as it starts the
+task over. Origin's base branch, as Factory fetched
 it, is the ref `refs/factory/<bead-id>/upstream/<base>`, and origin's tracking ref gets it
 too, for a gate that diffs against it. `fy clean` removes them with the task. Beside the
 tasks' state, `transport` holds the repo's git config for reaching origin, as Factory first

@@ -1084,23 +1084,36 @@ guard_protected() {
 # guard_run_dir worktree base: the run dir is Factory's, out of the branch. A file committed
 # there with git add -f would be in no check's view, as the protected paths and the patterns
 # leave the run dir out; a waiver there, as the waiver once was, or an answer or a resume point
-# (OLD_DECISIONS), can only be an agent's.
+# (old_decisions), can only be an agent's.
 guard_run_dir() {
-  local f bad=0
+  local f bad=0 committed=$'\n'
   while IFS= read -r -d '' f; do
     printf "file committed in Factory's run dir: %s (no part of the branch; git rm --cached it)\n" "$f"
+    committed+=$f$'\n'
     bad=1
   done < <(guard_diff "$1" --name-only -z "$2...HEAD" -- "$RUN_DIR")
-  for f in "${OLD_DECISIONS[@]}"; do
-    [[ -e $1/$RUN_DIR/$f || -L $1/$RUN_DIR/$f ]] || git -C "$1" cat-file -e "HEAD:$RUN_DIR/$f" 2>/dev/null || continue
-    if [[ $f == allow-protected ]]; then
-      printf "%s/allow-protected found: a waiver there can only be an agent's; the human's is Factory's to keep (remove it)\n" "$RUN_DIR"
+  while IFS= read -r f; do
+    [[ -n $f && $committed != *$'\n'$f$'\n'* ]] || continue # one committed has its line above
+    if [[ $f == */allow-protected ]]; then
+      printf "%s found: a waiver there can only be an agent's; the human's is Factory's to keep (remove it)\n" "$f"
     else
-      printf "%s/%s found: Factory keeps none there, so it can only be an agent's; the human's answers and Factory's state are Factory's to keep (remove it)\n" "$RUN_DIR" "$f"
+      printf "%s found: Factory keeps none there, so it can only be an agent's; the human's answers and Factory's state are Factory's to keep (remove it)\n" "$f"
     fi
     bad=1
-  done
+  done < <(old_decisions "$1")
   return $bad
+}
+
+# old_decisions worktree -> the files by the names of OLD_DECISIONS in its run dir, or committed
+# there, a path from the worktree's top a line
+old_decisions() {
+  local f committed
+  committed=$(git -C "$1" ls-tree --name-only HEAD -- "$RUN_DIR/" 2>/dev/null) || committed=""
+  for f in "${OLD_DECISIONS[@]}"; do
+    if [[ -e $1/$RUN_DIR/$f || -L $1/$RUN_DIR/$f || $'\n'$committed$'\n' == *$'\n'$RUN_DIR/$f$'\n'* ]]; then
+      printf '%s\n' "$RUN_DIR/$f"
+    fi
+  done
 }
 
 # guard_ignored worktree: no ignored file that steers the gate unseen. A protected path is one
@@ -1633,10 +1646,11 @@ $(decisions_block)
 B
 }
 
-# decisions_block: the human's answers on the task, for the pull request, if there were any
+# decisions_block: the human's answers on the task, as Factory keeps them, for the pull request,
+# if there were any
 decisions_block() {
-  [[ -s $WT/$RUN_DIR/decisions.md ]] || return 0
-  printf '\n<details>\n<summary>Decisions</summary>\n\n%s\n\n</details>\n' "$(<"$WT/$RUN_DIR/decisions.md")"
+  [[ -s $TASK_STATE/decisions.md ]] || return 0
+  printf '\n<details>\n<summary>Decisions</summary>\n\n%s\n\n</details>\n' "$(<"$TASK_STATE/decisions.md")"
 }
 
 # gh_wt gh-args...: gh in the worktree, so {owner}/{repo} and the branch resolve from its origin.
@@ -1854,7 +1868,7 @@ $TASK_DESC
 
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
 Do not write the code itself and do not change any file outside $RUN_DIR/; Factory checks.
-If the task is ambiguous in a way that would change the design, ask the human first with your AskUserQuestion tool (up to four questions, with options where they help); prefer a plan with stated assumptions when the ambiguity is minor.$([[ ! -s $WT/$RUN_DIR/decisions.md ]] || printf ' The human'"'"'s answers and decisions on this task so far are in %s; read them before asking again.' "$RUN_DIR/decisions.md")
+If the task is ambiguous in a way that would change the design, ask the human first with your AskUserQuestion tool (up to four questions, with options where they help); prefer a plan with stated assumptions when the ambiguity is minor.$([[ ! -s $TASK_STATE/decisions.md ]] || printf ' The human'"'"'s answers and decisions on this task so far are in %s; read them before asking again.' "$RUN_DIR/decisions.md")
 The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected to waive protected paths), !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 $MEMORY
 Once the file is written, reply with its content.
@@ -2068,7 +2082,7 @@ await_human() {
     drop_dead_dialog "$role" "$agent" "$dir"
     toast "$TASK_ID $role ready" "$TASK_TITLE. Answer in the $(role_of "$role")'s pane or the Factory terminal" request
     show_for_approval "$role" "$dir"
-    open_gate "$role" "$dir"
+    open_gate "$role"
     show_dialog "$role" "$agent" "$dir"
     ((stdin_open)) || no_terminal_hint "$role" "$dir"
     while :; do
@@ -2201,7 +2215,7 @@ drop_dead_dialog() {
   warn "$2 runs without its dialog hooks: no approval dialog in its pane; answer here or with fy"
 }
 
-# open_gate role dir: the gate listens to approve, reject and abort, in Factory's state for the
+# open_gate role: the gate listens to approve, reject and abort, in Factory's state for the
 # task. Answers left from before were about something else, and no plan approval stands, so
 # neither does its waiver.
 open_gate() {
@@ -2258,11 +2272,24 @@ esc_question() {
 }
 not_asking() { ! asking "$1"; }
 
-# record_answer run-dir text: one of the human's answers on the task, into its decisions log
-# in the run dir, which the pull request shows, and as a comment on its bead
+# record_answer run-dir text: one of the human's answers on the task, into its decisions log in
+# Factory's state for the task, which the pull request shows and the planner reads in the run
+# dir (show_decisions), and as a comment on its bead
 record_answer() {
-  printf -- '- %s %s\n' "$(date '+%F %R')" "${2//$'\n'/$'\n'  }" >>"$1/decisions.md"
+  mkdir -p "$TASK_STATE"
+  printf -- '- %s %s\n' "$(date '+%F %R')" "${2//$'\n'/$'\n'  }" >>"$TASK_STATE/decisions.md"
+  show_decisions "$1"
   bd_note "$(repo_of "$1")" "$TASK_ID" "$2"
+}
+
+# show_decisions run-dir: the human's answers on the task, as Factory keeps them, into the run
+# dir for the planner to read, over whatever an agent left there
+show_decisions() {
+  if [[ -s $TASK_STATE/decisions.md ]]; then
+    cp "$TASK_STATE/decisions.md" "$1/decisions.md"
+  else
+    rm -f "$1/decisions.md"
+  fi
 }
 
 # no_terminal_hint role dir: where a gate takes its answer when this run has no terminal
@@ -2443,21 +2470,27 @@ setup_task() {
 open_task_workspace() {
   local exclude
   open_workspace "$1" "$BRANCH" "$TASK_ID $TASK_TITLE"
-  mkdir -p "$WT/$RUN_DIR"
+  mkdir -p "$WT/$RUN_DIR" "$TASK_STATE"
+  # Factory reads no answer, waiver or resume point from the run dir, which the agents write: one
+  # there by a name it once had (old_decisions) stops the run before it changes anything, rather
+  # than being taken for the human's; one --fresh can remove goes, as the task starts over
+  local f old
+  old=$(old_decisions "$WT")
+  if [[ -n $old ]] && ((FACTORY_FRESH)); then
+    log "starting $TASK_ID over: removing ${old//$'\n'/ } from $WT"
+    while IFS= read -r f; do rm -f "${WT:?}/$f"; done <<<"$old"
+    old=$(old_decisions "$WT") # a committed one is still there
+  fi
+  [[ -z $old ]] || die "$WT holds ${old//$'\n'/ }: Factory keeps your answers, the waiver, its gate and where a rerun resumes in $TASK_STATE, not in the run dir the agents write, so these are an agent's, or an earlier Factory's. Look at them and at the branch, then rerun with --fresh to start the task over without them, or remove them from the branch and the run dir and rerun; a state file Factory 0.1.x left there resumes the task where it was, and a waiver you gave holds, once you move them to $TASK_STATE"
+  # starting over: from here on, a run that stops before its first step leaves none of the old
+  # steps standing for a rerun to resume after (resume_point)
+  ((! FACTORY_FRESH)) || rm -f "$TASK_STATE/state"
   exclude="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
   grep -qsxF "$RUN_DIR/" "$exclude" || printf '%s/\n' "$RUN_DIR" >>"$exclude"
-  mkdir -p "$TASK_STATE"
   if ((FACTORY_FRESH)) || [[ ! -s $TASK_STATE/exclude ]]; then
     file_hash "$exclude" >"$TASK_STATE/exclude" # what guard_check holds it to
   fi
   ((! FACTORY_FRESH)) || rm -f "$TASK_STATE/base" # starting over, from the checkout's branch (task_context)
-  # Factory reads no answer, waiver or resume point from the run dir, which the agents write: one
-  # there by the name it once had stops the run, rather than being taken for the human's
-  local f old=()
-  for f in "${OLD_DECISIONS[@]}"; do
-    [[ ! -e $WT/$RUN_DIR/$f && ! -L $WT/$RUN_DIR/$f ]] || old+=("$RUN_DIR/$f")
-  done
-  ((${#old[@]} == 0)) || die "$WT holds ${old[*]}: Factory keeps your answers, the waiver, its gate and where a rerun resumes in $TASK_STATE, not in the run dir the agents write, so these are an agent's, or an earlier Factory's. Look at them and at the branch, remove them, and rerun; a state file Factory 0.1.x left there resumes the task where it was once you move it to $TASK_STATE/state"
   record_base
   # A task that starts on a checkout git reads as changed would fail every check after hours of
   # work. A conversion only the repo's own git config defines (core.autocrlf, a filter such as
@@ -2645,6 +2678,7 @@ planner_left_refs() {
 planner_turn() {
   local before refs
   rm -f "${TASK_STATE:?}/tree-at-answer" # tree-at-ask stays: a question still open keeps its snapshot
+  show_decisions "$WT/$RUN_DIR"
   before=$(tree_state "$WT")
   refs=$(refs_state "$WT")
   ask "$1" "$2"

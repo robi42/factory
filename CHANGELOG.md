@@ -13,11 +13,13 @@ added or moved, a symlink to a place git does not show, or an ignored file at a 
 path fails it whatever you waive. A typo in a knob now stops the run instead of being
 read as something else. The agents may no longer run `git push`, `gh` or Factory itself.
 A task 0.1.x started stops at its rerun on the files 0.1.x kept in its run dir, which
-Factory reads from there no longer: move `.factory/run/state` to the task's state dir, as
-the message says, for the task to resume where it was, remove the others, and waive the
-protected paths again at the plan's approval if you had, or rerun with `--fresh`. A build
-0.1.x approved goes through one more round of gate, reviews and your approval, as 0.1.x
-recorded no check of it.
+Factory reads from there no longer. Rerun it with `--fresh` to start it over; or, for it to
+resume where it was, move `.factory/run/state` to the task's state dir, as the message
+says, with `allow-protected` if you had waived the protected paths and `decisions.md` to
+keep your answers in the pull request, and remove the others. A build 0.1.x approved goes
+through one more round of gate, reviews and your approval, as 0.1.x recorded no check of
+it. Upgrade between runs: a run that waits at a gate takes your answer where its own
+Factory looks for it.
 
 ### Added
 - The approvals ask you in a question dialog in the agent's pane, the planner's for the
@@ -29,9 +31,9 @@ recorded no check of it.
   agent's turn. Factory's terminal prompt and the `fy` commands still answer too, `!fy`
   typed in a pane that shows no dialog (keys typed into the dialog go to it), and Factory
   closes the dialog when they do.
-- Every answer you give on a task, the planner's questions included, goes into
-  `.factory/run/decisions.md`, onto the bead as a comment, and into the pull request's
-  description. A planner that starts over reads it before asking again.
+- Every answer you give on a task, the planner's questions included, goes into Factory's
+  state for the task, onto the bead as a comment, and into the pull request's description.
+  A planner that starts over reads it, as `.factory/run/decisions.md`, before asking again.
 - A run that opens a pull request (`--pr`, `FACTORY_PR=1`) checks at its start, before it
   claims a bead, that origin takes a push without a prompt, with a dry-run push that sends
   nothing. A missing credential or write access stops the run there, with git's error,
@@ -223,13 +225,16 @@ recorded no check of it.
   rename of a deleted file of like content. A rename no longer hides one.
 - An agent could approve its own plan or build, abort it, hand the planner a note as yours,
   or have a rerun skip the reviews: the gate's answers (`approved`, `reject.md`,
-  `aborted`) and what it waits for (`waiting`) were files in the run dir, which the agents
-  write, a resume point there (`state`, such as `built 1`) was taken for Factory's own
-  when the task had no base recorded, and the planner's `tree-at-answer` there excused
-  whatever changes it listed as yours. Factory now keeps all of them in its own state for
-  the task, which only it, your `fy approve`, `reject` and `abort`, and the dialogs' hooks
-  write. A file in the run dir by one of those names stops the next run before any agent
-  works, and fails the guardrails: only an agent would put it there.
+  `aborted`), what it waits for (`waiting`) and the log of your answers (`decisions.md`)
+  were files in the run dir, which the agents write, a resume point there (`state`, such
+  as `built 1`) was taken for Factory's own when the task had no base recorded, and the
+  planner's `tree-at-ask` and `tree-at-answer` there excused whatever changes it listed as
+  yours. Factory now keeps all of them in its own state for the task, which only it, your
+  `fy approve`, `reject` and `abort`, and the dialogs' hooks write, and writes your answers
+  into the run dir for the planner over whatever is there. A file in the run dir by a name
+  Factory kept there before (`approved`, `reject.md`, `aborted`, `allow-protected`,
+  `state`, `tree-at-ask`, `tree-at-answer`) stops the next run before any agent works, and
+  fails the guardrails: only an agent would put it there. `--fresh` removes one.
 - A planner's commit passed the check that planning leaves the code untouched, which read
   only uncommitted changes. A planner turn that commits, or moves HEAD, the task's branch,
   Factory's refs for the task or a replace ref, now stops the run, and says which. The
