@@ -2615,25 +2615,22 @@ $new"
 # changed_since tree-state [worktree] -> the lines of tree_state that the earlier state lacks
 changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "${2:-$WT}" | LC_ALL=C sort); }
 
-# refs_state worktree -> where its HEAD and each ref of the repo point, a line each, which a
-# planner's turn must leave as they were. Left out are the refs that others move meanwhile and
-# that Factory reads nothing of for the task: other tasks' branches and Factory's refs for them
-# (refs/factory/<id>/), which their own runs check, and the remote-tracking refs, which every
-# fetch moves.
+# refs_state worktree -> where its HEAD points, and the refs Factory reads the task by, a line
+# each, which a planner's turn must leave as they were: the task's branch, Factory's refs for
+# the task (refs/factory/<id>/), and the replace refs, which rewrite what a commit is or
+# descends from. The repo's other refs decide nothing for the task once its base is recorded,
+# and others move them meanwhile: your main, the tags and tracking refs a fetch brings, a
+# stash, other tasks' branches.
 refs_state() {
   local head
   head=$(git -C "$1" symbolic-ref -q HEAD) || head=detached
   printf 'HEAD %s %s\n' "$(git -C "$1" rev-parse -q --verify HEAD || printf none)" "$head"
-  git -C "$1" for-each-ref --format='%(refname) %(objectname)' | awk -v id="${TASK_ID:?}" '
-    $1 ~ /^refs\/remotes\// { next }
-    $1 ~ /^refs\/(heads\/)?factory\// { n = $1; sub(/^refs\/(heads\/)?factory\//, "", n)
-      if (n != id && index(n, id "-") != 1 && index(n, id "/") != 1) next }
-    { print }'
+  git -C "$1" for-each-ref --format='%(refname) %(objectname)' "refs/heads/$BRANCH" "refs/factory/${TASK_ID:?}/" refs/replace/
 }
 
-# planner_left_refs refs-state: refuse a planner turn that moved HEAD or any ref since refs_state
-# was taken. A commit carries the planner's change out of the tree that planner_kept_hands_off
-# reads, and onto the branch or another ref.
+# planner_left_refs refs-state: refuse a planner turn that moved HEAD or a ref refs_state takes
+# since it was taken. A commit carries the planner's change out of the tree that
+# planner_kept_hands_off reads, and onto the branch.
 planner_left_refs() {
   local moved
   moved=$(LC_ALL=C comm -3 <(LC_ALL=C sort <<<"$1") <(refs_state "$WT" | LC_ALL=C sort) | awk '{print $1}' | LC_ALL=C sort -u | paste -sd ' ')

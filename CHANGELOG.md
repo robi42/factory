@@ -231,10 +231,10 @@ recorded no check of it.
   write. A file in the run dir by one of those names stops the next run before any agent
   works, and fails the guardrails: only an agent would put it there.
 - A planner's commit passed the check that planning leaves the code untouched, which read
-  only uncommitted changes. A planner turn that commits, or moves HEAD or any ref, now
-  stops the run, and says which. Left out are other tasks' refs and origin's tracking refs,
-  which their runs and fetches move meanwhile; a commit you make yourself while the planner
-  works stops it too, so rerun then.
+  only uncommitted changes. A planner turn that commits, or moves HEAD, the task's branch,
+  Factory's refs for the task or a replace ref, now stops the run, and says which. The
+  repo's other refs, which you, fetches and other tasks move meanwhile (your main, tags, a
+  stash), decide nothing for the task.
 - A builder could waive its own protected-path check: the waiver was a file in the run
   dir, which the agents write, and the pull request then recorded it as yours. Factory now
   keeps your waiver in its own state for the task, under

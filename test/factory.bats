@@ -2707,7 +2707,7 @@ JSON
   [ -e "$REPO/fixture.csv" ]
 }
 
-@test "planner_turn: a planner that commits, or moves HEAD or any other ref, is refused; other tasks' refs and fetches may move meanwhile" {
+@test "planner_turn: a planner that commits, moves HEAD, Factory's refs for the task or a replace ref is refused; the refs others move may move meanwhile" {
   make_repo
   add_origin
   task_opened
@@ -2719,25 +2719,36 @@ JSON
   [ "$status" -eq 1 ]
   [[ $output == *"the planner's turn moved HEAD refs/heads/factory/toy-9 in the repo of $TMP/wt-9"* ]]
   git -C "$TMP/wt-9" reset -q --hard HEAD~1
-  ask() { git -C "$TMP/wt-9" update-ref refs/heads/main "$(git -C "$TMP/wt-9" commit-tree -p main -m x 'main^{tree}')"; }
+  ask() { git -C "$TMP/wt-9" update-ref refs/factory/toy-9/upstream/main main; }
   run planner_turn planner "plan it"
   [ "$status" -eq 1 ]
-  [[ $output == *"moved refs/heads/main in"* ]]
-  git -C "$REPO" update-ref refs/heads/main main~1
+  [[ $output == *"moved refs/factory/toy-9/upstream/main in"* ]]
+  git -C "$REPO" update-ref -d refs/factory/toy-9/upstream/main
+  ask() { git -C "$TMP/wt-9" replace --graft HEAD "$(git -C "$TMP/wt-9" commit-tree -m x 'HEAD^{tree}')"; }
+  run planner_turn planner "plan it"
+  [ "$status" -eq 1 ]
+  [[ $output == *"moved refs/replace/$(git -C "$TMP/wt-9" rev-parse HEAD) in"* ]]
+  git -C "$REPO" replace -d "$(git -C "$TMP/wt-9" rev-parse HEAD)" >/dev/null
   ask() { git -C "$TMP/wt-9" checkout -q --detach; }
   run planner_turn planner "plan it"
   [ "$status" -eq 1 ]
   [[ $output == *"moved HEAD in"* ]]
   git -C "$TMP/wt-9" checkout -q factory/toy-9
-  # meanwhile another task's builder commits, its run fetches origin's base, and a fetch moves
-  # origin's tracking refs
+  # meanwhile another task's builder commits, its run fetches origin's base, a fetch brings
+  # origin's tracking refs and a tag, you commit on main, and a stash is made in your checkout
   git -C "$REPO" branch factory/toy-10 main
+  git -C "$TMP/origin.git" tag v1.0 main
   ask() {
     git -C "$REPO" update-ref refs/heads/factory/toy-10 "$(git -C "$REPO" commit-tree -p main -m other 'main^{tree}')"
     git -C "$REPO" update-ref refs/factory/toy-10/upstream/main main
     git -C "$TMP/wt-9" fetch -q origin
+    git -C "$REPO" update-ref refs/heads/main "$(git -C "$REPO" commit-tree -p main -m yours 'main^{tree}')"
+    printf 'wip\n' >>"$REPO/run.sh"
+    git -C "$REPO" stash -q
   }
   planner_turn planner "plan it"
+  git -C "$REPO" rev-parse -q --verify refs/tags/v1.0 >/dev/null
+  git -C "$REPO" rev-parse -q --verify refs/stash >/dev/null
 }
 
 @test "ask: a prompt Herdr calls stalled that went in late gets its turn waited out, not sent again" {
