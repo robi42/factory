@@ -139,11 +139,13 @@ recorded no check of it.
   to your local branch when the fetch failed, both of which an agent can steer to a commit
   of its own: by the remote's URL or refspec, by its tracking ref, or by the repo's git
   config, which reaches a server of the agent's with origin's URL unchanged
-  (`core.sshCommand`, a proxy). Factory now records origin's URL and the URLs a push goes
-  to as the task's worktree opens, and stops a fetch or a push when either has changed. It
-  fetches the base by its full name from that URL, in a git dir of its own that none of the
-  repo's config steers, into `refs/factory/<bead-id>/upstream/<base>`, a ref nothing else
-  writes, rebases onto that, and stops when it cannot fetch. It also stops when the base it
+  (`core.sshCommand`, a proxy). Factory now records the repo's own git config for reaching
+  origin (origin's URLs, URL rewrites, the ssh command, proxies, http and credential
+  settings) the first time it runs there, and a fetch or a push stops when any of it has
+  changed since, naming the keys; your global config applies as it does to git. It fetches
+  the base by its full name from origin's URL into `refs/factory/<bead-id>/upstream/<base>`,
+  a ref nothing else writes, and into origin's tracking ref, without following either
+  where it is a symbolic ref, rebases onto that, and stops when it cannot fetch. It also stops when the base it
   fetched does not hold the commit the branch was measured from, such as one an agent put
   on your `main` before the task started, or one you have not pushed: the pull request
   would carry it unchecked.
@@ -164,8 +166,9 @@ recorded no check of it.
 - The guardrails read a tree other than the branch's when an agent planted a `git replace`
   ref or an `info/grafts` line in the shared git dir: either rewrites what `HEAD` is or
   descends from, so `git diff base...HEAD` showed no added line, no protected path and no
-  gitlink, and the guardrails refused nothing. The guardrails and the uncommitted-changes
-  check now ignore replace refs and grafts.
+  gitlink, and the guardrails refused nothing. The guardrails, the uncommitted-changes
+  check, and the reading of where a branch forks off its base, what it took in from origin
+  and what it is rebased onto now ignore replace refs and grafts.
 - The guardrails passed a branch whose diff against the base git could not read, since
   every check then read nothing: a line in `.git/shallow`, which an agent can write, cut the
   branch off from the base, so that the two shared no history, and an object gone from the
