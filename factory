@@ -1929,6 +1929,7 @@ review_prompt() {
   cat <<P
 Review task $TASK_ID: $TASK_TITLE
 The plan is in $RUN_DIR/plan.md. The changes: git diff $(task_base)...HEAD
+Factory ran the gate on this commit and it passed; its log is $RUN_DIR/gate-$1.log. Do not run it again.
 Look for bugs, missed requirements, shortcuts (skipped tests, suppressed warnings, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.$(build_recheck "$1" "" "${2:-}")
 Write the review to $RUN_DIR/review-$1.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.
@@ -2017,6 +2018,7 @@ P
 planner_build_review_prompt() {
   cat <<P
 The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(task_base)...HEAD
+Factory ran the gate on this commit and it passed; its log is $RUN_DIR/gate-$1.log. Do not run it again.
 Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.$(build_recheck "$1" -plan "${2:-}")
 Write your notes to $RUN_DIR/review-$1-plan.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.

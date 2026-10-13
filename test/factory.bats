@@ -2128,6 +2128,9 @@ IN
   [[ $(planner_build_review_prompt 3) != *"note on the build"* ]]
   [[ $(review_prompt 2) == *"review-2.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
   [[ $(planner_build_review_prompt 2) == *"review-2-plan.md"*"two lines: CODE REVIEW round 2, then VERDICT"*"reply with its content"* ]]
+  # the build's reviewers read the log of the gate Factory passed on the commit, not run it again
+  [[ $(review_prompt 2) == *"Factory ran the gate on this commit and it passed; its log is .factory/run/gate-2.log. Do not run it again."* ]]
+  [[ $(planner_build_review_prompt 2) == *"Factory ran the gate on this commit and it passed; its log is .factory/run/gate-2.log. Do not run it again."* ]]
   [[ $(plan_review_prompt 1) == *"plan-review-1.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
   [[ $(builder_plan_review_prompt 1) == *"plan-review-1-build.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_prompt) == *"reply with its content"* ]]

@@ -343,8 +343,9 @@ It is resolved once per run, in this order, and printed at start:
 After each build or revision the gate runs in the worktree, output to
 `.factory/run/gate-N.log`; exit code zero means pass. On failure the builder gets the
 last forty lines and one round to fix, rerun and commit. Guardrails run only after the
-gate passes, reviews only after both, and before the bead is closed Factory checks again
-that the gate passed on the branch's tip and that the guardrails hold.
+gate passes, and reviews only after both: the reviewers read the gate's log instead of
+running the gate again. Before the bead is closed Factory checks again that the gate
+passed on the branch's tip and that the guardrails hold.
 
 ### What belongs in a gate
 

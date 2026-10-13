@@ -95,6 +95,11 @@ Factory looks for it.
 ### Fixed
 - A build whose plan you approved with protected paths allowed was still told to change
   none of them; it is told to change those the plan names, and no others.
+- The build's reviewers ran the gate again, which Factory had just passed on that commit.
+  On a long gate the planner ended its turn with its run still going and its review
+  unfinished, which Factory took as given, and the run competed with the builder's next
+  round in the same worktree. They are told now that the gate passed and where its log is,
+  and not to run it again.
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.
