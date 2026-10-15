@@ -159,6 +159,7 @@ fy pr      --no-copilot ~/src/app ap-k3x     # ...without the Copilot review
 fy clean   ~/src/app                         # drop workspaces, worktrees and branches of merged tasks
 fy clean   ~/src/app ap-k3x --force          # ...or of one task you abandoned
 fy check   <worktree> main                   # gate + guardrails on a branch, no agents
+fy stats   ~/src/app                         # how its tasks went: rounds, failures, notes
 fy sync    ~/src/app                         # pull, then push the Beads database
 fy status                                    # live Factory agents in Herdr
 ```
@@ -323,7 +324,21 @@ task over. Origin's base branch, as Factory fetched
 it, is the ref `refs/factory/<bead-id>/upstream/<base>`, and origin's tracking ref gets it
 too, for a gate that diffs against it. `fy clean` removes them with the task. Beside the
 tasks' state, `transport` holds the repo's git config for reaching origin, as Factory first
-found it; remove it after you change that config yourself.
+found it; remove it after you change that config yourself. Beside it, `events.jsonl` keeps
+what the runs of the repo's tasks did, a JSON line an event: each run's start and end, the
+agents' turns, the gate's runs, the guardrails' checks, the reviewers' verdicts and your
+answers, with the time each took, and at an orderly end the tokens each agent's session
+has used. `fy clean` leaves it, and `fy stats` sums it up.
+
+### Stats
+
+`fy stats <repo>` shows a row for each of the latest 20 tasks: its outcome and Factory
+version, its plan and build rounds, how often the gate and the guardrails failed, the
+reviewers' objections, your notes, the time the agents, the gate and you took, and the
+tokens the agents read and wrote. Then the same as means per finished task for each
+Factory version, which tell whether a change to Factory, its prompts or its models helped;
+the guardrails that failed, by check; and your latest notes. What goes wrong again and
+again shows there, to be turned into a guardrail, a check in the gate, or a memory.
 
 ## The gate
 

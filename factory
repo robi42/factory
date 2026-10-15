@@ -92,6 +92,7 @@ usage() {
   row 'factory pr      <repo> <bead-id> [--no-copilot]' 'check, push an existing task branch and open a pull request'
   row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
   row 'factory check   <worktree> <base>' 'run gate + guardrails on a branch, no agents'
+  row 'factory stats   <repo>' 'how its tasks went: rounds, failures, your notes, time, tokens'
   row 'factory status' 'live Factory agents in Herdr'
   row 'factory doctor' 'check prerequisites'
   row 'factory help | --version' 'this help; the version'
@@ -402,8 +403,15 @@ start_agent() {
   die "start $name: pane $pane never became an available shell"
 }
 
-# ask name text: send a prompt and wait for the turn to settle, handing blocks to the human.
+# ask name text: one turn of the agent (take_turn), recorded with the time it took
 ask() {
+  local t0=$SECONDS
+  take_turn "$@"
+  metric turn agent "${1##*-}" secs $((SECONDS - t0))
+}
+
+# take_turn name text: send a prompt and wait for the turn to settle, handing blocks to the human.
+take_turn() {
   local name=$1 text=$2 out status stalls=0 seq
   # a turn under way ends first, the agent's reply to the human or to a command typed in its
   # pane: herdr's wait does not track turns and could match that turn's end instead. When the
@@ -534,7 +542,7 @@ gate_dialog_shown() {
 # no agent while one of its gates listens, so its own approval dialog found here is left from a
 # gate that has ended, and no answer to it would count: it goes with Esc.
 await_answer() {
-  local name=$1 status
+  local name=$1 status t0
   while asking "$name"; do
     if gate_dialog_shown "$name"; then
       esc_question "$name"
@@ -542,7 +550,9 @@ await_answer() {
       pause_for_pane_reply # its reply to the dismissal gets under way, for wait_for to see it end
     else
       attention "$name" "is waiting for your input"
+      t0=$SECONDS
       while asking "$name"; do sleep "$FACTORY_POLL_SECONDS"; done
+      metric question agent "${name##*-}" secs $((SECONDS - t0))
     fi
     status=$(wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked)
     [[ $status != blocked ]] || unblock "$name"
@@ -845,9 +855,10 @@ protected_globs() {
 
 # run_gate worktree gate logfile: 0 when the gate passes. It runs in the foreground, so that
 # Ctrl-C stops it with the run (bash would have a background job ignore it), and a heartbeat
-# beside it logs every five minutes, as a cold build can be silent for a long time.
+# beside it logs every five minutes, as a cold build can be silent for a long time. The run is
+# recorded (gate), labelled as its log is named: gate-1.log is round 1's.
 run_gate() {
-  local beat rc=0
+  local beat rc=0 t0=$SECONDS label=${3##*/gate-}
   log "gate: $2"
   (
     m=0
@@ -859,6 +870,7 @@ run_gate() {
   beat=$!
   (cd "$1" && bash -c "$2") >"$3" 2>&1 || rc=$?
   kill "$beat" 2>/dev/null || warn "the gate's heartbeat had stopped"
+  metric gate label "${label%.log}" ok $((rc == 0)) secs $((SECONDS - t0))
   if ((rc == 0)); then
     log "gate passed"
     return 0
@@ -949,9 +961,17 @@ tree_dirty() { [[ -n $(tree_state "$1") ]]; }
 
 # task_state dir bead-id -> Factory's own directory for the task, in the user's state dir:
 # what only Factory and the human decide is kept there, out of the worktree and its run dir,
-# which the agents write. The repo is named by its git dir, which any dir in any of its
-# worktrees names alike, wherever that is: a bare repo's beside its worktrees, a submodule's.
+# which the agents write.
 task_state() {
+  local repo
+  repo=$(repo_state "$1") || return 1
+  printf '%s/%s' "$repo" "$2"
+}
+
+# repo_state dir -> Factory's directory for the tasks of the repo that dir belongs to. The
+# repo is named by its git dir, which any dir in any of its worktrees names alike, wherever
+# that is: a bare repo's beside its worktrees, a submodule's.
+repo_state() {
   local common name
   common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
   common=$(cd "$common" && pwd -P) || return 1
@@ -961,8 +981,8 @@ task_state() {
     name=${common%/*}
     name=${name##*/}
   fi
-  printf '%s/factory/tasks/%s-%s/%s' "${XDG_STATE_HOME:-$HOME/.local/state}" "${name%.git}" \
-    "$(printf '%s' "$common" | sha256sum | cut -c1-12)" "$2"
+  printf '%s/factory/tasks/%s-%s' "${XDG_STATE_HOME:-$HOME/.local/state}" "${name%.git}" \
+    "$(printf '%s' "$common" | sha256sum | cut -c1-12)"
 }
 
 # waive_protected task-state-dir: the human waives the protected-path check for the task
@@ -973,15 +993,20 @@ waive_protected() { mkdir -p "$1" && : >"$1/allow-protected"; }
 waived() { [[ -n ${TASK_STATE:-} && -e $TASK_STATE/allow-protected ]]; }
 
 # guard_check worktree base: mechanical guardrails on the branch, one guard_* check after the
-# other. Prints violations. Git lists the paths NUL-terminated (-z), as it stores them: a name
-# it would quote, such as one with a non-ASCII character, would match no check, and :(literal)
-# keeps a name from being read as a pathspec.
+# other. Prints violations, and sets GUARD_FAILED to the checks that found them. Git lists the
+# paths NUL-terminated (-z), as it stores them: a name it would quote, such as one with a
+# non-ASCII character, would match no check, and :(literal) keeps a name from being read as
+# a pathspec.
 guard_check() {
   local wt=$1 base=$2 bad=0 check
   # every check reads base...HEAD or HEAD, through the true graph, in the helpers too
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS
+  GUARD_FAILED=""
   for check in top clean commits readable artifacts tests protected run_dir ignored symlinks submodules lines; do
-    "guard_$check" "$wt" "$base" || bad=1
+    if ! "guard_$check" "$wt" "$base"; then
+      bad=1
+      GUARD_FAILED+="${GUARD_FAILED:+ }$check"
+    fi
   done
   return $bad
 }
@@ -1512,12 +1537,13 @@ gate_branch() {
 # guard_branch: the guardrails on the commit the gate passed on, the tip of the task's branch
 # in its own worktree, measured from the recorded base, or from the newer one the branch took
 # in (took_in). The commit they pass on is recorded as the one a push may send (push_gated).
-# Prints the violations.
+# Prints the violations. The outcome is recorded (guard), with the checks that failed.
 guard_branch() {
   local base newer
   task_head
   if [[ $HEAD_SHA != "$(recorded gated)" ]]; then
     printf 'the gate has not passed on %s, the tip of %s (it passed on %s)\n' "$HEAD_SHA" "$BRANCH" "$(recorded gated)"
+    metric guard ok 0 failed ungated
     return 1
   fi
   base=$(task_base) || exit 1
@@ -1526,7 +1552,11 @@ guard_branch() {
     printf '%s %s\n' "$newer" "$(upstream_ref)" >"$TASK_STATE/base"
     base=$newer
   fi
-  guard_check "$WT" "$base" || return 1
+  if ! guard_check "$WT" "$base"; then
+    metric guard ok 0 failed "$GUARD_FAILED"
+    return 1
+  fi
+  metric guard ok 1
   printf '%s\n' "$HEAD_SHA" >"$TASK_STATE/guarded"
 }
 
@@ -1674,10 +1704,11 @@ raise_pr() {
   PR_URL=$(existing_pr) || die "gh could not list the pull requests of $BRANCH"
   if [[ -n $PR_URL ]]; then
     log "pull request already open, reusing it"
-    return 0
+  else
+    PR_URL=$(gh_wt pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)") \
+      || die "gh could not open a pull request for $BRANCH"
   fi
-  PR_URL=$(gh_wt pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)") \
-    || die "gh could not open a pull request for $BRANCH"
+  metric pr url "$PR_URL"
 }
 
 # pushed_holds: 0 when origin's copy of the branch is the commit Factory pushed; one an agent
@@ -1818,6 +1849,7 @@ copilot_loop() {
       COPILOT_NOTE="could not read Copilot's review of ${sha:0:7}"
       return 1
     fi
+    metric copilot round "$round" comments "$(grep -c . <<<"$comments")"
     # Copilot's verdict line is the useful summary; keep it for the bead and the log.
     if [[ -z $comments ]]; then
       local summary
@@ -2232,12 +2264,13 @@ drop_dead_dialog() {
 
 # open_gate role: the gate listens to approve, reject and abort, in Factory's state for the
 # task. Answers left from before were about something else, and no plan approval stands, so
-# neither does its waiver.
+# neither does its waiver. ASKED_AT is when it opened, for the answer's event.
 open_gate() {
   mkdir -p "${TASK_STATE:?}"
   rm -f "$TASK_STATE/approved" "$TASK_STATE/reject.md" "$TASK_STATE/aborted"
   [[ $1 == build ]] || rm -f "$TASK_STATE/allow-protected"
   printf '%s %s\n' "$1" "$$" >"$TASK_STATE/waiting"
+  ASKED_AT=$SECONDS
 }
 
 # close_gate role dir agent: a note was taken. A build note ends the gate; while a plan note's
@@ -2293,8 +2326,29 @@ not_asking() { ! asking "$1"; }
 record_answer() {
   mkdir -p "$TASK_STATE"
   printf -- '- %s %s\n' "$(date '+%F %R')" "${2//$'\n'/$'\n'  }" >>"$TASK_STATE/decisions.md"
+  answer_event "$2"
   show_decisions "$1"
   bd_note "$(repo_of "$1")" "$TASK_ID" "$2"
+}
+
+# answer_event text: an answer as record_answer words it, recorded (answer): at which gate,
+# approve, waive (approved, protected paths allowed), note or abort, the note, and how long
+# the gate had waited since it opened
+answer_event() {
+  local gate=${1%% *} kind note=""
+  case $1 in
+    "note on the "*)
+      gate=${1#note on the }
+      gate=${gate%%:*}
+      kind=note
+      note=${1#*: }
+      ;;
+    *"protected paths allowed") kind=waive ;;
+    *approved) kind=approve ;;
+    *aborted) kind=abort ;;
+    *) kind=other ;;
+  esac
+  metric answer gate "$gate" answer "$kind" note "$note" secs $((SECONDS - ${ASKED_AT:-$SECONDS}))
 }
 
 # show_decisions run-dir: the human's answers on the task, as Factory keeps them, into the run
@@ -2441,6 +2495,105 @@ open_workspace() {
   WT=$(jq -r '.result.worktree.path' <<<"$out")
   BUILD_PANE=$(jq -r '.result.root_pane.pane_id' <<<"$out")
   [[ -n $WS && -n $WT && -n $BUILD_PANE ]] || die "unexpected worktree response: $out"
+}
+
+# ---------------------------------------------------------------- events ----
+# events_file [repo-state-dir] -> where the runs of a repo's tasks record what they did, a JSON
+# line an event, for fy stats: beside the tasks' state, the task's run's own by default. fy
+# clean leaves it.
+events_file() { printf '%s/events.jsonl' "${1:-${TASK_STATE%/*}}"; }
+
+# metric event [key value]...: record an event of the task's run, with the time and the task;
+# a value of digits goes in as a number. Outside a task there is nothing to record, and a
+# record that fails warns, never stops the run.
+metric() {
+  [[ -n ${TASK_ID:-} && -n ${TASK_STATE:-} ]] || return 0
+  local event=$1 args=()
+  shift
+  while (($# > 1)); do
+    args+=(--arg "$1" "$2")
+    shift 2
+  done
+  if ! mkdir -p "${TASK_STATE%/*}" || ! jq -nc --arg t "$(date -u +%FT%TZ)" --arg task "$TASK_ID" --arg event "$event" \
+    "${args[@]}" '$ARGS.named | map_values(if test("^(0|[1-9][0-9]*)$") then tonumber else . end)' >>"$(events_file)"; then
+    warn "could not record the $event event in $(events_file)"
+  fi
+}
+
+# run_begins from: a run of the task starts, from its resume point, recorded (run) with
+# Factory's version, its commit when it runs from a checkout of its own, and the agents'
+# models and efforts. Its end is recorded once (run_end), a die's too.
+run_begins() {
+  local commit=""
+  if [[ $(git -C "$FACTORY_HOME" rev-parse --show-toplevel 2>/dev/null) == "$FACTORY_HOME" ]]; then
+    commit=$(git -C "$FACTORY_HOME" rev-parse --short HEAD) || commit=""
+  fi
+  RUN_ENDED=0
+  metric run from "$1" version "$FACTORY_VERSION" commit "$commit" \
+    plan "$FACTORY_PLAN_MODEL $FACTORY_PLAN_EFFORT" build "$FACTORY_BUILD_MODEL $FACTORY_BUILD_EFFORT" \
+    review "$FACTORY_REVIEW_MODEL $FACTORY_REVIEW_EFFORT" approval "$FACTORY_APPROVAL"
+  trap 'run_end failed' EXIT
+}
+
+# run_end outcome [key value]...: the run's end, recorded once (end), with the step it ended
+# in. An orderly end, done, handed over or stopped at a gate, also records what each agent's
+# session has used so far (agent_tokens), a total a later run of the task goes on from.
+run_end() {
+  [[ ${RUN_ENDED:-1} == 0 ]] || return 0
+  RUN_ENDED=1
+  metric end outcome "$@" step "${STEP:-}"
+  [[ $1 != interrupted && $1 != failed ]] || return 0
+  local name
+  for name in "$PLAN_AGENT" "$BUILD_AGENT" "$REVIEW_AGENT"; do
+    agent_tokens "$name"
+  done
+}
+
+# agent_tokens agent: the tokens the agent's session has used, recorded (tokens): its input,
+# the cached input among it, and its output. Herdr names the session, and its transcript in
+# Claude Code's or Codex's own dir has the counts. What cannot be read is warned about, as
+# the run goes on.
+agent_tokens() {
+  local kind="" session="" counts="" input cached output
+  read -r kind session < <(herdr agent get "$1" 2>/dev/null \
+    | jq -r '.result.agent.agent_session | "\(.agent // "-") \(.value // "")"' 2>/dev/null) || kind=""
+  case $kind in
+    claude) counts=$(claude_tokens "$session") || counts="" ;;
+    codex) counts=$(codex_tokens "$session") || counts="" ;;
+  esac
+  if [[ -z $counts ]]; then
+    warn "no token counts for $1: none read from its session's transcript${session:+ ($session)}"
+    return 0
+  fi
+  read -r input cached output <<<"$counts"
+  metric tokens agent "${1##*-}" session "$session" in "$input" cached "$cached" out "$output"
+}
+
+# claude_tokens session -> "input cached output" of a Claude Code session and its subagents',
+# nothing without a transcript. The transcript repeats a message's usage for each of its
+# blocks, so each message counts once.
+claude_tokens() {
+  local dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects files
+  [[ -n $1 ]] || return 0
+  mapfile -t files < <(compgen -G "$dir/*/$1.jsonl" && compgen -G "$dir/*/$1/subagents/*.jsonl")
+  ((${#files[@]})) || return 0
+  jq -rn '[inputs | select(.type == "assistant") | .message | select(.usage)] | group_by(.id)
+    | map(max_by(.usage.output_tokens) | .usage)
+    | [map(.input_tokens + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0)),
+      map(.cache_read_input_tokens // 0), map(.output_tokens)] | map(add // 0)
+    | "\(.[0]) \(.[1]) \(.[2])"' "${files[@]}"
+}
+
+# codex_tokens session -> "input cached output" of a Codex session, the total its last count
+# gives, nothing without a transcript. Its input includes the cached.
+codex_tokens() {
+  local files
+  [[ -n $1 ]] || return 0
+  mapfile -t files < <(compgen -G "${CODEX_HOME:-$HOME/.codex}/sessions/*/*/*/rollout-*-$1.jsonl")
+  ((${#files[@]})) || return 0
+  jq -rn '[inputs | select(.type == "event_msg" and .payload.type == "token_count")
+    | .payload.info.total_token_usage // empty] | last // empty
+    | "\(.input_tokens) \(.cached_input_tokens) \(.output_tokens)"' "${files[@]}"
 }
 
 # -------------------------------------------------------------- pipeline ----
@@ -2651,6 +2804,7 @@ resume_point() {
 
 # stop_task repo what: a human gate ended the run; leave the workspace for them.
 stop_task() {
+  run_end stopped at "$2"
   bd_note "$1" "$TASK_ID" "stopped at $2. workspace $WS, worktree $WT"
   die "stopped at $2 for $TASK_ID; the workspace stays open, and factory run $1 $TASK_ID takes the task up again"
 }
@@ -2733,6 +2887,7 @@ plan_round() {
   ask_for_file "$BUILD_AGENT" "$(builder_plan_review_prompt "$round" "${2:-}")" "$WT/$RUN_DIR/plan-review-$round-build.md"
   PLAN_VERDICT=$(verdicts "$WT/$RUN_DIR/plan-review-$round.md" "$WT/$RUN_DIR/plan-review-$round-build.md")
   log "plan verdicts: $PLAN_VERDICT"
+  metric plan_review round "$round" verdicts "$PLAN_VERDICT"
   [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] && return 0
   log "plan revision"
   planner_turn "$PLAN_AGENT" "$(plan_fix_prompt "$round" "${2:-}")"
@@ -2808,6 +2963,7 @@ build_phase() {
     ask_for_file "$PLAN_AGENT" "$(planner_build_review_prompt "$ROUND" "$note")" "$WT/$RUN_DIR/review-$ROUND-plan.md"
     VERDICT=$(verdicts "$WT/$RUN_DIR/review-$ROUND.md" "$WT/$RUN_DIR/review-$ROUND-plan.md")
     log "verdicts: $VERDICT"
+    metric review round "$ROUND" verdicts "$VERDICT"
     if [[ $VERDICT == "APPROVE APPROVE" ]]; then
       rc=0
       human_gate build "$BUILD_AGENT" "$WT/$RUN_DIR" || rc=$?
@@ -2866,6 +3022,7 @@ finish_task() {
   fi
   bd_note "$repo" "$TASK_ID" "approved. $summary${PR_URL:+, pr $PR_URL}$copilot"
   bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null
+  run_end "done"
   toast "$TASK_ID done" "$TASK_TITLE. ${next^}." "done"
   log "done: $summary${PR_URL:+, pr $PR_URL}"
   rm -f "$TASK_STATE/state"
@@ -2874,6 +3031,7 @@ finish_task() {
 
 # hand_over repo why: the task needs a human; say why on the bead and here
 hand_over() {
+  run_end handed_over why "$2"
   bd_note "$1" "$TASK_ID" "needs a human. $2"
   toast "$TASK_ID needs you" "$TASK_TITLE. See workspace $WS." request
   warn "needs a human: $2"
@@ -2884,6 +3042,7 @@ hand_over() {
 # lives in the worktree and the agents, and factory run with the bead id resumes.
 on_interrupt() {
   trap - INT TERM
+  run_end interrupted
   printf '\n' >&2
   warn "interrupted during $STEP; workspace ${WS:-?} stays open, continue with: factory run [flags] $1 ${TASK_ID:-<bead-id>}"
   [[ -n ${TASK_ID:-} ]] && bd_note "$1" "$TASK_ID" "interrupted during $STEP. workspace ${WS:-?}, worktree ${WT:-?}; continue with: factory run [flags] $1 $TASK_ID" 2>/dev/null
@@ -2904,6 +3063,7 @@ run_task() {
   local point
   point=$(resume_point)
   [[ -z $point ]] || log "resuming after: $point (use --fresh to start over)"
+  run_begins "${point:-start}"
   case $point in
     written*)
       STEP=planning
@@ -2939,7 +3099,7 @@ run_task() {
   esac
   STEP=finishing
   finish_task "$repo"
-  trap - INT TERM
+  trap - INT TERM EXIT
 }
 
 # -------------------------------------------------------------- commands ----
@@ -3004,6 +3164,80 @@ cmd_status() {
       "$([[ $task != "$last" ]] && awk -F'\t' -v w="$ws" '$1 == w {print $2}' <<<"$labels" | sed "s/^$task //")"
     last=$task
   done <<<"$rows"
+}
+
+# cmd_stats repo: how the repo's tasks went, from the events their runs recorded (events_file)
+cmd_stats() {
+  local repo state file
+  repo=$(repo_top "$1") || exit 1
+  state=$(repo_state "$repo") || die "$repo: git names no git dir for it"
+  file=$(events_file "$state")
+  if [[ ! -s $file ]]; then
+    log "no runs of the tasks of $repo recorded yet"
+    return 0
+  fi
+  # a line a run left torn, as it died writing it, counts for nothing
+  jq -cR 'fromjson?' "$file" | jq -rs "$(stats_jq)"
+  log "from $file"
+}
+
+# stats_jq: the jq that sums the events up: a row a task, for the latest 20; the means per
+# finished task for each Factory version, which tell whether a change to Factory, its prompts
+# or its models helped; the guardrails that failed, and your latest notes, where what goes
+# wrong again and again shows
+stats_jq() {
+  cat <<'JQ'
+def pad($n): tostring | if length < $n then . + " " * ($n - length) else . end;
+def lpad($n): tostring | if length < $n then " " * ($n - length) + . else . end;
+def dur: floor | if . >= 3600 then "\(. / 3600 | floor)h\(. % 3600 / 60 | floor)m"
+  elif . >= 60 then "\(. / 60 | floor)m" else "\(.)s" end;
+def tok: if . >= 1e6 then "\(. / 1e5 | floor / 10)M" elif . >= 1e3 then "\(. / 1e3 | floor)k"
+  else "\(floor)" end;
+def count(f): [.[] | select(f)] | length;
+def sum(f): [.[] | f] | add // 0;
+def row: "\(.[0] | pad(11))\(.[1] | pad(13))\(.[2] | pad(8))\(.[3:-1] | map(lpad(7)) | add)  \(.[-1])";
+def tokens: if .in + .out > 0 then "\(.in | tok)/\(.out | tok)" else "-" end;
+def session_max(f): [.[] | select(.event == "tokens")] | group_by(.session) | map(map(f) | max) | add // 0;
+def fold: {
+  task: .[0].task, first: .[0].t,
+  version: ([.[] | select(.event == "run") | .version | tostring] | last // "?"),
+  outcome: ([.[] | select(.event == "run" or .event == "end")] | last
+    | if . == null then "-" elif .event == "end" then .outcome else "running" end),
+  plan: count(.event == "plan_review"),
+  build: count(.event == "gate" and (.label | tostring | test("^[0-9]+$"))),
+  gate: count(.event == "gate" and .ok == 0),
+  guard: count(.event == "guard" and .ok == 0),
+  revise: sum(select(.event == "plan_review" or .event == "review") | [.verdicts | tostring | scan("REVISE")] | length),
+  notes: count(.event == "answer" and .answer == "note"),
+  agents: (sum(select(.event == "turn") | .secs) - sum(select(.event == "question") | .secs)),
+  gating: sum(select(.event == "gate") | .secs),
+  you: sum(select(.event == "answer" or .event == "question") | .secs),
+  in: session_max(.in), out: session_max(.out)
+};
+def cells: [.plan, .build, .gate, .guard, .revise, .notes, (.agents | dur), (.gating | dur), (.you | dur), tokens];
+def mean(f): map(f) | add / length | . * 10 | round / 10;
+def means: {plan: mean(.plan), build: mean(.build), gate: mean(.gate), guard: mean(.guard),
+  revise: mean(.revise), notes: mean(.notes), agents: mean(.agents), gating: mean(.gating),
+  you: mean(.you), in: mean(.in), out: mean(.out)};
+[to_entries[] | .value + {n: .key}] as $events
+| ($events | group_by(.task) | map(sort_by(.n) | fold) | sort_by(.first)) as $tasks
+| (["TASK", "OUTCOME", "VERSION", "PLAN", "BUILD", "GATE", "GUARD", "REVISE", "NOTES", "AGENTS",
+    "GATING", "YOU", "TOKENS"] | row),
+  ($tasks[-20:][] | [.task, .outcome, .version] + cells | row),
+  (($tasks | length) - 20 | select(. > 0) | "(\(.) earlier task(s) left out here; the means count them)"),
+  "PLAN, BUILD: rounds; GATE, GUARD: failures; REVISE: the reviewers' objections; NOTES: yours;",
+  "AGENTS, GATING, YOU: the time they took; TOKENS: what the agents read/wrote",
+  ($tasks | map(select(.outcome | IN("done", "handed_over", "stopped"))) | select(length > 0)
+    | "", "means per finished task (done, handed over or stopped), by Factory version:",
+      (group_by(.version) | sort_by(map(.first) | min)[]
+        | [.[0].version, "\(length) finished", "\(count(.outcome == "done")) done"] + (means | cells) | row)),
+  ([$events[] | select(.event == "guard" and .ok == 0) | .failed | tostring | splits(" ")]
+    | group_by(.) | sort_by(length) | reverse | select(length > 0)
+    | "", "guardrails that failed: \(map("\(.[0]) \(length)") | join(", "))"),
+  ([$events[] | select(.event == "answer" and .answer == "note")] | reverse | .[:10] | select(length > 0)
+    | "", "your notes, latest first:",
+      (.[] | "  \(.task | pad(11))\(.gate | pad(7))\(.t[:10])  \(.note | tostring | split("\n") | .[0] | .[:100])"))
+JQ
 }
 
 # cmd_init repo [bd init args...]: beads with a short prefix, the gate detected, an AGENTS.md stub
@@ -3610,6 +3844,11 @@ main() {
       (($# == 2)) || die "usage: factory check <worktree> <base>"
       need git
       cmd_check "$1" "$2"
+      ;;
+    stats)
+      (($# == 1)) || die "usage: factory stats <repo>"
+      need_all git jq
+      cmd_stats "$1"
       ;;
     status) need_all herdr jq && cmd_status ;;
     doctor) cmd_doctor ;;

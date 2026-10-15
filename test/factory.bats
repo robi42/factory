@@ -1273,6 +1273,7 @@ context_of() {
   cmp "$TASK_STATE/decisions.md" "$run/decisions.md"
   [ "$(head -1 "$TMP/bd.log")" = "-C $REPO comment toy-1 Factory: plan approved" ]
   grep -q 'Factory: note on the plan: split it' "$TMP/bd.log"
+  [ "$(jq -sc 'map(.answer)' "$TMP/events.jsonl")" = '["approve","note"]' ] # as events too
 }
 
 @test "in a task's worktree, as in an agent's pane, the commands take the task from there" {
@@ -2363,6 +2364,7 @@ IN
   [[ $output == *"review codex plan-review-2.md: "*"Your notes from the previous review round are in .factory/run/plan-review-1.md"*"review builder plan-review-2-build.md: "*"Your notes from the previous review round are in .factory/run/plan-review-1-build.md"*"plan verdicts: APPROVE APPROVE"*"to the human" ]]
   [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
   [[ $output != *"unreviewed"* ]]
+  [ "$(jq -sc 'map(select(.event == "plan_review") | [.round, .verdicts])' "$TMP/events.jsonl")" = '[[1,"REVISE APPROVE"],[2,"APPROVE APPROVE"]]' ]
   run ! grep -q 'Your notes from' "$TMP/prompt-plan-review-1.md" "$TMP/prompt-plan-review-1-build.md"
   # still objected to in the last round: that revision too, then on to the human
   : >"$TMP/n"
@@ -2416,6 +2418,7 @@ IN
   [ "$ROUND" -eq 2 ]
   grep -q 'asked builder: The human reviewed the implementation' "$TMP/out"
   grep -q 'review round 2' "$TMP/out"
+  [ "$(jq -sc 'map(select(.event == "review") | [.round, .verdicts])' "$TMP/events.jsonl")" = '[[1,"APPROVE APPROVE"],[2,"APPROVE APPROVE"]]' ]
   # the reviewers asking for more in that extra round still end the run
   rm -f "$TMP/noted"
   human_gate() { HUMAN_NOTE="rename the flag" && printf 'REVISE\n' >"$TMP/verdict" && return 4; }
@@ -4267,4 +4270,170 @@ SH
   run finish_task "$REPO"
   [ "$status" -eq 2 ]
   [[ $output == *"needs a human"*"origin's factory/toy-9 is not "*", the commit Factory checked and pushed"* ]]
+}
+
+@test "metric: an event is a JSON line beside the tasks' state, digits as numbers; outside a task there is none" {
+  TASK_ID=toy-1
+  metric gate label 1 ok 0 secs 12 note $'two\nlines' version 0.2.0 sha 007
+  run jq -c 'del(.t)' "$TMP/events.jsonl"
+  [ "$output" = '{"task":"toy-1","event":"gate","label":1,"ok":0,"secs":12,"note":"two\nlines","version":"0.2.0","sha":"007"}' ]
+  jq -e '.t | test("^[0-9-]{10}T[0-9:]{8}Z$")' "$TMP/events.jsonl"
+  TASK_ID="" metric gate ok 1
+  [ "$(grep -c '' "$TMP/events.jsonl")" -eq 1 ]
+}
+
+@test "run_begins: a run records its start, with Factory's version and the agents' models, and a die its end, once" {
+  fake_task
+  dies() {
+    run_begins written
+    STEP=building
+    die "boom"
+  }
+  run dies
+  [ "$status" -eq 1 ]
+  # each agent's model and effort, a word each
+  run jq -c 'select(.event == "run") | del(.t, .task, .commit) | (.plan, .build, .review) |= (split(" ") | length)' "$TMP/events.jsonl"
+  [ "$output" = "{\"event\":\"run\",\"from\":\"written\",\"version\":\"$FACTORY_VERSION\",\"plan\":2,\"build\":2,\"review\":2,\"approval\":\"ask\"}" ]
+  run jq -c 'select(.event != "run") | del(.t, .task)' "$TMP/events.jsonl"
+  [ "$output" = '{"event":"end","outcome":"failed","step":"building"}' ]
+}
+
+@test "run_end: once a run; an orderly end records each agent's tokens from its transcript, a Claude Code message once, its subagents' too" {
+  fake_task
+  STEP=finishing PLAN_AGENT=toy-1-plan BUILD_AGENT=toy-1-build REVIEW_AGENT=toy-1-review
+  export CLAUDE_CONFIG_DIR=$TMP/claude CODEX_HOME=$TMP/codex
+  herdr() { # agent get <name>: the planner's and the reviewer's sessions; the builder's it cannot tell
+    case $3 in
+      toy-1-plan) printf '{"result":{"agent":{"agent_session":{"agent":"claude","value":"p-1"}}}}\n' ;;
+      toy-1-review) printf '{"result":{"agent":{"agent_session":{"agent":"codex","value":"r-1"}}}}\n' ;;
+      *) return 1 ;;
+    esac
+  }
+  mkdir -p "$TMP/claude/projects/-wt/p-1/subagents" "$TMP/codex/sessions/2026/10/15"
+  local u='"usage":{"input_tokens":1,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":5}'
+  {
+    printf '{"type":"assistant","message":{"id":"m1",%s}}\n' "$u" "$u" # one message in two blocks
+    printf '{"type":"user","message":{"content":"go on"}}\n'
+    printf '{"type":"assistant","message":{"id":"m2",%s}}\n' "$u"
+  } >"$TMP/claude/projects/-wt/p-1.jsonl"
+  printf '{"type":"assistant","message":{"id":"m3",%s}}\n' "$u" >"$TMP/claude/projects/-wt/p-1/subagents/agent-a.jsonl"
+  counted() { # input cached output: a count in a Codex transcript, the session's total so far
+    printf '{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":%s,"cached_input_tokens":%s,"output_tokens":%s}}}}\n' "$@"
+  }
+  {
+    counted 50 40 7
+    printf '{"type":"event_msg","payload":{"type":"token_count","info":null}}\n'
+    counted 90 80 9
+  } >"$TMP/codex/sessions/2026/10/15/rollout-2026-10-15T10-00-00-r-1.jsonl"
+  RUN_ENDED=0
+  run_end "done" 2>"$TMP/err"
+  run_end failed # a die after it records nothing more
+  run jq -c 'del(.t, .task)' "$TMP/events.jsonl"
+  [ "${lines[0]}" = '{"event":"end","outcome":"done","step":"finishing"}' ]
+  [ "${lines[1]}" = '{"event":"tokens","agent":"plan","session":"p-1","in":333,"cached":300,"out":15}' ]
+  [ "${lines[2]}" = '{"event":"tokens","agent":"review","session":"r-1","in":90,"cached":80,"out":9}' ]
+  [ "${#lines[@]}" -eq 3 ]
+  grep -q 'no token counts for toy-1-build' "$TMP/err"
+  # an interrupted or failed run records its end alone
+  RUN_ENDED=0
+  run_end interrupted
+  [ "$(jq -sc 'map(.event)' "$TMP/events.jsonl")" = '["end","tokens","tokens","end"]' ]
+}
+
+@test "answer_event: each answer's gate, kind and note, and how long its gate had waited" {
+  fake_task
+  ASKED_AT=$((SECONDS - 42))
+  answer_event "plan approved"
+  answer_event "plan approved, protected paths allowed"
+  answer_event $'note on the build: rename the flag\nand its test'
+  answer_event "build aborted"
+  run jq -c '[.gate, .answer, .note]' "$TMP/events.jsonl"
+  [ "${lines[0]}" = '["plan","approve",""]' ]
+  [ "${lines[1]}" = '["plan","waive",""]' ]
+  [ "${lines[2]}" = '["build","note","rename the flag\nand its test"]' ]
+  [ "${lines[3]}" = '["build","abort",""]' ]
+  [ "$(jq -s 'map(.secs >= 42) | all' "$TMP/events.jsonl")" = true ]
+}
+
+@test "run_gate and guard_branch record each gate run and guardrail check, with the checks that failed" {
+  fake_task
+  WT=$TMP/wt BRANCH=work
+  mkdir -p "$TMP/wt/.factory/run" "$TASK_STATE"
+  sleep() { return 1; } # no heartbeat: its sleep would keep the test's output open
+  run_gate "$TMP/wt" true "$TMP/wt/.factory/run/gate-1.log" 2>/dev/null
+  run run_gate "$TMP/wt" false "$TMP/wt/.factory/run/gate-copilot-2.log"
+  [ "$status" -eq 1 ]
+  local c
+  for c in top clean commits readable artifacts protected run_dir ignored symlinks submodules; do
+    eval "guard_$c() { :; }"
+  done
+  guard_tests() { return 1; }
+  guard_lines() { return 1; }
+  task_head() { HEAD_SHA=abc; }
+  recorded() { printf abc; } # the gate passed on the tip
+  task_base() { printf base; }
+  took_in() { return 1; }
+  run guard_branch
+  [ "$status" -eq 1 ]
+  guard_lines() { :; }
+  guard_tests() { :; }
+  guard_branch
+  recorded() { printf def; } # it passed on another commit
+  run guard_branch
+  [ "$status" -eq 1 ]
+  run jq -c 'del(.t, .task, .secs)' "$TMP/events.jsonl"
+  [ "${lines[0]}" = '{"event":"gate","label":1,"ok":1}' ]
+  [ "${lines[1]}" = '{"event":"gate","label":"copilot-2","ok":0}' ]
+  [ "${lines[2]}" = '{"event":"guard","ok":0,"failed":"tests lines"}' ]
+  [ "${lines[3]}" = '{"event":"guard","ok":1}' ]
+  [ "${lines[4]}" = '{"event":"guard","ok":0,"failed":"ungated"}' ]
+}
+
+@test "stats: a row a task, the means per finished task by version, the guardrails that failed, your notes" {
+  make_repo
+  run cmd_stats "$REPO"
+  [[ $output == *"no runs of the tasks of $REPO recorded yet"* ]]
+  local file
+  file=$(events_file "$(repo_state "$REPO")")
+  mkdir -p "${file%/*}"
+  ev() { printf '{"t":"2026-10-15T%s:00Z","task":"%s","event":"%s"%s}\n' "$@" >>"$file"; }
+  ev 08:00 bk-a1 run ',"from":"start","version":"0.1.11"'
+  ev 08:05 bk-a1 question ',"agent":"plan","secs":120'
+  ev 08:10 bk-a1 turn ',"agent":"plan","secs":600'
+  ev 08:15 bk-a1 plan_review ',"round":1,"verdicts":"REVISE APPROVE"'
+  ev 08:20 bk-a1 plan_review ',"round":2,"verdicts":"APPROVE APPROVE"'
+  ev 08:30 bk-a1 answer ',"gate":"plan","answer":"note","note":"keep it in one module\nand test it","secs":300'
+  ev 08:40 bk-a1 answer ',"gate":"plan","answer":"approve","note":"","secs":60'
+  ev 09:00 bk-a1 turn ',"agent":"build","secs":1800'
+  ev 09:10 bk-a1 gate ',"label":1,"ok":0,"secs":400'
+  ev 09:20 bk-a1 gate ',"label":2,"ok":1,"secs":420'
+  ev 09:21 bk-a1 guard ',"ok":0,"failed":"tests lines"'
+  ev 09:30 bk-a1 gate ',"label":3,"ok":1,"secs":410'
+  ev 09:31 bk-a1 guard ',"ok":1'
+  ev 09:40 bk-a1 review ',"round":3,"verdicts":"APPROVE APPROVE"'
+  ev 09:50 bk-a1 answer ',"gate":"build","answer":"approve","note":"","secs":200'
+  ev 09:55 bk-a1 end ',"outcome":"done","step":"finishing"'
+  ev 09:55 bk-a1 tokens ',"agent":"plan","session":"s1","in":2000000,"cached":1800000,"out":50000'
+  ev 09:55 bk-a1 tokens ',"agent":"build","session":"s2","in":3000000,"cached":2800000,"out":150000'
+  ev 10:00 bk-b2 run ',"from":"start","version":"0.2.0"'
+  ev 10:20 bk-b2 turn ',"agent":"plan","secs":900'
+  ev 10:25 bk-b2 plan_review ',"round":1,"verdicts":"APPROVE APPROVE"'
+  ev 10:30 bk-b2 gate ',"label":1,"ok":1,"secs":30'
+  ev 10:31 bk-b2 guard ',"ok":0,"failed":"tests"'
+  printf '{"t":"2026-10-15T10:32:00Z","task":"bk-b2","eve\n' >>"$file" # torn, as by a run that died writing it
+  run cmd_stats "$REPO"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "TASK       OUTCOME      VERSION    PLAN  BUILD   GATE  GUARD REVISE  NOTES AGENTS GATING    YOU  TOKENS" ]
+  [ "${lines[1]}" = "bk-a1      done         0.1.11        2      3      1      1      1      1    38m    20m    11m  5M/200k" ]
+  [ "${lines[2]}" = "bk-b2      running      0.2.0         1      1      0      1      0      0    15m    30s     0s  -" ]
+  [[ $output == *"by Factory version:"$'\n'"0.1.11     1 finished   1 done        2      3      1      1      1      1    38m    20m    11m  5M/200k"$'\n'* ]]
+  [[ $output != *"0.2.0      1 finished"* ]] # a task still running counts in no mean
+  [[ $output == *"guardrails that failed: tests 2, lines 1"* ]]
+  [[ $output == *"your notes, latest first:"$'\n'"  bk-a1      plan   2026-10-15  keep it in one module"* ]]
+  # past 20 tasks, the rows say how many earlier ones they leave out
+  local i
+  for i in $(seq 1 20); do ev 11:00 "bk-c$i" run ',"from":"start","version":"0.2.0"'; done
+  run cmd_stats "$REPO"
+  [[ $output == *"(2 earlier task(s) left out here; the means count them)"* ]]
+  [[ $output != *"bk-a1      done"* ]]
 }

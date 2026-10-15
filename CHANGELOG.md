@@ -53,6 +53,13 @@ Factory looks for it.
   `Protected paths: none` or which, so you know at approval whether to allow them. The
   planner is told which paths are protected; Factory warns at the approval when the plan
   does not say.
+- `fy stats <repo>` shows how the repo's tasks went: for each task its plan and build
+  rounds, how often the gate and the guardrails failed, the reviewers' objections, your
+  notes, the time the agents, the gate and you took, and the tokens the agents read and
+  wrote; the same as means per finished task for each Factory version, which tell whether
+  a change helped; the guardrails that failed; and your latest notes. Each run records
+  what it does as it goes, a JSON line an event, in `events.jsonl` beside the tasks'
+  state, which `fy clean` leaves.
 
 ### Changed
 - The planner asks its questions in its own question dialog, with options where they
