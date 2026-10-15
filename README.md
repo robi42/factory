@@ -473,6 +473,26 @@ checkout, whose missing files read as deleted; a worktree on a filesystem withou
 executable bits, where every executable file reads as changed; a filter only the repo's
 own git config defines, such as git-crypt's.
 
+## Sandboxing
+
+Only the Codex reviewer runs in a sandbox, Codex's `workspace-write`: its commands write
+only in the worktree, the repo's `.beads` and temp dirs, have no network, and it never
+asks to run one outside. It needs no more, as reviewers read the gate's log rather than
+run the gate.
+
+The planner and the builder run as you, in Claude Code's auto mode
+(`FACTORY_CLAUDE_PERMISSIONS`), whose classifier blocks actions it judges risky, and with
+Factory, `gh` and `git push` denied them: checks on what they do, not a sandbox. The gate
+runs as you too, on the builder's code.
+
+Factory does not turn on Claude Code's own sandbox. The builder writes its commits into
+the repo's `.git`, outside its worktree; signs them through your signing agent's socket if
+you sign yours, and on Linux, letting that socket through lets every Unix socket through;
+and fills build caches in your home. More to the point, whatever a sandbox stopped the
+builder from doing, it could write into a test, which the gate then runs as you. To
+isolate a run, run Factory, Herdr and the agents in a VM or a container, or as a user that
+holds only the credentials a run needs.
+
 ## Knobs
 
 | env | default |
