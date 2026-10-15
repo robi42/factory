@@ -85,7 +85,7 @@ usage() {
   row 'factory tasks   <repo> [--all]' 'open tasks in the order next takes them; args (--all) go to bd list'
   row 'factory sync    <repo>' 'pull, then push the Beads database to its git remote'
   row 'factory init    <repo> [bd init args...]' 'lean bd init with a short prefix, detect the gate, AGENTS.md stub'
-  row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the plan or build; --allow-protected (plan only) waives protected paths'
+  row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the plan or build; --allow-protected (plan only) allows the protected paths it names'
   row "factory reject  <repo> <bead-id> '<note>'" 'send a note back; the plan or build comes back revised'
   row 'factory abort   <repo> <bead-id>' 'abort the task at its waiting plan or build'
   row '  in a task'"'"'s worktree: no <repo> <bead-id>' 'the task is the one there: !fy approve in a pane that shows no dialog'
@@ -985,12 +985,46 @@ repo_state() {
     "$(printf '%s' "$common" | sha256sum | cut -c1-12)"
 }
 
-# waive_protected task-state-dir: the human waives the protected-path check for the task
+# waive_protected task-state-dir: the human allows the protected paths the plan names, which
+# the run reads from the plan as it takes the approval (allow_named)
 waive_protected() { mkdir -p "$1" && : >"$1/allow-protected"; }
 
-# waived: 0 when the human waived the protected-path check for the task at the plan's approval
-# (p, the dialog's choice, fy approve --allow-protected), which Factory keeps in its own state
+# waived: 0 when the human allowed protected paths for the task at the plan's approval (p, the
+# dialog's choice, fy approve --allow-protected), which Factory keeps in its own state
 waived() { [[ -n ${TASK_STATE:-} && -e $TASK_STATE/allow-protected ]]; }
+
+# allow_named plan-file: the protected paths the human allowed, the ones the plan names as the
+# run takes its approval, into Factory's state for the task, a path a line
+allow_named() {
+  protected_named "$1" >"$TASK_STATE/allow-protected"
+  log "protected paths allowed for this task: $(allowed_paths)"
+}
+
+# allowed path: 0 when the human allowed path at the plan's approval: the plan named it, or a
+# directory it is under
+allowed() {
+  local p paths
+  waived || return 1
+  mapfile -t paths <"$TASK_STATE/allow-protected"
+  for p in "${paths[@]}"; do
+    [[ -n $p && ($1 == "$p" || $1 == "$p"/*) ]] && return 0
+  done
+  return 1
+}
+
+# allowed_paths -> the protected paths the human allowed, comma-separated, or none
+allowed_paths() {
+  if waived; then listed <"$TASK_STATE/allow-protected"; else printf none; fi
+}
+
+# listed -> the lines on stdin, comma-separated, or none for none
+listed() {
+  local p list=""
+  while IFS= read -r p || [[ -n $p ]]; do
+    [[ -z $p ]] || list+=${list:+, }$p
+  done
+  printf '%s' "${list:-none}"
+}
 
 # guard_check worktree base: mechanical guardrails on the branch, one guard_* check after the
 # other. Prints violations, and sets GUARD_FAILED to the checks that found them. Git lists the
@@ -1085,9 +1119,10 @@ guard_tests() {
   return 1
 }
 
-# guard_protected worktree base: no protected path changed, unless the human waived the check.
-# Git reads each glob as a pathspec. One it cannot read fails every git call that names the
-# globs, and the check would then read no path and pass.
+# guard_protected worktree base: no protected path changed but those the human allowed at the
+# plan's approval. Git reads each glob as a pathspec. One it cannot read fails every git call
+# that names the globs, and the check would then read no path and pass. A renamed path counts
+# under both of its names (--no-renames), the one it leaves too.
 guard_protected() {
   local f err globs bad=0
   mapfile -t globs < <(protected_globs "$1")
@@ -1095,14 +1130,16 @@ guard_protected() {
     printf 'protected paths unchecked: %s (fix that line of .factory/protected)\n' "${err#fatal: }"
     return 1
   fi
-  if waived; then
-    log "guardrails: protected-path check waived by the human"
-    return 0
-  fi
+  waived && log "guardrails: protected paths the human allowed: $(allowed_paths)"
   while IFS= read -r -d '' f; do
-    printf 'protected path changed: %s\n' "$f"
+    allowed "$f" && continue
+    if waived; then
+      printf 'protected path changed: %s (the human allowed only those the plan named: %s)\n' "$f" "$(allowed_paths)"
+    else
+      printf 'protected path changed: %s\n' "$f"
+    fi
     bad=1
-  done < <(guard_diff "$1" --name-only -z "$2...HEAD" -- "${globs[@]}")
+  done < <(guard_diff "$1" --name-only -z --no-renames "$2...HEAD" -- "${globs[@]}")
   return $bad
 }
 
@@ -1174,8 +1211,9 @@ guard_ignored() {
 
 # guard_symlinks worktree base: a symlink the branch adds leads the gate where git's paths do
 # not. Out of the worktree, into .git or an ignored place, it reads what no diff shows, waiver
-# or not; to a directory, it gives the files there paths that no protected glob names, which
-# the waiver lets through. A symlink the branch renames counts as one it adds (--no-renames).
+# or not; to a directory, it gives the files there paths that no protected glob names, so it
+# passes only where the human allowed it, as a path the plan names. A symlink the branch
+# renames counts as one it adds (--no-renames).
 guard_symlinks() {
   local f bad=0
   while IFS= read -r -d '' f; do
@@ -1183,8 +1221,8 @@ guard_symlinks() {
     if ! in_view "$1" "$(realpath -m --relative-to="$1" "$1/$f")"; then
       printf 'symlink to a place git does not show: %s -> %s (the gate would read what no diff shows; point it at a tracked file, or remove it)\n' "$f" "$(readlink "$1/$f")"
       bad=1
-    elif [[ -d $1/$f ]] && ! waived; then
-      printf "symlink to a directory: %s -> %s (the paths under it escape the protected globs; remove it, or have the human waive the protected paths at the plan's approval)\n" "$f" "$(readlink "$1/$f")"
+    elif [[ -d $1/$f ]] && ! allowed "$f"; then
+      printf "symlink to a directory: %s -> %s (the paths under it escape the protected globs; remove it, or have the plan name it and the human allow protected paths at its approval)\n" "$f" "$(readlink "$1/$f")"
       bad=1
     fi
   done < <(guard_diff "$1" --name-only -z --no-renames --diff-filter=AMT "$2...HEAD")
@@ -1653,7 +1691,7 @@ pr_checks() {
       printf -- '- %s: %s\n' "$(basename "$f" .md)" "$v"
     done < <(printf '%s\n' "${reviews[@]}" | sort -V)
   fi
-  waived && printf -- '- Protected-path check waived by the human\n'
+  waived && printf -- '- Protected paths allowed by the human: %s\n' "$(allowed_paths)"
   return 0
 }
 
@@ -1899,10 +1937,10 @@ Task $TASK_ID: $TASK_TITLE
 $TASK_DESC
 
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
-End the plan with one line, Protected paths: none, or Protected paths: and the ones the build must change; the build may change them only if the human allows protected paths at approval. Protected are these git pathspecs: $(protected_globs "$WT" | tr '\n' ' ')
+End the plan with one line, Protected paths: none, or Protected paths: and the paths the build must change, comma-separated and nothing else; once the human allows protected paths at approval, the build may change those and no others. Protected are these git pathspecs: $(protected_globs "$WT" | tr '\n' ' ')
 Do not write the code itself and do not change any file outside $RUN_DIR/; Factory checks.
 If the task is ambiguous in a way that would change the design, ask the human first with your AskUserQuestion tool (up to four questions, with options where they help); prefer a plan with stated assumptions when the ambiguity is minor.$([[ ! -s $TASK_STATE/decisions.md ]] || printf ' The human'"'"'s answers and decisions on this task so far are in %s; read them before asking again.' "$RUN_DIR/decisions.md")
-The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected to waive protected paths), !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
+The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected to allow the protected paths it names), !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
 $MEMORY
 Once the file is written, reply with its content.
 P
@@ -1922,15 +1960,16 @@ Reply with just DONE when finished.
 P
 }
 
-# protected_rule: the builder's rule on the protected paths: leave them alone, or, once the
-# human allowed them at the plan's approval, change those the plan names and no others
+# protected_rule: the builder's rule on the protected paths: leave them alone, but those the
+# human allowed at the plan's approval, the ones the plan named
 protected_rule() {
-  local globs
+  local globs allowed
   globs=$(protected_globs "$WT" | tr '\n' ' ')
-  if waived; then
-    printf 'The human allowed protected paths for this task: change those the plan names, and no others of: %s' "$globs"
-  else
+  allowed=$(allowed_paths)
+  if [[ $allowed == none ]]; then
     printf 'Do not change: %s' "$globs"
+  else
+    printf 'The human allowed you to change these protected paths, which the plan names: %s. Change no others of: %s' "$allowed" "$globs"
   fi
 }
 
@@ -1952,7 +1991,7 @@ The factory guardrails rejected the branch:
 
 $1
 
-Fix the cause (no suppressions, no skipped tests, no swallowed errors, leave protected files alone) and make sure everything is committed. Reply with just DONE.
+Fix the cause (no suppressions, no skipped tests, no swallowed errors, no change to a protected path the human did not allow) and make sure everything is committed. Reply with just DONE.
 P
 }
 
@@ -2210,7 +2249,6 @@ terminal_answer() {
     p | P)
       if [[ $role == plan ]]; then
         waive_protected "$TASK_STATE"
-        log "protected-path check waived for this task"
         record_answer "$dir" "plan approved, protected paths allowed"
         return 0
       fi
@@ -2419,12 +2457,29 @@ plan_rounds() {
   printf '%s' "$n"
 }
 
-# says_protected plan-file: 0 when the plan ends as the planner is asked to, with its line on
-# the protected paths the build must change (Protected paths: none, or which), markdown or not
-says_protected() {
+# protected_line plan-file -> what the plan's last line says after Protected paths:, markdown
+# or not; 1 when the plan does not end with that line, as the planner is asked to end it
+protected_line() {
   local line re='^[[:space:]#>*_-]*protected paths[*_]*:'
   line=$(awk 'NF {line = $0} END {print line}' "$1" 2>/dev/null) || line=""
-  [[ ${line,,} =~ $re ]]
+  [[ ${line,,} =~ $re ]] || return 1
+  printf '%s\n' "${line:${#BASH_REMATCH[0]}}"
+}
+
+# says_protected plan-file: 0 when the plan ends as the planner is asked to, with its line on
+# the protected paths the build must change (Protected paths: none, or which)
+says_protected() { protected_line "$1" >/dev/null; }
+
+# protected_named plan-file -> the paths the plan's Protected paths line names, one a line: its
+# words, split at spaces, commas, semicolons, quotes and backticks, a remark in parentheses
+# left out, without the emphasis and punctuation around a path, a leading ./ or a trailing /;
+# and, or and none name nothing
+protected_named() {
+  local text
+  text=$(protected_line "$1") || return 0
+  sed -E 's/\([^)]*\)//g' <<<"$text" | tr ",;\`'\"[:space:]" '\n' \
+    | sed -E 's/^[*(<]+//; s/[*).,:;>]+$//; s|^\./||; s|/+$||' \
+    | awk 'tolower($0) !~ /^(and|or|none)?$/ && !seen[$0]++'
 }
 
 # show_for_approval plan|build dir: the plan, or the branch's commits and diff stat, with the keys to answer
@@ -2448,7 +2503,7 @@ show_for_approval() {
       printf '\n%s plan review round %s: %s, notes in %s and %s\n' "$TAG" "$n" "$v" "$2/plan-review-$n.md" "$2/plan-review-$n-build.md" >&2
     fi
     says_protected "$2/plan.md" || warn "the plan does not end with its Protected paths line: ask the planner whether the build must change protected paths"
-    printf '\n%s [%s]pprove (edit the file or talk to the planner%s first if you like), a[%s]prove and allow protected paths, [%s]evise with a note, a[%s]ort? (%s/%s/%s/%s) ' "$TAG" "$a" "$esc" "$p" "$r" "$b" "$a" "$p" "$r" "$b" >&2
+    printf '\n%s [%s]pprove (edit the file or talk to the planner%s first if you like), a[%s]prove and allow the protected paths it names (%s), [%s]evise with a note, a[%s]ort? (%s/%s/%s/%s) ' "$TAG" "$a" "$esc" "$p" "$(protected_named "$2/plan.md" | listed)" "$r" "$b" "$a" "$p" "$r" "$b" >&2
   else
     base=$(task_base) || exit 1
     printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2
@@ -2924,10 +2979,12 @@ plan_phase() {
   approve_plan "$1"
 }
 
-# approve_plan repo: your gate on the reviewed plan. An abort here leaves the reviewed
+# approve_plan repo: your gate on the reviewed plan. With protected paths allowed, the build
+# may change the ones the plan names as you approve it. An abort here leaves the reviewed
 # marker, so a rerun comes straight back to this prompt instead of planning again.
 approve_plan() {
   human_gate plan "$PLAN_AGENT" "$WT/$RUN_DIR" || stop_task "$1" "plan approval"
+  if waived; then allow_named "$WT/$RUN_DIR/plan.md"; fi
   mark planned
 }
 
@@ -3451,8 +3508,8 @@ gate_open() {
 }
 
 # answer_gate task-state-dir bead-id approve|waive|reject|abort [note]: the human's answer to the
-# approval a live run waits for there (gate_open); waive approves the plan and waives the
-# protected-path check
+# approval a live run waits for there (gate_open); waive approves the plan and allows the
+# protected paths it names
 answer_gate() {
   local state=$1 id=$2 role
   role=$(gate_open "$state" "$id") || return 1
@@ -3460,7 +3517,7 @@ answer_gate() {
     waive)
       [[ $role == plan ]] || die "--allow-protected is for the plan; $id waits with its build"
       waive_protected "$state"
-      log "protected-path check waived for $id"
+      log "allowed the protected paths the plan of $id names"
       ;&
     approve)
       : >"$state/approved"

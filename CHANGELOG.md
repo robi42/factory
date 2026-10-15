@@ -15,11 +15,11 @@ read as something else. The agents may no longer run `git push`, `gh` or Factory
 A task 0.1.x started stops at its rerun on the files 0.1.x kept in its run dir, which
 Factory reads from there no longer. Rerun it with `--fresh` to start it over; or, for it to
 resume where it was, move `.factory/run/state` to the task's state dir, as the message
-says, with `allow-protected` if you had waived the protected paths and `decisions.md` to
-keep your answers in the pull request, and remove the others. A build 0.1.x approved goes
-through one more round of gate, reviews and your approval, as 0.1.x recorded no check of
-it. Upgrade between runs: a run that waits at a gate takes your answer where its own
-Factory looks for it.
+says, with `allow-protected` if you had waived the protected paths, listing in it those
+the build may change, a path a line, and `decisions.md` to keep your answers in the pull
+request, and remove the others. A build 0.1.x approved goes through one more round of
+gate, reviews and your approval, as 0.1.x recorded no check of it. Upgrade between runs:
+a run that waits at a gate takes your answer where its own Factory looks for it.
 
 ### Added
 - The approvals ask you in a question dialog in the agent's pane, the planner's for the
@@ -101,7 +101,11 @@ Factory looks for it.
 
 ### Fixed
 - A build whose plan you approved with protected paths allowed was still told to change
-  none of them; it is told to change those the plan names, and no others.
+  none of them, and the waiver let any protected path through. It is told to change those
+  the plan names, and the guardrails hold it to them: Factory keeps the paths the plan's
+  `Protected paths:` line names as you approve it, a directory with the files under it,
+  and fails any other protected path the branch changes, a symlink to a directory too.
+  Factory's terminal shows beside `p` the paths it reads on that line.
 - The build's reviewers ran the gate again, which Factory had just passed on that commit.
   On a long gate the planner ended its turn with its run still going and its review
   unfinished, which Factory took as given, and the run competed with the builder's next

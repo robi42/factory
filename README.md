@@ -220,18 +220,20 @@ the plan at approval or revise it with a note.
 **Plan approval.** Factory prints the plan, the last plan review's verdicts (marked when
 the plan changed since) and where its notes are, and waits. Answer in the planner's
 dialog, or in Factory's terminal with a letter and Enter: `a` approve, `p` approve and
-allow protected paths, `r` revise with a note, `b` abort; any other answer asks again. Or
-with `fy approve` (`--allow-protected` for the `p` case), `fy reject '<note>'` and
-`fy abort`. A note goes to the planner and then through a plan review round of its own,
-past `FACTORY_PLAN_ROUNDS` if need be: both reviewers check the revision against your
-note, and the planner revises once more if either objects. The plan comes back with a
-short note on what changed and why and that round's verdicts, and you are asked again;
-until then `fy approve`, `reject` and `abort` say the plan is in review. For a change no
-reviewer needs to see, edit `plan.md`, or talk to the planner in its pane after Esc on its
-dialog, first; the builder reads the file. The plan ends saying whether the build must
-change protected paths, `Protected paths: none` or which, so you know whether to allow
-them; Factory warns when it does not. With them allowed, the builder is told to change the
-ones the plan names and no others.
+allow the protected paths the plan names, `r` revise with a note, `b` abort; any other
+answer asks again. Or with `fy approve` (`--allow-protected` for the `p` case),
+`fy reject '<note>'` and `fy abort`. A note goes to the planner and then through a plan
+review round of its own, past `FACTORY_PLAN_ROUNDS` if need be: both reviewers check the
+revision against your note, and the planner revises once more if either objects. The plan
+comes back with a short note on what changed and why and that round's verdicts, and you
+are asked again; until then `fy approve`, `reject` and `abort` say the plan is in review.
+For a change no reviewer needs to see, edit `plan.md`, or talk to the planner in its pane
+after Esc on its dialog, first; the builder reads the file. The plan ends saying whether
+the build must change protected paths, `Protected paths: none` or which, so you know
+whether to allow them; Factory warns when it does not, and shows beside `p` the paths it
+reads there. With them allowed, the build may change those, a directory with the files
+under it, and no others: Factory keeps the list as you approve the plan and tells the
+builder, and the guardrails fail on any other protected path the branch changes.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
 the branch's commits and diff stat and waits the same way: the builder's dialog, `a`
@@ -309,9 +311,10 @@ The agents write the worktree, so what only you and Factory decide is kept out o
 Factory's own state for the task under `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`:
 `state`, where a rerun resumes (`--fresh` clears it); `waiting`, what the run waits for at
 a gate, while it waits, and `approved`, `reject.md` or `aborted`, an answer from a dialog
-or `fy approve`, `reject` or `abort`, until the gate takes it; `allow-protected`, your
-waiver of the protected-path check; the planner's `tree-at-ask` and `tree-at-answer`,
-what you changed while its question dialog was open; `decisions.md`, your answers;
+or `fy approve`, `reject` or `abort`, until the gate takes it; `allow-protected`, the
+protected paths you allowed, a path a line, as the plan named them when you approved it;
+the planner's `tree-at-ask` and `tree-at-answer`, what you changed while its question
+dialog was open; `decisions.md`, your answers;
 `base`, the commit the branch is
 measured from and the base branch it was read from, which a rerun keeps; `gated` and
 `guarded`, the commits the gate and then the guardrails last passed on from that base, and
@@ -457,8 +460,9 @@ rewrite, could name another clone, whose refs and history every check would read
   listed in `.factory/protected`, which git reads as a pathspec; a line git cannot read
   fails the guardrails. A task that legitimately must change them, such as adding the gate,
   gets a one-task waiver from you at plan approval (`p`, the dialog's Approve, allow
-  protected paths, or `fy approve <repo> <bead-id> --allow-protected`), which Factory keeps
-  in its own state, where the agents do not write; the pull request body records it. An
+  protected paths, or `fy approve <repo> <bead-id> --allow-protected`) for the ones the
+  plan's `Protected paths:` line names, and no others, which Factory keeps in its own
+  state, where the agents do not write; the pull request body lists them. An
   `allow-protected` file in the run dir, where the waiver used to be, waives nothing and
   fails the guardrails: only an agent would put one there; so does an answer or a resume
   point there (see Run artifacts).
@@ -470,7 +474,7 @@ rewrite, could name another clone, whose refs and history every check would read
 - No symlink added, renamed or pointed elsewhere that leads out of the worktree, into
   `.git` or into an ignored place, waiver or not: the gate would read through it what no
   diff shows. A symlink to a directory gives the files under it paths that no protected
-  glob names, so it needs the waiver.
+  glob names, so it needs the waiver, as a path the plan names.
 - No submodule added or pointed at another commit, waiver or not: the gate would read its
   files, which no diff shows. Leave such a change for after the merge.
 - No file committed in Factory's own `.factory/run/`, which no other check reads.

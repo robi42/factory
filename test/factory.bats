@@ -96,8 +96,14 @@ as_task() {
   TASK_STATE=$(task_state "$REPO" "$1")
 }
 
-# waive: the human's waiver of the protected-path check, where Factory keeps it for the run
-waive() { mkdir -p "$TASK_STATE" && : >"$TASK_STATE/allow-protected"; }
+# waive [path...]: the human allowed protected paths at the plan's approval, the ones given as
+# the plan named them, where Factory keeps them for the run
+waive() {
+  local p
+  mkdir -p "$TASK_STATE"
+  : >"$TASK_STATE/allow-protected"
+  for p in "$@"; do printf '%s\n' "$p" >>"$TASK_STATE/allow-protected"; done
+}
 
 # the globals human_gate reads for its messages
 fake_task() {
@@ -896,12 +902,53 @@ context_of() {
   printf '# Plan\nchange src/x\n\nProtected paths: none\n\n' >"$TMP/plan.md"
   run show_for_approval plan "$TMP"
   [[ $output != *"Protected paths line"* ]]
+  [[ $output == *"prove and allow the protected paths it names (none)"* ]]
   printf '# Plan\nchange justfile\n\n**Protected paths:** justfile (the new recipe)\n' >"$TMP/plan.md"
   run show_for_approval plan "$TMP"
   [[ $output != *"Protected paths line"* ]]
+  [[ $output == *"prove and allow the protected paths it names (justfile)"* ]]
   printf 'Protected paths: none\n\n# Verify\nrun the gate\n' >"$TMP/plan.md" # not where it ends
   run show_for_approval plan "$TMP"
   [[ $output == *"the plan does not end with its Protected paths line"* ]]
+}
+
+@test "protected paths a plan names: its last line's words, without the markup and remarks around them" {
+  local line want
+  while IFS='|' read -r line want; do
+    printf '# Plan\n\n%s\n' "$line" >"$TMP/plan.md"
+    printf '%s\n' "$line" # shown if the check below fails
+    [ "$(protected_named "$TMP/plan.md" | listed)" = "$want" ]
+  done <<'T'
+Protected paths: crates/desktop/build.rs|crates/desktop/build.rs
+Protected paths: none.|none
+**Protected paths:** justfile (the new recipe)|justfile
+- Protected paths: `.github/workflows/ci.yml`, `justfile` and `./bin/`.|.github/workflows/ci.yml, justfile, bin
+## protected paths: "a.toml"; 'b.toml', a.toml|a.toml, b.toml
+Protected paths:|none
+T
+  printf '# Plan\nProtected paths: x\n\n# Verify\n' >"$TMP/plan.md" # not where it ends
+  [ "$(protected_named "$TMP/plan.md" | listed)" = none ]
+}
+
+@test "plan approval: allowing protected paths allows the ones the plan names as you approve it" {
+  plan_ready
+  PLAN_AGENT=planner
+  mkdir -p "$TMP/$RUN_DIR"
+  cat >"$TMP/$RUN_DIR/plan.md" <<'P'
+# Plan
+change the gate
+
+Protected paths: `.factory/gate`, bin/ (the new check)
+P
+  run approve_plan "$TMP" <<<"p"
+  [ "$status" -eq 0 ]
+  [[ $output == *"prove and allow the protected paths it names (.factory/gate, bin)"* ]]
+  [[ $output == *"protected paths allowed for this task: .factory/gate, bin"* ]]
+  [ "$(<"$TASK_STATE/allow-protected")" = $'.factory/gate\nbin' ]
+  [ "$(<"$TASK_STATE/state")" = planned ]
+  run approve_plan "$TMP" <<<"a"
+  [ "$status" -eq 0 ]
+  [ ! -e "$TASK_STATE/allow-protected" ]
 }
 
 @test "approval keys: coloured by what they do at a terminal, plain otherwise" {
@@ -1411,9 +1458,9 @@ IN
   : >"$REPO/.factory/run/gate-2.log"
   printf 'VERDICT: APPROVE\n' >"$REPO/.factory/run/review-2.md"
   printf 'VERDICT: REVISE\n' >"$REPO/.factory/run/review-2-plan.md"
-  waive
+  waive .factory/gate bin
   run pr_body
-  [[ $output == *"passed (gate-2)"*"review-2: APPROVE"*"review-2-plan: REVISE"*"waived by the human"* ]]
+  [[ $output == *"passed (gate-2)"*"review-2: APPROVE"*"review-2-plan: REVISE"*"Protected paths allowed by the human: .factory/gate, bin"* ]]
 }
 
 @test "guard: the human's own .factory/env may lie untracked in the main checkout, not in a task's worktree" {
@@ -1763,7 +1810,7 @@ IN
   [[ $output == *"symlink to a place git does not show: tool.sh"* ]]
 }
 
-@test "guard: a symlink to a directory fails unless protected paths are waived; one to a file passes" {
+@test "guard: a symlink to a directory fails unless the human allowed it with the plan; one to a file passes" {
   make_repo
   mkdir -p "$REPO/conf"
   printf '[build]\nrustflags = ["--cap-lints=allow"]\n' >"$REPO/conf/config.toml"
@@ -1775,7 +1822,11 @@ IN
   [ "$status" -eq 1 ]
   [[ $output == *"symlink to a directory: .cargo -> conf"* ]]
   [[ $output != *"CLAUDE.md"* ]]
-  waive
+  waive conf # what it points at, not the link
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"symlink to a directory: .cargo -> conf"* ]]
+  waive .cargo
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
 }
@@ -1850,14 +1901,39 @@ IN
   [[ $output == *"protected paths unchecked: Invalid pathspec magic 'bogus' in ':(bogus)x'"* ]]
 }
 
-@test "guard: waiver skips only the protected-path check" {
+@test "guard: a protected path passes only where the human allowed it with the plan; the other checks hold" {
   make_repo
+  mkdir -p "$REPO/bin"
+  printf 'echo old\n' >"$REPO/bin/old"
+  printf 'bin/*\n' >"$REPO/.factory/protected"
+  commit_all "protect bin"
+  merge_work
   printf '#!/bin/sh\nexit 0 # relaxed\n' >"$REPO/.factory/gate"
-  commit_all "relax gate"
-  waive
+  git -C "$REPO" mv bin/old bin/new
+  commit_all "relax the gate, rename a check"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/gate"* ]]
+  [[ $output != *"allowed"* ]]
+  waive .factory/gate bin/new # the rename changes bin/old too
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"$TAG guardrails: protected paths the human allowed: .factory/gate, bin/new"* ]]
+  [[ $output == *"protected path changed: bin/old (the human allowed only those the plan named: .factory/gate, bin/new)"* ]]
+  [[ $output != *"changed: .factory/gate"* ]]
+  [[ $output != *"changed: bin/new"* ]]
+  waive .factory/gate bin # a directory, with the files under it
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
-  [[ $output == *"$TAG guardrails: protected-path check waived by the human"* ]]
+  waive .factory/gate bi # no directory of theirs
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: bin/new"* ]]
+  waive # the plan named none
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/gate (the human allowed only those the plan named: none)"* ]]
+  waive .factory/gate bin
   printf 'echo x\n' >>"$REPO/run.sh"
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
@@ -1895,12 +1971,14 @@ IN
   rm "$TMP/wt-9/$RUN_DIR/allow-protected"
   printf 'plan %s\n' "$$" >"$(task_state "$REPO" toy-9)/waiting"
   cmd_approve "$REPO" toy-9 --allow-protected
+  printf '# Plan\nrelax the gate\n\nProtected paths: .factory/gate\n' >"$TMP/wt-9/$RUN_DIR/plan.md"
+  allow_named "$TMP/wt-9/$RUN_DIR/plan.md" # as the run takes the approval
   run gate_then_guards builder 1
   [ "$status" -eq 0 ]
-  [[ $output == *"protected-path check waived by the human"* ]]
+  [[ $output == *"protected paths the human allowed: .factory/gate"* ]]
   TASK_STATE="" run cmd_check "$TMP/wt-9" main
   [ "$status" -eq 0 ]
-  [[ $output == *"protected-path check waived by the human"*"guardrails passed"* ]]
+  [[ $output == *"protected paths the human allowed: .factory/gate"*"guardrails passed"* ]]
   : >"$TMP/wt-9/$RUN_DIR/allow-protected" # an agent's on the branch, gone from the worktree
   git -C "$TMP/wt-9" add -f "$RUN_DIR/allow-protected"
   git -C "$TMP/wt-9" commit -qm waive
@@ -2161,10 +2239,12 @@ IN
   TASK_DESC="" GATE=true MEMORY="" BASE=main BRANCH=factory/toy-1
   mkdir -p "$TMP/.factory"
   printf 'src/legacy/*\n' >"$TMP/.factory/protected"
-  [[ $(plan_prompt) == *"End the plan with one line, Protected paths: none, or Protected paths: and the ones the build must change; the build may change them only if the human allows protected paths at approval. Protected are these git pathspecs: .factory :(exclude).factory/run src/legacy/* "* ]]
+  [[ $(plan_prompt) == *"End the plan with one line, Protected paths: none, or Protected paths: and the paths the build must change, comma-separated and nothing else; once the human allows protected paths at approval, the build may change those and no others. Protected are these git pathspecs: .factory :(exclude).factory/run src/legacy/* "* ]]
   [[ $(build_prompt) == *"Do not change: .factory :(exclude).factory/run src/legacy/* "* ]]
-  waive
-  [[ $(build_prompt) == *"The human allowed protected paths for this task: change those the plan names, and no others of: .factory :(exclude).factory/run src/legacy/* "* ]]
+  waive # the plan named none
+  [[ $(build_prompt) == *"Do not change: .factory :(exclude).factory/run src/legacy/* "* ]]
+  waive src/legacy/a.rb .factory/gate
+  [[ $(build_prompt) == *"The human allowed you to change these protected paths, which the plan names: src/legacy/a.rb, .factory/gate. Change no others of: .factory :(exclude).factory/run src/legacy/* "* ]]
   [[ $(build_prompt) != *"Do not change"* ]]
 }
 
