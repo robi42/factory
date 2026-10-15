@@ -111,6 +111,11 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   unfinished, which Factory took as given, and the run competed with the builder's next
   round in the same worktree. They are told now that the gate passed and where its log is,
   and not to run it again.
+- A builder that could not fix what the guardrails found, such as a commit that 1Password,
+  locked while you were away, would not sign, had the gate run again on the same files
+  until the rounds ran out, and the hand-over said only `verdict: none`. A turn of the
+  builder's after failed guardrails that changes nothing they check now ends the rounds:
+  Factory hands the task over at once, naming the checks that failed.
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.

@@ -44,7 +44,10 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
 3. **Your approval.** You see the plan and the last review's verdicts; approve, send a
    note back for one more review round, or abort.
 4. **Build.** The builder implements the plan and commits.
-5. **Gate and guardrails.** Factory runs the gate itself and checks the branch.
+5. **Gate and guardrails.** Factory runs the gate itself and checks the branch; a failure
+   goes back to the builder. If the builder's turn then changes nothing the failed
+   guardrails check, as when a locked signer refuses its commit, Factory hands the task
+   over at once and names the checks.
 6. **Code review.** Codex and the planner each review the diff. Anything but two approvals
    sends it back to step 4, up to `FACTORY_ROUNDS` times.
 7. **Your approval.** Look at the branch; approve, send a note back for one more round, or

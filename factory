@@ -1575,13 +1575,15 @@ gate_branch() {
 # guard_branch: the guardrails on the commit the gate passed on, the tip of the task's branch
 # in its own worktree, measured from the recorded base, or from the newer one the branch took
 # in (took_in). The commit they pass on is recorded as the one a push may send (push_gated).
-# Prints the violations. The outcome is recorded (guard), with the checks that failed.
+# Prints the violations, and sets GUARD_FAILED to the checks that failed (guard_check), or to
+# ungated. The outcome is recorded (guard), with them.
 guard_branch() {
   local base newer
   task_head
   if [[ $HEAD_SHA != "$(recorded gated)" ]]; then
     printf 'the gate has not passed on %s, the tip of %s (it passed on %s)\n' "$HEAD_SHA" "$BRANCH" "$(recorded gated)"
-    metric guard ok 0 failed ungated
+    GUARD_FAILED=ungated
+    metric guard ok 0 failed "$GUARD_FAILED"
     return 1
   fi
   base=$(task_base) || exit 1
@@ -1602,6 +1604,14 @@ guard_branch() {
 guarded() {
   task_head
   [[ $HEAD_SHA == "$(recorded guarded)" ]]
+}
+
+# work_state -> the commit checked out in the task's worktree and git's status line for each
+# file changed there (tree_state): what the guardrails read, as a turn that changed nothing
+# they check leaves it. A file already changed and edited again keeps its line.
+work_state() {
+  git -C "$WT" rev-parse --verify -q HEAD
+  tree_state "$WT"
 }
 
 # push_gated git-push-options...: push the commit the gate and the guardrails passed on, by its
@@ -2655,8 +2665,9 @@ codex_tokens() {
 # Shared task state: setup_task sets TASK_ID TASK_TITLE TASK_DESC TASK_REPO TASK_STATE GATE BASE
 #   BRANCH MEMORY and PLAN_AGENT BUILD_AGENT REVIEW_AGENT; open_task_workspace sets WS WT
 #   BUILD_PANE; launch_args sets AGENT_ARGS; plan_round sets PLAN_VERDICT; build_phase (run_task
-#   on resume) sets ROUND VERDICT; task_head sets HEAD_SHA; raise_pr sets PR_URL; HUMAN_NOTE,
-#   COPILOT_NOTE and STEP pass between the human gates, the Copilot loop and on_interrupt.
+#   on resume) sets ROUND VERDICT STALLED; guard_check sets GUARD_FAILED; task_head sets
+#   HEAD_SHA; raise_pr sets PR_URL; HUMAN_NOTE, COPILOT_NOTE and STEP pass between the human
+#   gates, the Copilot loop and on_interrupt.
 
 # task_context repo: from TASK_ID and TASK_TITLE, derive TASK_REPO TASK_STATE GATE BASE BRANCH
 # and the agent names. The base is the branch the checkout is on as the task starts; a rerun
@@ -2990,9 +3001,12 @@ approve_plan() {
 
 # build_phase repo [resume]: build, then gate, guardrails, dual review and the human's
 # approval per round, up to FACTORY_ROUNDS; a note from the human always gets a round of its
-# own, past the last if need be. Sets ROUND VERDICT.
+# own, past the last if need be. A turn of the builder's after the guardrails failed that
+# changes nothing they check (work_state) ends the rounds, to hand over: what they found is
+# then the human's to fix, as a commit that cannot be signed while the signer is locked.
+# Sets ROUND VERDICT STALLED.
 build_phase() {
-  local repo=$1 violations rc limit=$FACTORY_ROUNDS gate_log note=""
+  local repo=$1 violations rc limit=$FACTORY_ROUNDS gate_log note="" out work
   log "building"
   if [[ ${2:-} == resume ]]; then
     ask "$BUILD_AGENT" "$(build_prompt) Part of it may already be implemented or committed on this branch from an earlier run; check the branch and continue from there."
@@ -3001,6 +3015,7 @@ build_phase() {
   fi
   ROUND=1
   VERDICT=""
+  STALLED=""
   while ((ROUND <= limit)); do
     rm -f "$WT/$RUN_DIR/review-$ROUND.md" "$WT/$RUN_DIR/review-$ROUND-plan.md" # a cut-off round's would pass for this one's
     gate_log="$WT/$RUN_DIR/gate-$ROUND.log"
@@ -3009,9 +3024,20 @@ build_phase() {
       ROUND=$((ROUND + 1))
       continue
     fi
-    if ! violations=$(guard_branch); then
+    out=$(mktemp)
+    rc=0
+    guard_branch >"$out" || rc=$? # in this shell: a subshell would keep GUARD_FAILED to itself
+    violations=$(<"$out")
+    rm -f "$out"
+    if ((rc)); then
       warn "guardrails: $violations"
+      work=$(work_state)
       ask "$BUILD_AGENT" "$(guard_fix_prompt "$violations")"
+      if [[ $(work_state) == "$work" ]]; then
+        STALLED="the guardrails failed ($GUARD_FAILED) and the builder's turn after that changed nothing they check"
+        warn "$STALLED"
+        break
+      fi
       ROUND=$((ROUND + 1))
       continue
     fi
@@ -3046,13 +3072,13 @@ build_phase() {
     ask "$BUILD_AGENT" "$(revise_prompt "$ROUND")"
     ROUND=$((ROUND + 1))
   done
-  ROUND=$limit # the loop ends one past the last round
+  ((ROUND <= limit)) || ROUND=$limit # the loop ends one past the last round, but where it stalled
 }
 
 # finish_task repo: memories, then close the bead (with PR and Copilot review) or hand over.
 finish_task() {
   local repo=$1 next="merge $BRANCH" copilot="" violations
-  local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}"
+  local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}${STALLED:+; $STALLED}"
   PR_URL=""
   ask "$BUILD_AGENT" "$(memory_prompt)"
   if [[ $VERDICT != APPROVE ]]; then
@@ -3111,7 +3137,7 @@ run_task() {
   local repo
   repo=$(repo_top "$1") || exit 1
   STEP=setup
-  TASK_ID="" WS="" WT="" # a queue runs its tasks in one shell; on_interrupt must not see the last one's
+  TASK_ID="" WS="" WT="" STALLED="" # a queue runs its tasks in one shell; on_interrupt and finish_task must not see the last one's
   trap 'on_interrupt "$repo"' INT TERM
   setup_task "$repo" "$2"
   open_task_workspace "$repo"

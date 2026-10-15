@@ -2507,6 +2507,71 @@ IN
   [ "$ROUND" -eq 2 ]
 }
 
+@test "build_phase: a builder's turn that changes nothing the failed guardrails check ends the rounds; one that commits goes on" {
+  make_repo
+  fake_task
+  WT=$REPO GATE=true BASE=main BRANCH=work
+  REVIEW_AGENT=codex PLAN_AGENT=planner BUILD_AGENT=builder
+  FACTORY_ROUNDS=3
+  mkdir -p "$REPO/$RUN_DIR"
+  printf 'echo more\n' >>"$REPO/run.sh" # the build, left uncommitted
+  gate_branch() { printf 'gated\n'; }
+  guard_branch() { # the clean check, its checks named as guard_check names them
+    GUARD_FAILED=""
+    [[ -n $(git -C "$WT" status --porcelain -- . ":(exclude)$RUN_DIR") ]] || return 0
+    GUARD_FAILED="clean commits"
+    printf 'uncommitted changes in the worktree; commit your work\n'
+    return 1
+  }
+  mark() { :; }
+  ask() { printf 'asked %s: %.40s\n' "$1" "$2"; } # a commit the locked signer refuses: none
+  ask_for_file() { printf 'VERDICT: APPROVE\n' >"$3"; }
+  human_gate() { return 0; }
+  build_phase "$TMP" >"$TMP/out" 2>&1
+  [ "$ROUND" -eq 1 ]
+  [ -z "$VERDICT" ]
+  [ "$STALLED" = "the guardrails failed (clean commits) and the builder's turn after that changed nothing they check" ]
+  [ "$(grep -c '^gated$' "$TMP/out")" -eq 1 ]
+  [ "$(grep -c 'asked builder: The factory guardrails rejected' "$TMP/out")" -eq 1 ]
+  # the same turn with a commit gets the next round
+  ask() {
+    printf 'asked %s: %.40s\n' "$1" "$2"
+    [[ $2 != "The factory guardrails rejected"* ]] || git -C "$WT" commit -qam more
+  }
+  build_phase "$TMP" >"$TMP/out" 2>&1
+  [ "$ROUND" -eq 2 ]
+  [ "$VERDICT" = APPROVE ]
+  [ -z "$STALLED" ]
+}
+
+@test "work_state: a commit or a file newly changed shows; another edit to a file already changed does not" {
+  make_repo
+  WT=$REPO
+  local before
+  before=$(work_state)
+  printf 'echo more\n' >>"$REPO/run.sh"
+  [ "$(work_state)" != "$before" ]
+  before=$(work_state)
+  printf 'echo again\n' >>"$REPO/run.sh" # uncommitted still, all the guardrails see of it
+  [ "$(work_state)" = "$before" ]
+  git -C "$REPO" commit -qam more
+  [ "$(work_state)" != "$before" ]
+}
+
+@test "finish_task: a build that stalled hands over saying why" {
+  fake_task
+  WT=$TMP BRANCH=work WS=w1 BUILD_AGENT=builder
+  ROUND=1 VERDICT=""
+  STALLED="the guardrails failed (clean commits) and the builder's turn after that changed nothing they check"
+  memory_prompt() { :; }
+  ask() { :; }
+  bd_note() { printf 'note on %s: %s\n' "$2" "$3"; }
+  bd_push() { :; }
+  run finish_task "$TMP"
+  [ "$status" -eq 2 ]
+  [[ $output == *"note on toy-1: needs a human. branch work, worktree $TMP, herdr workspace w1, rounds used: 1, verdict: none; the guardrails failed (clean commits) and the builder's turn after that changed nothing they check"* ]]
+}
+
 @test "plan approval: a note gets a plan round of its own, its reviewers told of the note" {
   make_repo
   fake_task
