@@ -210,7 +210,8 @@ A run without a terminal waits for the dialog or these commands. `approve`, `rej
 `abort` say so when nothing waits for them. The agents point you to these commands when
 you tell them a decision in words, and may not run them: the settings Factory starts them
 with deny them Factory, `gh` and `git push`, while your own `!` commands run as typed.
-`--auto` skips both approvals; the planner's questions still wait for your answer.
+`--auto` skips both approvals; the planner's questions still wait for your answer. For
+runs nobody watches, run Factory as a user of its own (`extras/factory-user/`).
 
 Every answer you give on a task, the planner's questions included, is recorded: in
 Factory's state for the task, which the planner reads as `.factory/run/decisions.md`, as a
@@ -516,7 +517,7 @@ you sign yours, and on Linux, letting that socket through lets every Unix socket
 and fills build caches in your home. More to the point, whatever a sandbox stopped the
 builder from doing, it could write into a test, which the gate then runs as you. To
 isolate a run, run Factory, Herdr and the agents in a VM or a container, or as a user that
-holds only the credentials a run needs.
+holds only the credentials a run needs, as `extras/factory-user/` sets up.
 
 ## Knobs
 

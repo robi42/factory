@@ -60,6 +60,9 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   a change helped; the guardrails that failed; and your latest notes. Each run records
   what it does as it goes, a JSON line an event, in `events.jsonl` beside the tasks'
   state, which `fy clean` leaves.
+- `extras/factory-user/`: a recipe for running Factory, Herdr and the agents as a user of
+  their own, which holds only its clones, a GitHub token for them and the agents' logins,
+  so that an `--auto` run reaches nothing else of yours.
 
 ### Changed
 - The planner asks its questions in its own question dialog, with options where they
