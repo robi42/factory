@@ -4438,6 +4438,31 @@ SH
   [ "$COPILOT_NOTE" = "Copilot's comments answered without changes" ]
 }
 
+@test "copilot_loop: fixes left uncommitted end the loop before the gate" {
+  make_repo
+  on_work_branch
+  mkdir -p "$REPO/.factory/run"
+  FACTORY_COPILOT_ROUNDS=3
+  copilot_request() { :; }
+  copilot_wait() { :; }
+  copilot_verdict() { printf 'Changes recommended'; }
+  copilot_comments() { printf 'run.sh:1: use set -e\n'; }
+  ask() { printf 'set -e\necho hi\n' >"$REPO/run.sh"; } # its commit refused by a locked signer
+  GATE=.factory/gate
+  run_gate() { printf 'gate ran\n'; }
+  copilot_reply() { printf 'replied\n'; }
+  copilot_resolve() { printf 'resolved\n'; }
+  run copilot_loop builder https://example.invalid/pull/7
+  [ "$status" -eq 1 ]
+  [[ $output != *"gate ran"* ]]
+  [[ $output != *replied* ]]
+  [[ $output != *resolved* ]]
+  rc=0
+  copilot_loop builder https://example.invalid/pull/7 >/dev/null || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$COPILOT_NOTE" = "the builder left its fixes for Copilot's round 1 uncommitted" ]
+}
+
 @test "help and unknown command" {
   run main help
   [ "$status" -eq 0 ]
@@ -4476,6 +4501,40 @@ SH
   run finish_task "$REPO"
   [ "$status" -eq 2 ]
   [[ $output == *"needs a human"*"origin's factory/toy-9 is not "*", the commit Factory checked and pushed"* ]]
+}
+
+@test "finish_task: hands over when the worktree holds fixes the pull request lacks" {
+  make_repo
+  add_origin
+  task_opened
+  ask() { :; }
+  bd() { printf '%s\n' "$*" >>"$TMP/bd.log"; }
+  gh() { :; }
+  ROUND=1 VERDICT=APPROVE FACTORY_PR=1 FACTORY_COPILOT=1
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam work
+  gate_then_guards builder 1
+  pushed=$(git -C "$TMP/wt-9" rev-parse HEAD)
+  copilot_loop() { # the fixes' commit refused by a locked signer
+    printf 'echo y\n' >"$TMP/wt-9/run.sh"
+    COPILOT_NOTE="the builder left its fixes for Copilot's round 1 uncommitted"
+    return 1
+  }
+  run finish_task "$REPO"
+  [ "$status" -eq 2 ]
+  [[ $output == *"needs a human"*"Copilot's round 1 uncommitted; the worktree holds uncommitted changes, which the pull request lacks: factory pr $REPO toy-9 checks what is committed and pushes it"* ]]
+  [[ $(<"$TMP/bd.log") != *" close toy-9"* ]]
+  git -C "$TMP/wt-9" checkout -q -- run.sh
+  copilot_loop() { # the fixes committed, but the gate failed on them
+    printf 'echo z\n' >"$TMP/wt-9/run.sh"
+    git -C "$TMP/wt-9" commit -qam fixes
+    COPILOT_NOTE="gate or guardrails failed while addressing Copilot's comments"
+    return 1
+  }
+  run finish_task "$REPO"
+  [ "$status" -eq 2 ]
+  [[ $output == *"needs a human"*"the worktree holds commits after ${pushed:0:7}, which the pull request lacks"* ]]
+  [[ $(<"$TMP/bd.log") != *" close toy-9"* ]]
 }
 
 @test "metric: an event is a JSON line beside the tasks' state, digits as numbers; outside a task there is none" {

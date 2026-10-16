@@ -1792,6 +1792,17 @@ pushed_holds() {
   [[ -n $theirs && $theirs == "$(recorded pushed)" ]]
 }
 
+# unpushed -> what the task's worktree holds that the commit Factory pushed, the pull
+# request's, lacks: commits after it, changes not committed, or both; nothing when none
+unpushed() {
+  local pushed left=""
+  pushed=$(recorded pushed)
+  task_head
+  [[ $HEAD_SHA == "$pushed" ]] || left="commits after ${pushed:0:7}"
+  if tree_dirty "$WT"; then left="${left:+$left and }uncommitted changes"; fi
+  printf '%s' "$left"
+}
+
 # --------------------------------------------------------------- copilot ----
 # GitHub Copilot code review never approves formally; its review body starts with a verdict
 # line such as "### 🟢 Approval recommended", and its inline comments are posted by the user
@@ -1944,6 +1955,12 @@ copilot_loop() {
       copilot_reply "$n" "$round" "$sha" # the pushback alone; another review would say the same
       copilot_resolve "$n" "$sha"
       COPILOT_NOTE="Copilot's comments answered without changes"
+      return 1
+    fi
+    # changes not committed fail the guardrails, after however long the gate takes: a commit
+    # the signer refused, say, locked while nobody was there to unlock it
+    if tree_dirty "$WT"; then
+      COPILOT_NOTE="the builder left its fixes for Copilot's round $round uncommitted"
       return 1
     fi
     gate_then_guards "$agent" "copilot-$round" || {
@@ -3110,7 +3127,7 @@ build_phase() {
 
 # finish_task repo: memories, then close the bead (with PR and Copilot review) or hand over.
 finish_task() {
-  local repo=$1 next="merge $BRANCH" copilot="" violations
+  local repo=$1 next="merge $BRANCH" copilot="" violations left
   local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}${STALLED:+; $STALLED}"
   PR_URL=""
   ask "$BUILD_AGENT" "$(memory_prompt)"
@@ -3133,6 +3150,12 @@ finish_task() {
     fi
     if ! pushed_holds; then
       hand_over "$repo" "$summary, pr $PR_URL; origin's $BRANCH is not $(recorded pushed), the commit Factory checked and pushed"
+      return 2
+    fi
+    # fixes for Copilot's comments that did not get through to the pull request
+    left=$(unpushed)
+    if [[ -n $left ]]; then
+      hand_over "$repo" "$summary, pr $PR_URL$copilot; the worktree holds $left, which the pull request lacks: factory pr $repo $TASK_ID checks what is committed and pushes it"
       return 2
     fi
   fi

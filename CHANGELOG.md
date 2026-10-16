@@ -125,6 +125,12 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   gate on the unbuilt branch. A new task now starts from origin's copy of its base where
   yours is only behind it, and a first build turn that changes nothing hands the task
   over.
+- A Copilot round whose fixes did not reach the pull request closed the task as done. On
+  Blik's bk-9tt the builder's commit failed with 1Password locked; Factory ran the gate on
+  the uncommitted fixes for 16 minutes, the guardrails failed, and the bead was closed
+  with the pull request lacking them. Factory now hands the task over when the worktree
+  holds commits or changes the pull request lacks, naming them and `fy pr`, which checks
+  and pushes them once they are committed; fixes left uncommitted skip the gate.
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.

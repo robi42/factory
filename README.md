@@ -273,7 +273,9 @@ gates, pushes, posts one summary comment and resolves the threads it addressed, 
 again, up to `FACTORY_COPILOT_ROUNDS` times, until a review of the head commit is
 clean or recommends approval (its nits left open), or until the builder answers a round
 without changing anything. Copilot never approves formally, only in its review text.
-`--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
+Fixes that do not reach the pull request, left uncommitted when the signer was locked, or
+failing the gate, hand the task over instead of closing it; `fy pr` checks and pushes
+them once they are committed. `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
 
 Factory never rebases onto a local ref, nor fetches through the remote's fetch config. The
 first time it runs in a repo, before any agent works there, it records how the repo's own
