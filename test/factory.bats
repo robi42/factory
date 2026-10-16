@@ -2900,6 +2900,45 @@ JSON
   [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
 }
 
+@test "waits_for: the tasks a task builds on whose branch is not merged into the base, with its pull request or branch" {
+  make_repo
+  git -C "$REPO" checkout -q main
+  add_origin
+  git -C "$REPO" branch factory/toy-m # no commits of its own, its task closed: merged
+  local b
+  for b in toy-u-open toy-s-squashed toy-l-local toy-r-related; do
+    git -C "$REPO" checkout -q -b "factory/$b" main
+    printf '%s\n' "$b" >"$REPO/$b.txt"
+    commit_all "$b"
+  done
+  git -C "$REPO" checkout -q main
+  gh() {
+    case "$*" in
+      *"factory/toy-s-squashed --json state"*) printf 'MERGED\n' ;;
+      *"factory/toy-u-open --json state"*) printf 'OPEN\n' ;;
+      *"factory/toy-u-open --json url"*) printf 'https://example.invalid/pull/7\n' ;;
+      *) return 1 ;;
+    esac
+  }
+  # toy-n has no branch, toy-r is no blocker, and toy-l is in progress
+  bd() {
+    printf '{"id":"toy-9","dependencies":[%s,%s,%s,%s,%s,%s]}' \
+      '{"id":"toy-m","status":"closed","dependency_type":"blocks"}' \
+      '{"id":"toy-u","status":"closed","dependency_type":"blocks"}' \
+      '{"id":"toy-s","status":"closed","dependency_type":"blocks"}' \
+      '{"id":"toy-n","status":"closed","dependency_type":"blocks"}' \
+      '{"id":"toy-r","status":"closed","dependency_type":"related"}' \
+      '{"id":"toy-l","status":"in_progress","dependency_type":"blocks"}'
+  }
+  run waits_for "$REPO" toy-9 main
+  [ "$status" -eq 0 ]
+  [ "$output" = "toy-u (https://example.invalid/pull/7), toy-l (factory/toy-l-local)" ]
+  bd() { printf '{"id":"toy-9"}'; }
+  run waits_for "$REPO" toy-9 main
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 @test "planner_kept_hands_off: clean tree passes, dirty tree gets one revert, then dies" {
   make_repo
   WT=$REPO
@@ -3807,22 +3846,71 @@ JSON
   [[ $output == *"no open tasks in $TMP"* ]]
 }
 
-@test "next claims atomically through bd ready --claim; a bd that fails is no empty queue" {
-  run cmd_next "$TMP"
+@test "next chooses and claims under a lock, so two in parallel never take one bead; a bd that fails is no empty queue" {
+  make_repo
+  run cmd_next "$REPO"
   [ "$status" -eq 1 ]
-  [[ $output == *"no beads in $TMP"* ]]
-  mkdir "$TMP/.beads"
+  [[ $output == *"no beads in $REPO"* ]]
+  mkdir "$REPO/.beads"
   bd() {
     printf '%s\n' "$*" >>"$TMP/bd.log"
     printf '[]'
   }
-  run cmd_next "$TMP"
+  run cmd_next "$REPO"
   [ "$status" -eq 3 ]
-  grep -q 'ready --claim --json' "$TMP/bd.log"
+  grep -q 'ready -n 0 --json' "$TMP/bd.log"
   bd() { printf 'database is locked\n' >&2 && return 1; }
-  run cmd_next "$TMP"
+  run cmd_next "$REPO"
   [ "$status" -eq 1 ]
-  [[ $output == *"database is locked"*"bd could not hand out a ready task in $TMP"* ]]
+  [[ $output == *"database is locked"*"bd could not list the ready tasks in $REPO"* ]]
+  # another factory next holds the lock: this one waits for it, then claims
+  bd() {
+    printf '%s\n' "$*" >>"$TMP/bd.log"
+    case "$*" in
+      *ready*) printf '[{"id":"toy-b"}]' ;;
+      *show*) printf '{"id":"toy-b"}' ;;
+    esac
+  }
+  mkdir -p "$(repo_state "$REPO")"
+  exec 8>"$(repo_state "$REPO")/next.lock"
+  flock 8
+  claim_next "$REPO" >"$TMP/claimed" 2>"$TMP/err" 3>&- 8>&- &
+  poll 100 0.1 grep -q 'waiting for another factory next' "$TMP/err"
+  run ! grep -q 'toy-b --claim' "$TMP/bd.log"
+  flock -u 8
+  wait
+  [ "$(cat "$TMP/claimed")" = toy-b ]
+  grep -q 'update toy-b --claim' "$TMP/bd.log"
+}
+
+@test "next skips a ready task that builds on a branch not merged yet for the next one; none left is nothing ready" {
+  make_repo
+  git -C "$REPO" checkout -q -b factory/toy-u-open main
+  printf 'u\n' >"$REPO/u.txt"
+  commit_all u
+  git -C "$REPO" checkout -q main
+  mkdir "$REPO/.beads"
+  gh() { return 1; } # no pull request
+  B_DEPS='[]'
+  bd() {
+    printf '%s\n' "$*" >>"$TMP/bd.log"
+    case "$*" in
+      *ready*) printf '[{"id":"toy-a"},{"id":"toy-b"}]' ;;
+      *"show toy-a"*) printf '{"id":"toy-a","dependencies":[{"id":"toy-u","status":"closed","dependency_type":"blocks"}]}' ;;
+      *"show toy-b"*) printf '{"id":"toy-b","dependencies":%s}' "$B_DEPS" ;;
+    esac
+  }
+  run_task() { printf 'ran %s\n' "$2"; }
+  run cmd_next "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"skipping toy-a: it builds on toy-u (factory/toy-u-open), not merged into main yet"*"ran toy-b"* ]]
+  grep -q 'update toy-b --claim' "$TMP/bd.log"
+  run ! grep -q 'update toy-a' "$TMP/bd.log"
+  B_DEPS='[{"id":"toy-u","status":"closed","dependency_type":"blocks"}]'
+  run cmd_next "$REPO"
+  [ "$status" -eq 3 ]
+  [[ $output == *"skipping toy-a"*"skipping toy-b"*"nothing ready in $REPO"* ]]
+  [[ $output != *"ran toy"* ]]
 }
 
 @test "cmd_queue: each task a factory next of its own, with the flags; goes on past a failed one, stops when none is ready, at max, or on an interrupt" {
@@ -4341,6 +4429,44 @@ SH
   [[ $output == *"the task's base, local-only, is no branch on origin"* ]]
   [ ! -e "$TMP/bd.log" ]
   FACTORY_PR=0 run setup_task "$REPO" toy-9
+  [ "$status" -eq 0 ]
+  grep -q 'update toy-9 --claim' "$TMP/bd.log"
+}
+
+@test "check_deps: a task taken up anew, or over, stops before its claim while it builds on a branch not merged yet" {
+  make_repo
+  git -C "$REPO" checkout -q -b factory/toy-u-open main
+  printf 'u\n' >"$REPO/u.txt"
+  commit_all u
+  git -C "$REPO" checkout -q main
+  gh() { return 1; } # no pull request
+  bd() {
+    printf '%s\n' "$*" >>"$TMP/bd.log"
+    case "$*" in
+      *show*) printf '{"id":"toy-9","dependencies":[{"id":"toy-u","status":"closed","dependency_type":"blocks"}]}' ;;
+    esac
+  }
+  resolve_task() { TASK_ID=toy-9 TASK_TITLE=t; }
+  memory_block() { :; }
+  run setup_task "$REPO" toy-9
+  [ "$status" -eq 1 ]
+  [[ $output == *"toy-9 builds on toy-u (factory/toy-u-open), not merged into main yet, and would start without that code: merge it first, or drop the dependency (bd dep remove) if toy-9 does not need it"* ]]
+  run ! grep -q -- '--claim' "$TMP/bd.log"
+  # a task under way keeps its base, and goes on
+  mkdir -p "$(task_state "$REPO" toy-9)"
+  printf 'abc refs/heads/main\n' >"$(task_state "$REPO" toy-9)/base"
+  run setup_task "$REPO" toy-9
+  [ "$status" -eq 0 ]
+  grep -q 'update toy-9 --claim' "$TMP/bd.log"
+  # started over, it is taken up anew
+  rm "$TMP/bd.log"
+  FACTORY_FRESH=1 run setup_task "$REPO" toy-9
+  [ "$status" -eq 1 ]
+  [[ $output == *"toy-9 builds on toy-u (factory/toy-u-open)"* ]]
+  run ! grep -q -- '--claim' "$TMP/bd.log"
+  # merged, it waits no more
+  git -C "$REPO" merge -q factory/toy-u-open
+  FACTORY_FRESH=1 run setup_task "$REPO" toy-9
   [ "$status" -eq 0 ]
   grep -q 'update toy-9 --claim' "$TMP/bd.log"
 }

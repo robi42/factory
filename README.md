@@ -257,7 +257,10 @@ with a comment saying why, and the workspace stays open. Once merged (squash mer
 when the pull request shows as merged), `fy clean` removes the workspace, worktree and
 branch and Factory's state for the task, and closes the bead. It judges a branch merged
 against the base the task kept. A task whose bead is still open is kept unless its pull
-request shows as merged; close the bead, or use `--force`.
+request shows as merged; close the bead, or use `--force`. Until a task's branch is
+merged, the tasks it blocks in bd wait for it: bd has them ready once its bead is closed,
+but they would start without its code, so `fy next` and `fy queue` skip them, naming its
+pull request, and `fy run` stops on one before claiming its bead.
 
 ### Pull requests and Copilot
 

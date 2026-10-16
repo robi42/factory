@@ -131,6 +131,12 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   with the pull request lacking them. Factory now hands the task over when the worktree
   holds commits or changes the pull request lacks, naming them and `fy pr`, which checks
   and pushes them once they are committed; fixes left uncommitted skip the gate.
+- `factory next` and `factory queue` took up a task whose blocker in bd still had its pull
+  request open: Factory closes a bead once its pull request is open, which makes the tasks
+  it blocks ready in bd, and they started from a base without its code. On Blik, bk-cxs
+  came next while bk-9tt's pull request, with the viewer bk-cxs builds on, was open.
+  Such a task now waits for the merge: `factory next` skips it, naming the pull request,
+  and takes the next ready task, and `factory run` stops on it before claiming its bead.
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.

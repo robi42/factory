@@ -175,6 +175,16 @@ check_base() {
   die "could not read origin's branches for the task's base, $BASE"
 }
 
+# check_deps repo: a task taken up anew, or started over, stops before its bead is claimed while
+# it builds on a task whose branch is not merged into its base (waits_for), as one whose pull
+# request is still open: it would start without that code. A task under way keeps its base.
+check_deps() {
+  local why
+  ((FACTORY_FRESH)) || [[ ! -s $TASK_STATE/base ]] || return 0
+  why=$(waits_for "$1" "$TASK_ID" "$BASE")
+  [[ -z $why ]] || die "$TASK_ID builds on $why, not merged into $BASE yet, and would start without that code: merge it first, or drop the dependency (bd dep remove) if $TASK_ID does not need it"
+}
+
 # ----------------------------------------------------------------- herdr ----
 # h: run a herdr command, print its JSON, die on error JSON.
 h() {
@@ -2740,6 +2750,7 @@ setup_task() {
   resolve_task "$repo" "$arg"
   task_context "$repo"
   ((! FACTORY_PR)) || check_base "$repo"
+  check_deps "$repo"
   MEMORY=$(memory_block "$repo")
   log "task $TASK_ID: $TASK_TITLE"
   log "models: plan=$FACTORY_PLAN_MODEL ($FACTORY_PLAN_EFFORT) build=$FACTORY_BUILD_MODEL ($FACTORY_BUILD_EFFORT) review=$FACTORY_REVIEW_MODEL ($FACTORY_REVIEW_EFFORT)"
@@ -3526,12 +3537,40 @@ cmd_tasks() {
   if [[ -n $out ]]; then printf '%s\n' "$out"; else log "no open tasks in $repo"; fi
 }
 
+# claim_next repo -> the first task bd has ready that waits for no other task's branch
+# (waits_for), claimed; empty when there is none. bd's atomic ready --claim would take the
+# first ready task, whatever it waits for, so Factory chooses and claims under a lock in its
+# state for the repo, one factory next at a time: two in parallel never take the same bead.
+claim_next() {
+  local repo=$1 dir base ids id why
+  need flock
+  dir=$(repo_state "$repo") || die "$repo is no git checkout"
+  mkdir -p "$dir"
+  base=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  {
+    if ! flock -n 9; then
+      log "waiting for another factory next in $repo to claim its task"
+      flock 9 || die "could not lock $dir/next.lock"
+    fi
+    ids=$(bd_json "$repo" ready -n 0 | jq -r '.[].id') || die "bd could not list the ready tasks in $repo"
+    for id in $ids; do
+      why=$(waits_for "$repo" "$id" "$base")
+      if [[ -n $why ]]; then
+        log "skipping $id: it builds on $why, not merged into $base yet"
+        continue
+      fi
+      bd -C "$repo" update "$id" --claim >/dev/null || die "bd could not claim $id in $repo"
+      printf '%s' "$id"
+      break
+    done
+  } 9>"$dir/next.lock"
+}
+
 # cmd_next repo: claim the next ready task and run it; 3 when nothing is ready
 cmd_next() {
   local repo=$1 id
   need_beads "$repo"
-  # --claim is atomic, so several factory next in parallel never pick the same bead
-  id=$(bd_one "$repo" ready --claim | jq -r '.id // empty') || die "bd could not hand out a ready task in $repo"
+  id=$(claim_next "$repo") || exit 1
   [[ -n $id ]] || {
     log "nothing ready in $repo"
     return 3
@@ -3773,6 +3812,23 @@ merged_into() {
     [[ $(cd "$repo" && gh pr view "$branch" --json state -q .state 2>/dev/null) == MERGED ]] && return 0
   fi
   return 1
+}
+
+# waits_for repo bead-id base -> the tasks the bead builds on, its blockers in bd, whose factory
+# branch is not merged into base (merged_into), each with its pull request, else its branch;
+# empty when there are none. Factory closes a task's bead on approval, before you merge its
+# branch, so bd has the tasks it blocks ready while their base lacks its code. A task Factory
+# never ran, or whose branch factory clean removed, leaves no branch to wait for.
+waits_for() {
+  local repo=$1 base=$3 dep status branch url out=""
+  while read -r dep status; do
+    branch=$(branch_of "$repo" "$dep")
+    [[ -n $branch ]] || continue
+    merged_into "$repo" "$branch" "$base" "$status" && continue
+    url=$(cd "$repo" && gh pr view "$branch" --json url -q .url 2>/dev/null) || url=""
+    out+="${out:+, }$dep (${url:-$branch})"
+  done < <(bd_one "$repo" show "$2" | jq -r '.dependencies[]? | select((.dependency_type // .type) == "blocks") | "\(.id // .depends_on_id) \(.status // "")"')
+  printf '%s' "$out"
 }
 
 # cmd_clean repo [bead-id] [--force]: remove finished task workspaces, worktrees and branches.
