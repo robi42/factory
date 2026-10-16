@@ -43,7 +43,8 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
    objection in the last round still gets its revision.
 3. **Your approval.** You see the plan and the last review's verdicts; approve, send a
    note back for one more review round, or abort.
-4. **Build.** The builder implements the plan and commits.
+4. **Build.** The builder implements the plan and commits. A first turn that changes
+   nothing, as when the builder lacks code the plan builds on, hands the task over.
 5. **Gate and guardrails.** Factory runs the gate itself and checks the branch; a failure
    goes back to the builder. If the builder's turn then changes nothing the failed
    guardrails check, as when a locked signer refuses its commit, Factory hands the task
@@ -80,9 +81,11 @@ with the bead id resumes: it reopens the workspace, adopts the three agents stil
 it, and picks up after the last completed milestone: a written plan, at its next review
 round; a reviewed plan waiting for your approval; an approved plan; or an approved build,
 reusing an open pull request, and checked again first if the branch has moved on since.
-`--fresh` starts over. A rerun also keeps the task's base, the branch your checkout was on
-when the task started, whatever branch it is on by then; `--fresh` takes the checkout's
-anew. After a restart of Herdr's server (a reboot, an update), Herdr brings the agents
+`--fresh` starts over. A new task starts from your checkout's branch, its base, or from
+origin's copy of it where yours is only behind, so that it has what was merged on origin
+since you last pulled. A rerun keeps the task's base, whatever branch your checkout is on
+by then; `--fresh` takes the checkout's anew. After a restart of Herdr's server (a reboot,
+an update), Herdr brings the agents
 back with their sessions but without the arguments Factory started them with; the rerun
 starts each such agent again with them, its session resumed, so it keeps its effort,
 model, permissions and dialog hook.

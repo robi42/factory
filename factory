@@ -1466,6 +1466,30 @@ record_base() {
   record_transport
 }
 
+# start_from_origin: a task taken up anew starts from origin's copy of its base where yours is
+# only behind it, as when you have not pulled what was merged there since: the planner would
+# plan on code the branch lacks, and the builder could not build on it. A base with commits
+# origin lacks stays the task's, as does one Factory cannot fetch (fetch_base).
+start_from_origin() {
+  local tip n
+  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
+  [[ ! -s $TASK_STATE/base ]] || return 0                     # a task under way keeps its base
+  git -C "$WT" remote get-url origin >/dev/null 2>&1 || return 0
+  record_transport
+  if ! tip=$(fetch_base); then
+    warn "could not fetch origin's $BASE; $TASK_ID starts from yours"
+    return 0
+  fi
+  git -C "$WT" merge-base --is-ancestor HEAD "$tip" || return 0 # yours has commits origin lacks
+  n=$(git -C "$WT" rev-list --count "HEAD..$tip")
+  ((n)) || return 0
+  if ! git -C "$WT" merge -q --ff-only "$tip"; then
+    warn "could not move $BRANCH on to origin's $BASE; $TASK_ID starts from yours"
+    return 0
+  fi
+  log "$TASK_ID starts from origin's $BASE, $n commit(s) past yours"
+}
+
 # transport_record -> where Factory keeps the repo's transport config (record_transport): in its
 # state for the repo, beside its tasks', since what one task's agents change there the next
 # task would find
@@ -2734,6 +2758,7 @@ open_task_workspace() {
     file_hash "$exclude" >"$TASK_STATE/exclude" # what guard_check holds it to
   fi
   ((! FACTORY_FRESH)) || rm -f "$TASK_STATE/base" # starting over, from the checkout's branch (task_context)
+  start_from_origin
   record_base
   # A task that starts on a checkout git reads as changed would fail every check after hours of
   # work. A conversion only the repo's own git config defines (core.autocrlf, a filter such as
@@ -3003,19 +3028,27 @@ approve_plan() {
 # approval per round, up to FACTORY_ROUNDS; a note from the human always gets a round of its
 # own, past the last if need be. A turn of the builder's after the guardrails failed that
 # changes nothing they check (work_state) ends the rounds, to hand over: what they found is
-# then the human's to fix, as a commit that cannot be signed while the signer is locked.
-# Sets ROUND VERDICT STALLED.
+# then the human's to fix, as a commit that cannot be signed while the signer is locked. So
+# does a first turn on the plan that changes nothing, before any round: the builder did not
+# build, as when it lacks code the plan builds on. Sets ROUND VERDICT STALLED.
 build_phase() {
   local repo=$1 violations rc limit=$FACTORY_ROUNDS gate_log note="" out work
   log "building"
+  VERDICT=""
+  STALLED=""
   if [[ ${2:-} == resume ]]; then
     ask "$BUILD_AGENT" "$(build_prompt) Part of it may already be implemented or committed on this branch from an earlier run; check the branch and continue from there."
   else
+    work=$(work_state)
     ask "$BUILD_AGENT" "$(build_prompt)"
+    if [[ $(work_state) == "$work" ]]; then
+      ROUND=0
+      STALLED="the builder's turn on the plan changed nothing; see its pane"
+      warn "$STALLED"
+      return 0
+    fi
   fi
   ROUND=1
-  VERDICT=""
-  STALLED=""
   while ((ROUND <= limit)); do
     rm -f "$WT/$RUN_DIR/review-$ROUND.md" "$WT/$RUN_DIR/review-$ROUND-plan.md" # a cut-off round's would pass for this one's
     gate_log="$WT/$RUN_DIR/gate-$ROUND.log"

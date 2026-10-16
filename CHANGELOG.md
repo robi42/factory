@@ -116,6 +116,12 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   until the rounds ran out, and the hand-over said only `verdict: none`. A turn of the
   builder's after failed guardrails that changes nothing they check now ends the rounds:
   Factory hands the task over at once, naming the checks that failed.
+- A task started from your local base even where origin's had moved on since you last
+  pulled: the planner planned on origin's newer code, which the branch lacked, and the
+  builder ended its turn without building, which Factory took for the build, running the
+  gate on the unbuilt branch. A new task now starts from origin's copy of its base where
+  yours is only behind it, and a first build turn that changes nothing hands the task
+  over.
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.

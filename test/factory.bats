@@ -2485,6 +2485,7 @@ IN
   task_base() { printf main; }
   mark() { :; }
   ask() { printf 'asked %s: %.40s\n' "$1" "$2"; }
+  work_state() { printf x >>"$TMP/turns" && cat "$TMP/turns"; } # each turn changes something, which no git repo here shows
   ask_for_file() { printf 'VERDICT: %s\n' "$(cat "$TMP/verdict")" >"$3"; }
   human_gate() { # a note the first time, an approval the second
     if [[ -e $TMP/noted ]]; then return 0; fi
@@ -2510,11 +2511,10 @@ IN
 @test "build_phase: a builder's turn that changes nothing the failed guardrails check ends the rounds; one that commits goes on" {
   make_repo
   fake_task
-  WT=$REPO GATE=true BASE=main BRANCH=work
+  WT=$REPO GATE=true BASE=main BRANCH=work MEMORY=""
   REVIEW_AGENT=codex PLAN_AGENT=planner BUILD_AGENT=builder
   FACTORY_ROUNDS=3
   mkdir -p "$REPO/$RUN_DIR"
-  printf 'echo more\n' >>"$REPO/run.sh" # the build, left uncommitted
   gate_branch() { printf 'gated\n'; }
   guard_branch() { # the clean check, its checks named as guard_check names them
     GUARD_FAILED=""
@@ -2524,7 +2524,10 @@ IN
     return 1
   }
   mark() { :; }
-  ask() { printf 'asked %s: %.40s\n' "$1" "$2"; } # a commit the locked signer refuses: none
+  ask() { # the build, which a locked signer keeps from being committed
+    printf 'asked %s: %.40s\n' "$1" "$2"
+    [[ $2 != "Task "* ]] || printf 'echo more\n' >>"$WT/run.sh"
+  }
   ask_for_file() { printf 'VERDICT: APPROVE\n' >"$3"; }
   human_gate() { return 0; }
   build_phase "$TMP" >"$TMP/out" 2>&1
@@ -2534,13 +2537,36 @@ IN
   [ "$(grep -c '^gated$' "$TMP/out")" -eq 1 ]
   [ "$(grep -c 'asked builder: The factory guardrails rejected' "$TMP/out")" -eq 1 ]
   # the same turn with a commit gets the next round
+  git -C "$REPO" checkout -q -- run.sh
   ask() {
     printf 'asked %s: %.40s\n' "$1" "$2"
-    [[ $2 != "The factory guardrails rejected"* ]] || git -C "$WT" commit -qam more
+    case $2 in
+      "Task "*) printf 'echo more\n' >>"$WT/run.sh" ;;
+      "The factory guardrails rejected"*) git -C "$WT" commit -qam more ;;
+    esac
   }
   build_phase "$TMP" >"$TMP/out" 2>&1
   [ "$ROUND" -eq 2 ]
   [ "$VERDICT" = APPROVE ]
+  [ -z "$STALLED" ]
+}
+
+@test "build_phase: a first turn on the plan that changes nothing hands over before any round; a resumed one goes on to the gate" {
+  make_repo
+  fake_task
+  WT=$REPO GATE=true BASE=main BRANCH=work MEMORY=""
+  REVIEW_AGENT=codex PLAN_AGENT=planner BUILD_AGENT=builder
+  FACTORY_ROUNDS=1
+  mkdir -p "$REPO/$RUN_DIR"
+  gate_branch() { printf 'gated\n' && return 1; }
+  ask() { printf 'asked %s: %.40s\n' "$1" "$2"; } # a builder that asks you for code the plan builds on
+  build_phase "$TMP" >"$TMP/out" 2>&1
+  [ "$ROUND" -eq 0 ]
+  [ "$STALLED" = "the builder's turn on the plan changed nothing; see its pane" ]
+  run ! grep -q '^gated$' "$TMP/out"
+  # a rerun's work may be done and committed already: the gate decides
+  build_phase "$TMP" resume >"$TMP/out" 2>&1
+  grep -q '^gated$' "$TMP/out"
   [ -z "$STALLED" ]
 }
 
@@ -2925,7 +2951,7 @@ JSON
   [ "$status" -eq 1 ]
   [[ $output == *"the planner's turn moved HEAD refs/heads/factory/toy-9 in the repo of $TMP/wt-9"* ]]
   git -C "$TMP/wt-9" reset -q --hard HEAD~1
-  ask() { git -C "$TMP/wt-9" update-ref refs/factory/toy-9/upstream/main main; }
+  ask() { git -C "$TMP/wt-9" update-ref refs/factory/toy-9/upstream/main "$(git -C "$TMP/wt-9" commit-tree -p main -m x 'main^{tree}')"; }
   run planner_turn planner "plan it"
   [ "$status" -eq 1 ]
   [[ $output == *"moved refs/factory/toy-9/upstream/main in"* ]]
@@ -4248,6 +4274,41 @@ SH
   FACTORY_FRESH=1 run open_task_workspace "$REPO"
   [[ $output == *"record_base finds: none"* ]]
   [ ! -e "$TASK_STATE/state" ] # a --fresh run that stops from here on leaves no step to resume after
+}
+
+@test "open_task_workspace: a new task starts from origin's base where yours is only behind it; yours stays where origin lacks its commits" {
+  make_repo
+  add_origin
+  # a pull request merged on origin since you last pulled
+  git clone -q -b main "$TMP/origin.git" "$TMP/other"
+  printf 'merged\n' >"$TMP/other/merged.txt"
+  git -C "$TMP/other" add merged.txt
+  git -C "$TMP/other" -c user.email=t@example.invalid -c user.name=t commit -qm merged
+  git -C "$TMP/other" push -q origin main
+  local tip
+  tip=$(git -C "$TMP/origin.git" rev-parse main)
+  task_worktree
+  TASK_ID=toy-9 TASK_TITLE=t
+  task_context "$REPO"
+  open_workspace() { WS=w9 WT=$TMP/wt-9 BUILD_PANE=p9; }
+  run open_task_workspace "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"toy-9 starts from origin's main, 1 commit(s) past yours"* ]]
+  [ "$(git -C "$TMP/wt-9" rev-parse HEAD)" = "$tip" ]
+  [ "$(cut -d' ' -f1 "$TASK_STATE/base")" = "$tip" ]
+  [ "$(git -C "$REPO" rev-parse main)" != "$tip" ] # your main as it was
+  # your main with a commit of its own, which origin lacks, stays the task's base
+  printf 'mine\n' >"$REPO/mine.txt"
+  commit_all mine
+  git -C "$REPO" worktree add -q -b factory/toy-8 "$TMP/wt-8"
+  mkdir -p "$TMP/wt-8/$RUN_DIR"
+  TASK_ID=toy-8
+  task_context "$REPO"
+  open_workspace() { WS=w8 WT=$TMP/wt-8 BUILD_PANE=p8; }
+  run open_task_workspace "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output != *"starts from origin's"* ]]
+  [ "$(git -C "$TMP/wt-8" rev-parse HEAD)" = "$(git -C "$REPO" rev-parse main)" ]
 }
 
 @test "check_base: a run that opens a pull request stops before claiming its task when the base is no branch on origin" {
