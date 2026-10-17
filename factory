@@ -388,6 +388,22 @@ close_extra_panes() {
   done < <(herdr pane list --workspace "$ws" 2>/dev/null | jq -r '.result.panes[] | select(.label == "plan" or .label == "review") | .pane_id')
 }
 
+# own_pane role -> the pane Factory made for the role in the task's workspace, labelled with it,
+# where the shell waits at its prompt; 1 with none, 2 with none but the one this run of Factory
+# is in (Herdr gives each pane's shell its id, HERDR_PANE_ID)
+own_pane() {
+  local pane rc=1
+  while IFS= read -r pane; do
+    [[ -n $pane ]] || continue
+    if shell_waits "$pane"; then
+      printf '%s' "$pane"
+      return 0
+    fi
+    [[ $pane != "${HERDR_PANE_ID:-}" ]] || rc=2
+  done < <(h pane list --workspace "$WS" | jq -r --arg role "$1" '.result.panes[] | select(.label == $role) | .pane_id')
+  return "$rc"
+}
+
 # live_agents workspace name... -> how many of the named agents are alive in that workspace
 live_agents() {
   local ws=$1
@@ -2972,22 +2988,19 @@ open_task_workspace() {
   log "workspace $WS at $WT"
 }
 
-# start_or_adopt_agents repo: three agents in three panes, or the task's live ones on a rerun.
+# start_or_adopt_agents repo: three agents in three panes, or on a rerun the task's agents in its
+# workspace, adopted while one of them lives on (adopt_agent)
 start_or_adopt_agents() {
-  local repo=$1 live plan_pane review_pane pane repo_root
+  local repo=$1 live plan_pane review_pane pane repo_root role
   live=$(live_agents "$WS" "$PLAN_AGENT" "$BUILD_AGENT" "$REVIEW_AGENT")
   repo_root=$(git -C "$repo" rev-parse --show-toplevel)
-  if [[ $live == 3 ]]; then
+  if [[ $live != 0 ]]; then
     log "reusing the live agents of $TASK_ID in workspace $WS"
-    settle_dialogs "$PLAN_AGENT" quiet
-    settle_dialogs "$BUILD_AGENT" quiet
-    settle_dialogs "$REVIEW_AGENT" quiet
-    relaunch_restored plan "$repo_root"
-    relaunch_restored build "$repo_root"
-    relaunch_restored review "$repo_root"
+    for role in plan build review; do
+      adopt_agent "$role" "$repo_root"
+    done
     return 0
   fi
-  [[ $live == 0 ]] || die "only some agents of $TASK_ID are alive in workspace $WS; quit those (/exit in their panes), then rerun to start all three again"
   # the fresh start takes the builder's pane as it is, and types into its shell: never into what
   # runs there instead. In front, not shell_waits: a new workspace's shell may not have its line
   # editor up yet.
@@ -3042,6 +3055,37 @@ launch_args() {
         -c "sandbox_workspace_write.writable_roots=[\"$2/.beads\"]")
       ;;
   esac
+}
+
+# adopt_agent plan|build|review repo-root: the task's agent in the role, on a rerun that found
+# some of them alive. A live one is kept (relaunch_restored). One that is gone, its CLI quit or
+# crashed, as for a switch of accounts, starts again in its own pane with a new session; a
+# question it had open went with the old one.
+adopt_agent() {
+  local role=$1 name=$PLAN_AGENT kind=claude colour=purple pane rc=0
+  case $role in
+    build) name=$BUILD_AGENT colour=cyan ;;
+    review) name=$REVIEW_AGENT kind=codex ;;
+  esac
+  if [[ $(live_agents "$WS" "$name") == 1 ]]; then
+    settle_dialogs "$name" quiet
+    relaunch_restored "$role" "$2"
+    return 0
+  fi
+  pane=$(own_pane "$role") || rc=$?
+  ((rc != 2)) || die "$name is gone from workspace $WS, and this run is in its pane ($HERDR_PANE_ID), where it starts again: rerun Factory from another pane or terminal"
+  ((rc == 0)) || die "$name is gone from workspace $WS, and its pane runs something, or is gone too: end what runs there, then rerun; with the pane gone, quit the task's other agents (/exit in their panes), then rerun"
+  log "$name is gone; starting it again in its pane, with a new session"
+  if [[ $kind == claude ]]; then
+    rm -f "$WT/$RUN_DIR/asking-$role"
+    [[ $role != plan ]] || rm -f "$TASK_STATE/tree-at-ask"
+    dialog_hooks "$role" >"$WT/$RUN_DIR/hooks-$role.json"
+  fi
+  write_env
+  prime_shell "$pane"
+  launch_args "$role" "$2"
+  start_agent "$name" "$kind" "$pane" "${AGENT_ARGS[@]}"
+  [[ $kind == codex ]] || set_color "$name" "$colour"
 }
 
 # relaunch_restored plan|build|review repo-root: an adopted agent that runs without the arguments

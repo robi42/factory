@@ -237,8 +237,8 @@ your approval takes your answer where its own Factory looks for it.
   said "needs a human" without saying why; the guardrails' reasons now go into the
   message and onto the bead.
 - A rerun found only some of a task's agents alive and suggested `factory clean --force`,
-  which drops the work; it says to quit the live ones and rerun, which starts all three
-  again.
+  which drops the work. It keeps the live ones now and starts one that is gone, its CLI
+  quit as for a switch of accounts, again in its own pane, with a new session.
 - A rerun with none of a task's agents alive closed every pane in the task's workspace
   that ran no agent, but the builder's, so tabs of your own there went too, with what ran
   in them. It closes only the planner's and the reviewer's old panes now, where the shell

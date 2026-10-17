@@ -3989,6 +3989,98 @@ JSON
   [ -e "$run/asking-plan" ]
 }
 
+@test "start_or_adopt_agents: one agent gone while the others live starts again in its own pane, with a new session; the live ones are kept" {
+  make_repo
+  fake_task
+  PLAN_AGENT=toy-1-plan BUILD_AGENT=toy-1-build REVIEW_AGENT=toy-1-review
+  WS=w1 WT=$TMP/wt BUILD_PANE=p1 FACTORY_HOME=$TMP/factory
+  local run="$TMP/wt/$RUN_DIR" tp="$TMP/transcript.jsonl"
+  mkdir -p "$run" "$TASK_STATE"
+  : >"$tp" # the sessions' transcripts: the calls, never their results
+  printf 'toolu_1\t%s\n' "$tp" >"$run/asking-plan"
+  printf 'toolu_2\t%s\n' "$tp" >"$run/asking-build"
+  : >"$TASK_STATE/tree-at-ask"
+  herdr() { # the agents and panes the files hold; something runs in front in the panes $TMP/busy names
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent list"*) cat "$TMP/agents" ;;
+      "pane list --workspace w1") cat "$TMP/panes" ;;
+      "pane process-info --pane p8") printf '{"result":{"process_info":{"foreground_process_group_id":8,"shell_pid":8}}}' ;;
+      "pane process-info --pane "*)
+        if grep -qxF -- "${*: -1}" "$TMP/busy"; then
+          printf '{"result":{"process_info":{"foreground_process_group_id":7,"shell_pid":6}}}'
+        else
+          printf '{"result":{"process_info":{"foreground_process_group_id":6,"shell_pid":6}}}'
+        fi
+        ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  agents() { jq -nc '{result: {agents: [$ARGS.positional[] | {name: ., workspace_id: "w1"}]}}' --args "$@" >"$TMP/agents"; }
+  settle_dialogs() { printf 'settled %s\n' "$*"; }
+  relaunch_restored() { printf 'kept %s\n' "$1"; }
+  prime_shell() { printf 'primed %s\n' "$1"; }
+  start_agent() { printf 'started %s\n' "$*"; }
+  set_color() { printf 'colour %s %s\n' "$1" "$2"; }
+  raw_tty() { [[ $1 == /proc/6/fd/0 ]]; } # p8's shell runs a builtin with the terminal cooked
+  # the reviewer quit: its pane is the one labelled so where the shell waits, not one an editor
+  # runs in, nor one whose shell runs a builtin, nor the human's own
+  agents toy-1-plan toy-1-build
+  printf '%s' '{"result":{"panes":[{"pane_id":"p1","agent":"claude","label":"build"},{"pane_id":"p2","agent":"claude","label":"plan"},
+    {"pane_id":"p4","agent":null},{"pane_id":"p9","agent":null,"label":"review"},{"pane_id":"p8","agent":null,"label":"review"},
+    {"pane_id":"p3","agent":null,"label":"review"}]}}' >"$TMP/panes"
+  printf 'p1\np2\np9\n' >"$TMP/busy"
+  run start_or_adopt_agents "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"reusing the live agents of toy-1"*"settled toy-1-plan quiet"*"kept plan"*"settled toy-1-build quiet"*"kept build"* ]]
+  [[ $output == *"toy-1-review is gone; starting it again in its pane, with a new session"*"primed p3"*"started toy-1-review codex p3 -m $FACTORY_REVIEW_MODEL -a never"*"projects={\"$REPO\"={trust_level=\"trusted\"}}"* ]]
+  [[ $output != *"codex p3 resume"* ]]
+  [[ $output != *"colour"* ]]
+  [ -e "$run/asking-plan" ]
+  [ -e "$run/asking-build" ]
+  [ -e "$TASK_STATE/tree-at-ask" ]
+  [ -s "$run/env.sh" ]
+  [ "$(grep -cE '^pane (close|split)' "$TMP/herdr.log")" -eq 0 ] # no pane closed or split
+  # the planner quit: it starts again purple, with its dialog hooks; the question its session
+  # had open went with it, the builder's did not
+  agents toy-1-build toy-1-review
+  printf '%s' '{"result":{"panes":[{"pane_id":"p1","agent":"claude","label":"build"},{"pane_id":"p2","agent":null,"label":"plan"},
+    {"pane_id":"p3","agent":"codex","label":"review"}]}}' >"$TMP/panes"
+  printf 'p1\np3\n' >"$TMP/busy"
+  run start_or_adopt_agents "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"started toy-1-plan claude p2 --model $FACTORY_PLAN_MODEL --effort $FACTORY_PLAN_EFFORT"*"--settings $run/hooks-plan.json --name plan"*"colour toy-1-plan purple"* ]]
+  [ -s "$run/hooks-plan.json" ]
+  [ ! -e "$run/asking-plan" ]
+  [ ! -e "$TASK_STATE/tree-at-ask" ]
+  [ -e "$run/asking-build" ]
+  # the builder quit, and an editor runs in its pane: the run stops and says what to do
+  printf 'toolu_3\t%s\n' "$tp" >"$run/asking-plan"
+  : >"$TASK_STATE/tree-at-ask"
+  agents toy-1-plan toy-1-review
+  printf '%s' '{"result":{"panes":[{"pane_id":"p1","agent":null,"label":"build"},{"pane_id":"p2","agent":"claude","label":"plan"},
+    {"pane_id":"p3","agent":"codex","label":"review"}]}}' >"$TMP/panes"
+  printf 'p1\np2\np3\n' >"$TMP/busy"
+  run start_or_adopt_agents "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"toy-1-build is gone from workspace w1, and its pane runs something, or is gone too: end what runs there, then rerun; with the pane gone, quit the task's other agents (/exit in their panes), then rerun"* ]]
+  [[ $output != *"started"* ]]
+  [ -e "$run/asking-build" ]
+  # what runs in the builder's pane is this run of Factory: it says to rerun from another
+  HERDR_PANE_ID=p1 run start_or_adopt_agents "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"toy-1-build is gone from workspace w1, and this run is in its pane (p1), where it starts again: rerun Factory from another pane or terminal"* ]]
+  [[ $output != *"started"* ]]
+  # with the editor ended, it starts again there, cyan
+  printf 'p2\np3\n' >"$TMP/busy"
+  run start_or_adopt_agents "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"started toy-1-build claude p1 --model $FACTORY_BUILD_MODEL"*"colour toy-1-build cyan"* ]]
+  [ ! -e "$run/asking-build" ]
+  [ -e "$run/asking-plan" ]
+  [ -e "$TASK_STATE/tree-at-ask" ]
+}
+
 @test "launched_with: what the agent's pane runs, told by its arguments" {
   herdr() {
     case "$*" in
