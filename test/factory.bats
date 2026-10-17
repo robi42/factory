@@ -72,6 +72,16 @@ add_origin() {
   git -C "$REPO" remote add origin "$TMP/origin.git"
 }
 
+# upstream path content message: a commit on origin's main that writes the file, made in a clone
+# of origin at $TMP/other, as a teammate's merged change would be
+upstream() {
+  [[ -d $TMP/other ]] || git clone -q -b main "$TMP/origin.git" "$TMP/other"
+  printf '%s' "$2" >"$TMP/other/$1"
+  git -C "$TMP/other" add -- "$1"
+  git -C "$TMP/other" -c user.name=t -c user.email=t@example.invalid commit -qm "$3"
+  git -C "$TMP/other" push -q origin main
+}
+
 # task_worktree: a factory/toy-9 checkout with its run dir, as a waiting run has it
 task_worktree() {
   git -C "$REPO" checkout -q main
@@ -171,9 +181,14 @@ commit_all() {
   git -C "$REPO" commit -qm "$1"
 }
 
-# resolve_task and task_context set globals; print them so tests can assert on output.
-# They sit above the tests: a global assigned in a test body and read further down the
+# resolve_task, task_context and compose_task set globals; print them so tests can assert on
+# output. They sit above the tests: a global assigned in a test body and read further down the
 # file is a lost subshell change to shellcheck (SC2031).
+composed() {
+  compose_task 2>/dev/null
+  printf '%s\n---\n%s' "$TASK_TITLE" "$TASK_DESC"
+}
+
 resolved() {
   resolve_task "$@" 2>/dev/null
   printf '%s: %s\n---\n%s' "$TASK_ID" "$TASK_TITLE" "$TASK_DESC"
@@ -184,14 +199,18 @@ context_of() {
   printf '%s\n' "$GATE" "$BASE" "$BRANCH" "$PLAN_AGENT $BUILD_AGENT $REVIEW_AGENT"
 }
 
-@test "bead ids look like prefix-hash" {
+@test "is_bead_id: prefix-hash, and a child's numbers after dots" {
   is_bead_id toy-bx4
   is_bead_id bd-a3f8e9
+  is_bead_id ab-x7k.1 # a child, as bd create --parent names one
+  is_bead_id ab-x7k.1.2
   run ! is_bead_id "Add a farewell function"
   run ! is_bead_id "toy"
+  run ! is_bead_id ab-x7k.
+  run ! is_bead_id ab-x7k.x
 }
 
-@test "verdict comes from the last VERDICT line" {
+@test "verdict_of: the last VERDICT line" {
   printf 'notes\nVERDICT: REVISE\nmore\nVERDICT: APPROVE\n' >"$TMP/r.md"
   [ "$(verdict_of "$TMP/r.md")" = APPROVE ]
   printf 'VERDICT:REVISE\n' >"$TMP/r.md"
@@ -201,7 +220,7 @@ context_of() {
   run ! verdict_of "$TMP/missing.md"
 }
 
-@test "gate: env wins, then .factory/gate, then just ci, else error" {
+@test "resolve_gate: env wins, then .factory/gate, then just ci, else error" {
   make_repo
   FACTORY_GATE="make check" run resolve_gate "$REPO"
   [ "$output" = "make check" ]
@@ -216,7 +235,7 @@ context_of() {
   [[ $output == *"no gate"* ]]
 }
 
-@test "protected globs: all of .factory/ but the run dir, plus .factory/protected" {
+@test "protected_globs: all of .factory/ but the run dir, plus .factory/protected" {
   make_repo
   printf '# keep\nsrc/legacy/*\n\n' >"$REPO/.factory/protected"
   run protected_globs "$REPO"
@@ -247,6 +266,31 @@ context_of() {
   run load_repo_env "$REPO"
   [ "$status" -eq 1 ]
   [[ $output == *"not a knob"* ]]
+  # from any dir of the checkout; a name that is no knob stops the command
+  mkdir -p "$REPO/sub"
+  printf 'FACTORY_ROUNDS=7\n' >"$REPO/.factory/env"
+  load_repo_env "$REPO/sub"
+  [ "$FACTORY_ROUNDS" = 7 ]
+  printf 'FACTORY_REQUIRE_TEST=0\n' >"$REPO/.factory/env"
+  run load_repo_env "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"FACTORY_REQUIRE_TEST is not a knob (see factory help)"* ]]
+  # a command that reads no knob leaves the file alone; one that reads them says what it set
+  printf 'FACTORY_ROUNDS=5\n' >"$REPO/.factory/env"
+  run main stats "$REPO"
+  [[ $output == *"no runs of the tasks of $REPO recorded yet"* ]]
+  [[ $output != *"knobs from"* ]]
+  run main pr "$REPO"
+  [[ $output == *"knobs from $REPO/.factory/env: FACTORY_ROUNDS"* ]]
+  # factory add reads one, whether to push the beads
+  mkdir "$REPO/.beads"
+  printf 'FACTORY_BD_PUSH=0\n' >"$REPO/.factory/env"
+  bd() { printf '%s\n' "$*" >>"$TMP/bd.log"; }
+  run main add "$REPO" "A title"
+  [ "$status" -eq 0 ]
+  [[ $output == *"knobs from $REPO/.factory/env: FACTORY_BD_PUSH"* ]]
+  grep -q 'create A title' "$TMP/bd.log"
+  run -1 grep -q 'sync.remote' "$TMP/bd.log"
 }
 
 @test "check_knobs: the defaults pass, ultra only for the reviewer; a typo in an effort, the approval, a flag or a count dies" {
@@ -269,6 +313,11 @@ context_of() {
   FACTORY_ROUNDS=0 run check_knobs
   [ "$status" -eq 1 ]
   [[ $output == *"FACTORY_ROUNDS=0: a whole number above 0"* ]]
+  FACTORY_POLL_SECONDS=0 run check_knobs # read -t 0 would take the terminal for closed
+  [ "$status" -eq 1 ]
+  [[ $output == *"FACTORY_POLL_SECONDS=0: a number of seconds above 0"* ]]
+  FACTORY_POLL_SECONDS=0.0 run check_knobs
+  [ "$status" -eq 1 ]
 }
 
 @test "check_push: a run that opens a pull request first checks that origin takes a push without a prompt, and pushes nothing" {
@@ -448,7 +497,7 @@ context_of() {
   [[ $output == *"build artifact committed: __pycache__/m.cpython-314.pyc"* ]]
 }
 
-@test "agents stub: short, links CLAUDE.md, names the gate" {
+@test "write_agents_stub: short, links CLAUDE.md, names the gate" {
   make_repo
   write_agents_stub "$REPO"
   [ -L "$REPO/CLAUDE.md" ]
@@ -731,6 +780,8 @@ context_of() {
   printf '#[test]\nfn f() {}\n' >"$REPO/src/naïve/lib_test.rs"
   commit_all test
   FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+  [ "$status" -eq 1 ] # the artifact is still on the branch
+  [[ $output == *"build artifact committed: src/naïve/lib.o"* ]]
   [[ $output != *"no test files did"* ]]
 }
 
@@ -867,7 +918,7 @@ context_of() {
   waive
   run human_gate plan planner "$TMP" <<<"a"
   [ "$status" -eq 0 ]
-  [[ $output != *"via file"* ]]
+  [[ $output != *"a pane or"* ]] # no answer from a file: the stale ones went
   [ ! -e "$TASK_STATE/reject.md" ]
   [ ! -e "$TASK_STATE/aborted" ]
   [ ! -e "$TASK_STATE/allow-protected" ]
@@ -968,7 +1019,7 @@ P
   [ ! -e "$TASK_STATE/allow-protected" ]
 }
 
-@test "approval keys: coloured by what they do at a terminal, plain otherwise" {
+@test "key: coloured by what it does at a terminal, plain otherwise" {
   [ "$(key a)$(key p)$(key r)$(key b)" = aprb ] # the tests' stderr is no terminal
   run script -qec "bash -c 'source \"$BATS_TEST_DIRNAME/../factory\"; key a; key p; key r; key b'" /dev/null
   [ "$status" -eq 0 ]
@@ -1114,9 +1165,9 @@ P
   run human_gate plan planner "$TMP" </dev/null
   wait
   [ "$status" -eq 0 ]
-  [[ $output == *"note received from a pane or factory reject"*"pause for the reply, gate note"*"asked planner: "*"too big, split it"*"gate in the round: note"* ]]
+  [[ $output == *"note received in a pane or with factory reject"*"pause for the reply, gate note"*"asked planner: "*"too big, split it"*"gate in the round: note"* ]]
   # the plan comes back after the note, and with it where to answer
-  [[ $output == *"note received from a pane or factory reject"*"plan for toy-1"*"no terminal to answer from; waiting for your answer in one of the task's panes: !fy approve, !fy reject '<note>' or !fy abort"*"approved in a pane or with factory approve"*"pause for the reply, gate closed" ]]
+  [[ $output == *"note received in a pane or with factory reject"*"plan for toy-1"*"no terminal to answer from; waiting for your answer in one of the task's panes: !fy approve, !fy reject '<note>' or !fy abort"*"approved in a pane or with factory approve"*"pause for the reply, gate closed" ]]
   [ "$(cat "$TMP/recorded")" = $'note on the plan: too big, split it\nplan approved' ]
   [ "$(grep -c 'no terminal to answer from' <<<"$output")" -eq 2 ]
   [ ! -e "$TASK_STATE/approved" ]
@@ -1272,8 +1323,15 @@ P
   [ "$(tail -1 "$st/tree-at-answer")" = "?? notes.txt" ]
   git -C "$TMP/wt-9" checkout -q -- run.sh
   rm -f "$TMP/wt-9/sample.csv" "$TMP/wt-9/notes.txt" "$st/tree-at-answer"
-  # the hook as Claude Code runs it, through main, told the task's state
+  # the hook as Claude Code runs it, through main, told the task's state. Its first argument is
+  # its role, no repo, though a build/ in the dir it runs in is one in a checkout whose
+  # .factory/env would stop a command.
+  git init -q "$TMP/elsewhere"
+  mkdir "$TMP/elsewhere/build" "$TMP/elsewhere/.factory"
+  printf 'FACTORY_NO_SUCH=1\n' >"$TMP/elsewhere/.factory/env"
+  cd "$TMP/elsewhere"
   run main dialog-hook build toy-9 "$run" "$st" < <(hook PreToolUse)
+  cd "$OLDPWD"
   [ "$status" -eq 0 ]
   [ -e "$run/asking-build" ]
   hook Stop | cmd_dialog_hook build toy-9 "$run"
@@ -1393,12 +1451,6 @@ P
   [ "$(resolve_gate "$REPO")" = "bash .factory/gate" ]
 }
 
-# compose_task sets globals; print them so tests can assert on output.
-composed() {
-  compose_task 2>/dev/null
-  printf '%s\n---\n%s' "$TASK_TITLE" "$TASK_DESC"
-}
-
 @test "compose_task: title, blank line, multi-line description; comments dropped" {
   VISUAL="" EDITOR=""
   run composed <<'IN'
@@ -1456,7 +1508,7 @@ IN
   [[ $output != *"skip the tests"* ]]
 }
 
-@test "pr_body carries task, plan and whatever checks exist" {
+@test "pr_body: the task, the plan and whatever checks exist" {
   make_repo
   fake_task
   TASK_DESC="details"
@@ -2270,7 +2322,7 @@ IN
   git -C "$TMP/wt-9" update-ref refs/heads/main "$(git -C "$TMP/wt-9" commit-tree -m elsewhere 'HEAD^{tree}')"
   run gate_then_guards builder 1
   [ "$status" -eq 1 ]
-  [[ $output == *"refs/heads/main no longer holds"*"something other than Factory moved it"* ]]
+  [[ $output == *"refs/heads/main no longer holds"*"it was rewritten since"* ]]
   run rebase_onto_base builder
   [ "$status" -eq 1 ]
   [[ $output == *"refs/heads/main no longer holds"* ]]
@@ -2569,9 +2621,11 @@ IN
   : >"$TMP/n"
   printf '%s\n' APPROVE APPROVE >"$TMP/verdicts"
   run plan_phase "$TMP" 2
+  [ "$status" -eq 0 ]
   [[ $output == *"planning"*"planned at "$'\n'*"review plan-review-1.md at written 1"* ]]
   : >"$TMP/n"
   run plan_phase "$TMP" written
+  [ "$status" -eq 0 ]
   [[ $output == *"planning"*"planned at "$'\n'*"review plan-review-1.md at written 1"* ]]
   # a note's round at the approval leaves the plan reviewed: a rerun comes back to the gate
   mark reviewed
@@ -2596,7 +2650,6 @@ IN
   build_phase() { printf 'build_phase%s\n' "${2:+ $2}"; }
   finish_task() { printf 'finish_task\n'; }
   FACTORY_FRESH=0
-  mkdir -p "$TMP/wt/$RUN_DIR"
   run run_task "$REPO" toy-1
   [ "$status" -eq 0 ]
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = plan_phase,build_phase,finish_task ]
@@ -2653,7 +2706,7 @@ IN
   [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
   [[ $output != *"unreviewed"* ]]
   [ "$(jq -sc 'map(select(.event == "plan_review") | [.round, .verdicts])' "$TMP/events.jsonl")" = '[[1,"REVISE APPROVE"],[2,"APPROVE APPROVE"]]' ]
-  run ! grep -q 'Your notes from' "$TMP/prompt-plan-review-1.md" "$TMP/prompt-plan-review-1-build.md"
+  run -1 grep -q 'Your notes from' "$TMP/prompt-plan-review-1.md" "$TMP/prompt-plan-review-1-build.md"
   # still objected to in the last round: that revision too, then on to the human
   : >"$TMP/n"
   printf '%s\n' REVISE APPROVE APPROVE REVISE >"$TMP/verdicts"
@@ -2667,6 +2720,7 @@ IN
   printf 'the last run'"'"'s plan\n' >"$TMP/.factory/run/plan.md"
   waive
   FACTORY_PLAN_ROUNDS=1 run plan_phase "$TMP"
+  [ "$status" -eq 0 ]
   [ "$(grep -c '^revise:' <<<"$output")" -eq 1 ]
   [[ $output != *"round 2"* ]]
   [ ! -e "$TMP/.factory/run/plan-review-2.md" ]
@@ -2743,14 +2797,14 @@ IN
   [ -z "$VERDICT" ]
   [ "$STALLED" = "the guardrails failed (clean commits) and the builder's turn after that changed nothing they check" ]
   [ "$(grep -c '^gated$' "$TMP/out")" -eq 1 ]
-  [ "$(grep -c 'asked builder: The factory guardrails rejected' "$TMP/out")" -eq 1 ]
+  [ "$(grep -c "asked builder: Factory's guardrails rejected" "$TMP/out")" -eq 1 ]
   # the same turn with a commit gets the next round
   git -C "$REPO" checkout -q -- run.sh
   ask() {
     printf 'asked %s: %.40s\n' "$1" "$2"
     case $2 in
       "Task "*) printf 'echo more\n' >>"$WT/run.sh" ;;
-      "The factory guardrails rejected"*) git -C "$WT" commit -qam more ;;
+      "Factory's guardrails rejected"*) git -C "$WT" commit -qam more ;;
     esac
   }
   build_phase "$TMP" >"$TMP/out" 2>&1
@@ -2771,7 +2825,7 @@ IN
   build_phase "$TMP" >"$TMP/out" 2>&1
   [ "$ROUND" -eq 0 ]
   [ "$STALLED" = "the builder's turn on the plan changed nothing; see its pane" ]
-  run ! grep -q '^gated$' "$TMP/out"
+  run -1 grep -q '^gated$' "$TMP/out"
   # a rerun's work may be done and committed already: the gate decides
   build_phase "$TMP" resume >"$TMP/out" 2>&1
   grep -q '^gated$' "$TMP/out"
@@ -2814,7 +2868,6 @@ IN
   WT=$TMP BRANCH=work WS=w1 BUILD_AGENT=builder
   ROUND=1 VERDICT=""
   STALLED="the guardrails failed (clean commits) and the builder's turn after that changed nothing they check"
-  memory_prompt() { :; }
   ask() { :; }
   bd_note() { printf 'note on %s: %s\n' "$2" "$3"; }
   bd_push() { :; }
@@ -2908,7 +2961,7 @@ IN
   [[ $output == *"unknown flag: --nope"* ]]
 }
 
-@test "copilot_comments_of picks the bot's comments for one commit as file:line: body" {
+@test "copilot_comments_of: the bot's comments on one commit, as file:line: body" {
   run copilot_comments_of abc123 <<'JSON'
 [
   {"user":{"login":"Copilot"},"commit_id":"abc123","original_commit_id":"abc123","path":"hello.py","line":7,"body":"Use f-strings\r\nhere."},
@@ -2924,7 +2977,7 @@ JSON
   [ "${#lines[@]}" -eq 3 ]
 }
 
-@test "copilot_verdict_of takes the verdict line of the latest review for a commit" {
+@test "copilot_verdict_of: the verdict line of the latest review of a commit" {
   run copilot_verdict_of abc123 <<'JSON'
 [
   {"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"old111","state":"COMMENTED","body":"### 🔴 Changes needed\nold"},
@@ -2937,7 +2990,7 @@ JSON
   [ "$output" = "" ]
 }
 
-@test "copilot_reply_body lists the addressed comments and any pushback" {
+@test "copilot_reply_body: the addressed comments and any pushback, or that nothing changed" {
   printf 'hello.py:7: Use f-strings\n    here.\ntest_hello.py:9: Missing case\n' >"$TMP/c.md"
   run copilot_reply_body 2 abcdef0123456 "$TMP/c.md" "$TMP/none.md"
   [ "${lines[0]}" = "Addressed Copilot review round 2 in abcdef0:" ]
@@ -2947,9 +3000,13 @@ JSON
   printf 'f-strings are not house style here.\n' >"$TMP/r.md"
   run copilot_reply_body 2 abcdef0123456 "$TMP/c.md" "$TMP/r.md"
   [[ $output == *"Not changed, and why:"*"house style"* ]]
+  # no commit addressed them: the reply says so
+  run copilot_reply_body 2 "" "$TMP/c.md" "$TMP/r.md"
+  [ "${lines[0]}" = "Answered Copilot review round 2 without changes:" ]
+  [[ $output == *"Not changed, and why:"*"house style"* ]]
 }
 
-@test "copilot_summary_of takes the sentence under the verdict, not a details block" {
+@test "copilot_summary_of: the sentence under the verdict, not a details block" {
   run copilot_summary_of abc123 <<'JSON'
 [{"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","body":"### 🔵 Needs a closer look\n\nRemove the unrelated helper.\n\n<details>\nmore\n</details>"}]
 JSON
@@ -2960,7 +3017,7 @@ JSON
   [ "$output" = "" ]
 }
 
-@test "copilot_verdict_of and copilot_summary_of skip the overview header a review opens with" {
+@test "copilot_verdict_of and copilot_summary_of: the overview header a review opens with is skipped" {
   local overview_json='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"abc123","body":"<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n### 🟢 Approval recommended\n\nThe change does what the task asks.\n\n**Review effort:** Balanced  \n**Findings:** None\n\n<details>\n<summary>What changed</summary>\nmore\n</details>"}]'
   run copilot_verdict_of abc123 <<<"$overview_json"
   [ "$output" = "🟢 Approval recommended" ]
@@ -3036,7 +3093,8 @@ JSON
 }
 
 @test "cmd_sync: pull then push; an empty remote is fine, any other pull error is not" {
-  mkdir "$TMP/.beads"
+  make_repo
+  mkdir "$REPO/.beads"
   FACTORY_BD_PUSH=0 # sync pushes even when runs do not
   bd() {
     case "$*" in
@@ -3048,19 +3106,19 @@ JSON
       *"dolt push") printf 'pushed\n' ;;
     esac
   }
-  BD_PULL=$'Fetching from origin...\nEverything up-to-date' BD_PULL_RC=0 run cmd_sync "$TMP"
+  BD_PULL=$'Fetching from origin...\nEverything up-to-date' BD_PULL_RC=0 run cmd_sync "$REPO"
   [ "$status" -eq 0 ]
   [[ $output == *"beads: Everything up-to-date"*"beads pushed to git+https://x/y.git"* ]]
-  BD_PULL='error: no branches found on remote' BD_PULL_RC=1 run cmd_sync "$TMP"
+  BD_PULL='error: no branches found on remote' BD_PULL_RC=1 run cmd_sync "$REPO"
   [ "$status" -eq 0 ]
   [[ $output == *"nothing to pull"*"beads pushed"* ]]
-  BD_PULL=$'error: remote not reachable\nnetwork is down' BD_PULL_RC=1 run cmd_sync "$TMP"
+  BD_PULL=$'error: remote not reachable\nnetwork is down' BD_PULL_RC=1 run cmd_sync "$REPO"
   [ "$status" -eq 1 ]
   [[ $output == *"beads pull failed: network is down"* ]]
   [[ $output != *"beads pushed"* ]]
 }
 
-@test "clean: merged task branches go, unmerged stay unless forced" {
+@test "cmd_clean: merged task branches go, unmerged stay unless forced" {
   make_repo
   git -C "$REPO" checkout -q main
   git -C "$REPO" branch factory/toy-m
@@ -3087,6 +3145,17 @@ JSON
   [ ! -e "$TMP/wt-m" ]
   run git -C "$REPO" branch --list 'factory/*' --format='%(refname:short)'
   [ "$output" = "factory/toy-u" ]
+  # --force names the task it drops; a flag clean does not know, or a second id, stops it
+  run cmd_clean "$REPO" --force
+  [ "$status" -eq 1 ]
+  [[ $output == *"--force drops a task's work, a live run's too: name its bead"* ]]
+  run cmd_clean "$REPO" -f
+  [ "$status" -eq 1 ]
+  [[ $output == *"unknown flag: -f"* ]]
+  run cmd_clean "$REPO" toy-u toy-m
+  [ "$status" -eq 1 ]
+  [[ $output == *"usage: factory clean <repo> [bead-id] [--force]"* ]]
+  [ "$(git -C "$REPO" branch --list 'factory/*' --format='%(refname:short)')" = "factory/toy-u" ]
   mkdir -p "$(task_state "$REPO" toy-u)"
   printf 'abc refs/heads/main\n' >"$(task_state "$REPO" toy-u)/base"
   # an agent made Factory's ref for the task a symbolic ref to a branch: the branch stays
@@ -3101,7 +3170,7 @@ JSON
   [ ! -e "$(task_state "$REPO" toy-u)" ] # a task of that id run again starts with no base or checks
 }
 
-@test "clean: a task still in planning stays, though its branch has no commits of its own" {
+@test "cmd_clean: a task still in planning stays, though its branch has no commits of its own" {
   make_repo
   git -C "$REPO" checkout -q main
   git -C "$REPO" branch factory/toy-p
@@ -3162,6 +3231,10 @@ JSON
   run waits_for "$REPO" toy-9 main
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+  # a bd that cannot show the task is no task without blockers
+  bd() { printf 'database is locked\n' >&2 && return 1; }
+  run waits_for "$REPO" toy-9 main
+  [ "$status" -eq 1 ]
 }
 
 @test "planner_kept_hands_off: clean tree passes, dirty tree gets one revert, then dies" {
@@ -3177,7 +3250,7 @@ JSON
   ask() { :; } # ...or does not
   run planner_kept_hands_off planner
   [ "$status" -eq 1 ]
-  [[ $output == *"must not touch code"* ]]
+  [[ $output == *"must not touch code; revert these, then rerun:"$'\n'" M run.sh"* ]]
   mkdir -p "$REPO/.factory/run"
   printf 'plan\n' >"$REPO/.factory/run/plan.md"
   git -C "$REPO" checkout -q -- .
@@ -3500,7 +3573,7 @@ JSON
   }
   run ask_for_file planner "write the plan" "$TMP/plan.md"
   [ "$status" -eq 0 ]
-  [[ $output == *"asked planner: write the plan"*"missing; asking again"*"asked planner: You replied, but $TMP/plan.md does not exist"* ]]
+  [[ $output == *"asked planner: write the plan"*"missing or empty; asking again"*"asked planner: You replied, but $TMP/plan.md is missing or empty"* ]]
   [ "$(grep -c '^asked planner' <<<"$output")" -eq 2 ]
   : >"$TMP/plan.md" # an empty file does not count either
   ask() { :; }
@@ -3509,22 +3582,42 @@ JSON
   [[ $output == *"planner never wrote $TMP/plan.md"* ]]
 }
 
-@test "herr_code and herr_msg read a herdr error; plain text is the message as is" {
+@test "herr_code and herr_msg: a herdr error's code and message; one in plain text is the message as is, and stops a run with it" {
   local err='{"error":{"code":"timeout","message":"agent wait timed out"}}'
   [ "$(herr_code "$err")" = timeout ]
   [ "$(herr_msg "$err")" = "agent wait timed out" ]
   [ -z "$(herr_code '{"error":{"message":"m"}}')" ]
   [ -z "$(herr_code 'herdr: connection refused')" ]
   [ "$(herr_msg 'herdr: connection refused')" = "herdr: connection refused" ]
+  # with errexit on, as in a run (bats's run turns it off)
+  local refused='herdr() { printf "herdr: connection refused\n" && return 1; }'
+  run bash -c 'source "$1"; eval "$2"; wait_for t-plan 60000 idle' _ "$BATS_TEST_DIRNAME/../factory" "$refused"
+  [ "$status" -eq 1 ]
+  [[ $output == *"t-plan: waiting for idle: herdr: connection refused"* ]]
+  run bash -c 'source "$1"; eval "$2"; start_agent t-plan claude p1' _ "$BATS_TEST_DIRNAME/../factory" "$refused"
+  [ "$status" -eq 1 ]
+  [[ $output == *"start t-plan: herdr: connection refused"* ]]
+  herdr() { printf 'herdr: connection refused\n' && return 1; }
+  run live_agents w1 t-plan
+  [ "$status" -eq 1 ]
+  [[ $output == *"herdr agent list: herdr: connection refused"* ]]
 }
 
-@test "set_color sends /color to the agent without waiting" {
+@test "open_workspace: a response without the workspace, the worktree or the pane stops the run" {
+  fake_task
+  herdr() { printf '{"result":{}}'; }
+  run open_workspace "$TMP" factory/toy-1 "toy-1 t"
+  [ "$status" -eq 1 ]
+  [[ $output == *"unexpected worktree response"* ]]
+}
+
+@test "set_color: /color to the agent, without waiting" {
   herdr() { printf '%s\n' "$*" >>"$TMP/herdr.log"; }
   set_color plan purple
   [ "$(cat "$TMP/herdr.log")" = "agent prompt plan /color purple" ]
 }
 
-@test "close_extra_panes closes agent-less panes except the one to keep" {
+@test "close_extra_panes: agent-less panes go, but the one to keep" {
   herdr() {
     case "$*" in
       "pane list"*) printf '{"result":{"panes":[{"pane_id":"w1:p1","agent":null},{"pane_id":"w1:p2","agent":"claude"},{"pane_id":"w1:p3","agent":null}]}}' ;;
@@ -3549,7 +3642,6 @@ JSON
         printf '{"result":{"agent":{"agent_status":"idle"}}}'
         ;;
       "agent get"*) printf '{"result":{"agent":{"agent_status":"%s"}}}' "$(cat "$TMP/state")" ;;
-      "agent read"*) printf '' ;;
     esac
   }
   printf working >"$TMP/state"
@@ -3723,7 +3815,7 @@ JSON
   [[ $output == *"t-review: still working, and nothing on its screen Factory knows to clear"* ]]
 }
 
-@test "live_agents counts the named agents alive in a workspace" {
+@test "live_agents: the named agents alive in a workspace, counted" {
   herdr() {
     printf '{"result":{"agents":[{"name":"t-plan","workspace_id":"w1"},{"name":"t-build","workspace_id":"w1"},{"name":"t-review","workspace_id":"w9"},{"name":null,"workspace_id":"w1"}]}}'
   }
@@ -4055,39 +4147,68 @@ JSON
 }
 
 @test "cmd_tasks: the open tasks in order without arguments, bd list as it is with them" {
-  mkdir -p "$TMP/.beads"
+  make_repo
+  mkdir -p "$REPO/.beads"
   bd() {
     printf '%s\n' "$*" >>"$TMP/bd.log"
     printf '[{"id":"t-2","title":"two","status":"open","priority":2,"created_at":"2","dependencies":[{"depends_on_id":"t-1","type":"blocks"}]},{"id":"t-1","title":"one","status":"open","priority":2,"created_at":"1"}]'
   }
-  run cmd_tasks "$TMP"
+  run cmd_tasks "$REPO"
   [ "$status" -eq 0 ]
   [ "$output" = $'○ t-1 ● P2 one\n○ t-2 ● P2 two' ]
-  run cmd_tasks "$TMP" --all
-  [ "$(cat "$TMP/bd.log")" = "-C $TMP list -n 0 --json"$'\n'"-C $TMP list --all" ]
+  run cmd_tasks "$REPO" --all
+  [ "$(cat "$TMP/bd.log")" = "-C $REPO list -n 0 --json"$'\n'"-C $REPO list --all" ]
   bd() { printf '[]'; }
-  run cmd_tasks "$TMP"
+  run cmd_tasks "$REPO"
   [ "$status" -eq 0 ]
-  [[ $output == *"no open tasks in $TMP"* ]]
+  [[ $output == *"no open tasks in $REPO"* ]]
 }
 
-@test "next chooses and claims under a lock, so two in parallel never take one bead; a bd that fails is no empty queue" {
+@test "cmd_next: chooses and claims under a lock, so two in parallel never take one bead; what stops it before its claim, as a bd that fails, says so with 4" {
   make_repo
+  DIE_STATUS=4 # as main sets it for a factory next
   run cmd_next "$REPO"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 4 ]
   [[ $output == *"no beads in $REPO"* ]]
   mkdir "$REPO/.beads"
   bd() {
     printf '%s\n' "$*" >>"$TMP/bd.log"
     printf '[]'
   }
+  # a repo without a gate stops before a task is claimed, which would be left in progress
+  mv "$REPO/.factory/gate" "$TMP/gate"
+  run cmd_next "$REPO"
+  [ "$status" -eq 4 ]
+  [[ $output == *"no gate for $REPO"* ]]
+  [ ! -e "$TMP/bd.log" ]
+  mv "$TMP/gate" "$REPO/.factory/gate"
   run cmd_next "$REPO"
   [ "$status" -eq 3 ]
   grep -q 'ready -n 0 --json' "$TMP/bd.log"
   bd() { printf 'database is locked\n' >&2 && return 1; }
   run cmd_next "$REPO"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 4 ] # no task claimed, which ends a queue
   [[ $output == *"database is locked"*"bd could not list the ready tasks in $REPO"* ]]
+  # so too as the script, as factory queue runs it: a die in claim_next's subshell ends it by
+  # die's signal, and its own checks before the claim, a knob's name in .factory/env say, too
+  mkdir "$TMP/bin"
+  printf '#!/bin/sh\nexit 1\n' >"$TMP/bin/bd"
+  printf '#!/bin/sh\n' >"$TMP/bin/herdr"
+  cp "$TMP/bin/herdr" "$TMP/bin/claude"
+  cp "$TMP/bin/herdr" "$TMP/bin/codex"
+  chmod +x "$TMP/bin"/*
+  PATH=$TMP/bin:$PATH run "$BATS_TEST_DIRNAME/../factory" next "$REPO"
+  [ "$status" -eq 4 ]
+  [[ $output == *"bd could not list the ready tasks in $REPO"* ]]
+  printf 'FACTORY_REQUIRE_TEST=0\n' >"$REPO/.factory/env"
+  PATH=$TMP/bin:$PATH run "$BATS_TEST_DIRNAME/../factory" next "$REPO"
+  [ "$status" -eq 4 ]
+  [[ $output == *"FACTORY_REQUIRE_TEST is not a knob"* ]]
+  rm "$REPO/.factory/env"
+  # past the claim, a die in a subshell of the task's run is a task that stopped: 1, not 4
+  run bash -c 'source "$1"; FACTORY_PID=$$; trap "exit \$DIE_STATUS" USR1; need_all() { :; }; bd() { [[ $* != *ready* ]] || printf "[{\"id\":\"toy-b\"}]"; }; run_task() { local x; x=$(die boom); }; main next "$2"' _ "$BATS_TEST_DIRNAME/../factory" "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"boom"* ]]
   # another factory next holds the lock: this one waits for it, then claims
   bd() {
     printf '%s\n' "$*" >>"$TMP/bd.log"
@@ -4101,14 +4222,57 @@ JSON
   flock 8
   claim_next "$REPO" >"$TMP/claimed" 2>"$TMP/err" 3>&- 8>&- &
   poll 100 0.1 grep -q 'waiting for another factory next' "$TMP/err"
-  run ! grep -q 'toy-b --claim' "$TMP/bd.log"
+  run -1 grep -q 'toy-b --claim' "$TMP/bd.log"
   flock -u 8
   wait
   [ "$(cat "$TMP/claimed")" = toy-b ]
   grep -q 'update toy-b --claim' "$TMP/bd.log"
+  # a task another bd user holds is skipped for the next one: claimed since bd listed it, or
+  # assigned to them, which bd ready lists all the same
+  bd() {
+    case "$*" in
+      *ready*) printf '[{"id":"toy-a"},{"id":"toy-b"}]' ;;
+      *"update toy-a --claim"*) return 1 ;;
+      *"show toy-a"*) printf '{"id":"toy-a","status":"%s","assignee":%s}' "$A_STATUS" "$A_ASSIGNEE" ;;
+    esac
+  }
+  run_task() { printf 'ran %s\n' "$2"; }
+  A_STATUS=in_progress A_ASSIGNEE='"alice"'
+  run cmd_next "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"skipping toy-a: not open to a claim (in_progress)"*"ran toy-b"* ]]
+  A_STATUS=open
+  run cmd_next "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"skipping toy-a: not open to a claim (assigned to alice)"*"ran toy-b"* ]]
+  # while the task is still open and no one's, the claim failed
+  A_ASSIGNEE=null
+  run cmd_next "$REPO"
+  [ "$status" -eq 4 ]
+  [[ $output == *"bd could not claim toy-a in $REPO"* ]]
+  [[ $output != *"ran toy"* ]]
 }
 
-@test "next skips a ready task that builds on a branch not merged yet for the next one; none left is nothing ready" {
+@test "claim_next: bd gets no fd of the lock, so what bd leaves running after it exits holds none" {
+  make_repo
+  bd() {
+    sleep 30 >/dev/null 2>&1 3>&- & # as bd leaves a process running, with the fds it was given
+    printf '%s\n' "$!" >>"$TMP/left"
+    case "$*" in
+      *ready*) printf '[{"id":"toy-b"}]' ;;
+      *show*) printf '{"id":"toy-b"}' ;;
+    esac
+  }
+  : >"$TMP/left"
+  run claim_next "$REPO"
+  local claimed=$output
+  run flock -n "$(repo_state "$REPO")/next.lock" true # free for the next factory next
+  xargs -r kill <"$TMP/left"
+  [ "$claimed" = toy-b ]
+  [ "$status" -eq 0 ]
+}
+
+@test "cmd_next: skips a ready task that builds on a branch not merged yet for the next one; none left is nothing ready" {
   make_repo
   git -C "$REPO" checkout -q -b factory/toy-u-open main
   printf 'u\n' >"$REPO/u.txt"
@@ -4130,15 +4294,30 @@ JSON
   [ "$status" -eq 0 ]
   [[ $output == *"skipping toy-a: it builds on toy-u (factory/toy-u-open), not merged into main yet"*"ran toy-b"* ]]
   grep -q 'update toy-b --claim' "$TMP/bd.log"
-  run ! grep -q 'update toy-a' "$TMP/bd.log"
+  run -1 grep -q 'update toy-a' "$TMP/bd.log"
   B_DEPS='[{"id":"toy-u","status":"closed","dependency_type":"blocks"}]'
   run cmd_next "$REPO"
   [ "$status" -eq 3 ]
   [[ $output == *"skipping toy-a"*"skipping toy-b"*"nothing ready in $REPO"* ]]
   [[ $output != *"ran toy"* ]]
+  # a task bd cannot show is no task without blockers
+  rm "$TMP/bd.log"
+  bd() {
+    printf '%s\n' "$*" >>"$TMP/bd.log"
+    case "$*" in
+      *ready*) printf '[{"id":"toy-a"}]' ;;
+      *show*) printf 'database is locked\n' >&2 && return 1 ;;
+    esac
+  }
+  run cmd_next "$REPO"
+  [ "$status" -eq 4 ]
+  [[ $output == *"bd could not show toy-a in $REPO, to read the tasks it builds on"* ]]
+  run -1 grep -q -- '--claim' "$TMP/bd.log"
 }
 
-@test "cmd_queue: each task a factory next of its own, with the flags; goes on past a failed one, stops when none is ready, at max, or on an interrupt" {
+@test "cmd_queue: each task a factory next of its own, with the flags; goes on past a failed one, stops when none is ready, at max, on an interrupt, or on a next that stopped before its claim" {
+  make_repo
+  mkdir "$REPO/.beads"
   mkdir "$TMP/fy"
   cat >"$TMP/fy/factory" <<'EOF'
 #!/usr/bin/env bash
@@ -4152,19 +4331,76 @@ EOF
   export TMP
   FACTORY_HOME=$TMP/fy FACTORY_PR=1 FACTORY_APPROVAL=auto
   printf '%s\n' 0 2 3 0 >"$TMP/rcs"
-  run cmd_queue repo
+  run cmd_queue "$REPO"
   [ "$status" -eq 0 ]
-  [ "$(grep -c '^next repo pr=1 approval=auto' <<<"$output")" -eq 3 ]
+  [ "$(grep -c "^next $REPO pr=1 approval=auto" <<<"$output")" -eq 3 ]
   [[ $output == *"task stopped with status 2; continuing"*"queue finished after 2 task(s)"* ]]
   printf '%s\n' 0 0 0 >"$TMP/rcs"
-  run cmd_queue repo 2
-  [ "$(grep -c '^next repo' <<<"$output")" -eq 2 ]
+  run cmd_queue "$REPO" 2
+  [ "$(grep -c "^next $REPO" <<<"$output")" -eq 2 ]
   [[ $output == *"queue finished after 2 task(s)"* ]]
   printf '%s\n' 0 130 0 >"$TMP/rcs"
-  run cmd_queue repo
+  run cmd_queue "$REPO"
   [ "$status" -eq 130 ]
-  [ "$(grep -c '^next repo' <<<"$output")" -eq 2 ]
+  [ "$(grep -c "^next $REPO" <<<"$output")" -eq 2 ]
   [[ $output == *"queue interrupted after 1 task(s)"* ]]
+  # a next that stopped before its claim, as when bd fails, would be followed by more of the same
+  printf '%s\n' 0 4 0 >"$TMP/rcs"
+  run cmd_queue "$REPO"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c "^next $REPO" <<<"$output")" -eq 2 ]
+  [[ $output == *"factory next stopped before it claimed a task in $REPO (above); queue ended after 1 task(s)"* ]]
+  # what would stop the first factory next before its claim ends the queue before it
+  rm -r "$REPO/.beads"
+  printf '%s\n' 0 0 >"$TMP/rcs"
+  run cmd_queue "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"no beads in $REPO"* ]]
+  [[ $output != *"next $REPO"* ]]
+  mkdir "$REPO/.beads"
+  rm "$REPO/.factory/gate"
+  run cmd_queue "$REPO"
+  [ "$status" -eq 1 ]
+  [[ $output == *"no gate for $REPO"* ]]
+  [[ $output != *"next $REPO"* ]]
+}
+
+@test "rebase_onto_base: a rebase that fails for no conflict stops with git's error, the builder not asked" {
+  make_repo
+  add_origin
+  on_work_branch
+  GATE=true
+  git -C "$REPO" checkout -q main
+  printf 'other\n' >"$REPO/other.txt"
+  commit_all "base moves"
+  git -C "$REPO" push -q origin main
+  git -C "$REPO" checkout -q work
+  printf 'mine\n' >"$REPO/mine.txt"
+  commit_all work
+  : >"$REPO/.git/index.lock" # as a git that died leaves it
+  ask() { printf 'asked the builder\n'; }
+  run rebase_onto_base builder
+  [ "$status" -eq 1 ]
+  [[ $output == *"could not rebase work onto origin's main in $REPO: "*"index.lock"* ]]
+  [[ $output != *"asked the builder"* ]]
+}
+
+@test "cmd_pr: a bead bd cannot show stops it with a word" {
+  make_repo
+  mkdir "$REPO/.beads"
+  bd() { printf 'database is locked\n' >&2 && return 1; }
+  run cmd_pr "$REPO" toy-9
+  [ "$status" -eq 1 ]
+  [[ $output == *"bd cannot show toy-9 in $REPO"* ]]
+}
+
+@test "cmd_doctor: a guardrails file that is not there is MISSING, as flock would be" {
+  herdr() { return 1; } # this machine's server stays out of it,
+  bash() { return 0; }  # and so do its login profile and its bd
+  FACTORY_GUARDRAILS=$TMP/nowhere.txt run cmd_doctor
+  [ "$status" -eq 1 ]
+  [[ $output == *"MISSING  guardrails $TMP/nowhere.txt (FACTORY_GUARDRAILS names no file)"* ]]
+  [[ $output == *"ok       flock"* ]]
 }
 
 @test "rebase_onto_base: up to date, clean rebase, and conflicts handed to the builder" {
@@ -4219,18 +4455,47 @@ EOF
   git -C "$REPO" rebase --abort
 }
 
-@test "base_ref after the pull request rebase: origin's main, not the stale local one" {
+@test "rebase_onto_base: a conflict rerere resolves as before still goes to the builder, though the git config has rerere stage it" {
+  make_repo
+  add_origin
+  on_work_branch
+  GATE=true
+  git -C "$REPO" config rerere.enabled true
+  git -C "$REPO" config rerere.autoUpdate true
+  git -C "$REPO" checkout -q main
+  printf 'echo base\n' >"$REPO/run.sh"
+  commit_all "base edits run.sh"
+  git -C "$REPO" push -q origin main
+  git -C "$REPO" checkout -q work
+  printf 'echo work\n' >"$REPO/run.sh"
+  commit_all "work edits run.sh"
+  local before
+  before=$(git -C "$REPO" rev-parse work)
+  cp "$TASK_STATE/base" "$TMP/base"
+  ask() {
+    printf 'asked the builder\n'
+    cp "$REPO/run.sh" "$TMP/handed" # what the builder is handed, before it resolves
+    printf 'echo both\n' >"$REPO/run.sh"
+    git -C "$REPO" add run.sh
+    GIT_EDITOR=true git -C "$REPO" rebase --continue >/dev/null 2>&1
+  }
+  rebase_onto_base builder >/dev/null 2>&1 # rerere records the builder's resolution
+  # the branch back where it was, as for a second try: rerere has the resolution at hand
+  git -C "$REPO" reset -q --hard "$before"
+  cp "$TMP/base" "$TASK_STATE/base"
+  run rebase_onto_base builder
+  [ "$status" -eq 0 ]
+  [[ $output == *"rebase conflicts in: run.sh; asking the builder"*"asked the builder"* ]]
+  [ "$(cat "$TMP/handed")" = "echo both" ] # rerere's replay of the first resolution
+  git -C "$REPO" merge-base --is-ancestor main work
+}
+
+@test "base_ref: after the pull request's rebase, origin's main, not the stale local one" {
   make_repo
   add_origin
   on_work_branch
   # upstream main touches a protected file; local main stays behind
-  git clone -q -b main "$TMP/origin.git" "$TMP/other"
-  git -C "$TMP/other" config user.email t@example.invalid
-  git -C "$TMP/other" config user.name t
-  printf '#!/bin/sh\nexit 0 # stricter\n' >"$TMP/other/.factory/gate"
-  git -C "$TMP/other" add -A
-  git -C "$TMP/other" commit -qm "upstream touches the gate"
-  git -C "$TMP/other" push -q origin main
+  upstream .factory/gate $'#!/bin/sh\nexit 0 # stricter\n' "upstream touches the gate"
   printf 'mine\n' >"$REPO/mine.txt"
   commit_all "work"
   [ "$(base_ref)" = refs/heads/main ]
@@ -4243,10 +4508,7 @@ EOF
   run_gate() { :; }
   gate_then_guards builder rebase-pr
   # origin moves on again and is fetched (a sibling task does that) while local main stays stale
-  printf 'later\n' >"$TMP/other/later.txt"
-  git -C "$TMP/other" add -A
-  git -C "$TMP/other" commit -qm "upstream moves on"
-  git -C "$TMP/other" push -q origin main
+  upstream later.txt $'later\n' "upstream moves on"
   git -C "$REPO" fetch -q origin main
   [ "$(base_ref)" = refs/factory/toy-1/upstream/main ] # where the branch forks off it too, and Factory's own
   gate_then_guards builder copilot-1
@@ -4259,10 +4521,7 @@ EOF
   printf 'echo x\n' >"$TMP/wt-9/run.sh"
   git -C "$TMP/wt-9" commit -qam work
   # a teammate's change to the gate lands on origin's main, and the branch merges it
-  git clone -q -b main "$TMP/origin.git" "$TMP/other"
-  printf '#!/bin/sh\nexit 0 # stricter\n' >"$TMP/other/.factory/gate"
-  git -C "$TMP/other" -c user.email=t@example.invalid -c user.name=t commit -qam "upstream touches the gate"
-  git -C "$TMP/other" push -q origin main
+  upstream .factory/gate $'#!/bin/sh\nexit 0 # stricter\n' "upstream touches the gate"
   git -C "$TMP/wt-9" fetch -q origin
   git -C "$TMP/wt-9" merge -q --no-edit origin/main
   gate_branch "$TMP/gate.log"
@@ -4388,11 +4647,7 @@ SH
   [[ $output == *"origin's main, at $(git -C "$TMP/origin.git" rev-parse main), does not hold $agents, the commit work is measured from"* ]]
   [ "$(cut -d ' ' -f 1 "$TASK_STATE/base")" = "$agents" ]
   # nor once a graft has origin's next commit descend from it
-  git clone -q -b main "$TMP/origin.git" "$TMP/other"
-  printf 'up\n' >"$TMP/other/up.txt"
-  git -C "$TMP/other" add up.txt
-  git -C "$TMP/other" -c user.email=t@example.invalid -c user.name=t commit -qm upstream
-  git -C "$TMP/other" push -q origin main
+  upstream up.txt $'up\n' upstream
   git -C "$REPO" fetch -q origin
   git -C "$REPO" replace --graft "$(git -C "$TMP/other" rev-parse HEAD)" "$agents"
   run rebase_onto_base builder
@@ -4407,11 +4662,7 @@ SH
   # the builder relaxes the gate, then grafts origin's next commit onto the base and its own
   printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
   git -C "$TMP/wt-9" commit -qam "an agent's"
-  git clone -q -b main "$TMP/origin.git" "$TMP/other"
-  printf 'up\n' >"$TMP/other/up.txt"
-  git -C "$TMP/other" add up.txt
-  git -C "$TMP/other" -c user.email=t@example.invalid -c user.name=t commit -qm upstream
-  git -C "$TMP/other" push -q origin main
+  upstream up.txt $'up\n' upstream
   git -C "$TMP/wt-9" fetch -q origin
   git -C "$REPO" replace --graft "$(git -C "$TMP/other" rev-parse HEAD)" "$(cut -d ' ' -f 1 "$TASK_STATE/base")" "$(git -C "$TMP/wt-9" rev-parse HEAD)"
   gate_branch "$TMP/gate.log"
@@ -4498,7 +4749,7 @@ SH
   [ -z "$(repo_prefix 2048)" ] # no letter: bd picks
 }
 
-@test "init: a short prefix from the repo's name, and a --prefix of the human's wins" {
+@test "cmd_init: a short prefix from the repo's name, and a --prefix of the human's wins" {
   git init -q "$TMP/AllesBuien"
   git init -q "$TMP/2048"
   bd() { printf '%s\n' "$*" >>"$TMP/bd.log"; }
@@ -4519,6 +4770,7 @@ SH
   [[ $long == *spaces-everywhere* ]]
   [ "$(bead_of_branch factory/toy-abe-add-a-farewell-cli-flag)" = toy-abe ]
   [ "$(bead_of_branch factory/toy-abe)" = toy-abe ]
+  [ "$(bead_of_branch factory/ab-x7k.1-a-child-of-it)" = ab-x7k.1 ]
   make_repo
   git -C "$REPO" checkout -q main
   git -C "$REPO" branch factory/toy-9-some-title
@@ -4527,6 +4779,12 @@ SH
   git -C "$REPO" worktree add -q "$TMP/wt-9" factory/toy-9-some-title
   [ "$(worktree_of "$REPO" toy-9)" = "$TMP/wt-9" ]
   [ -z "$(worktree_of "$REPO" toy-90)" ]
+  # a path with a space, and a child's id, whose dot matches only a dot
+  git -C "$REPO" branch factory/ab-x7k.1-child
+  git -C "$REPO" branch factory/ab-x7kZ1-other
+  git -C "$REPO" worktree add -q "$TMP/my wt" factory/ab-x7k.1-child
+  git -C "$REPO" worktree add -q "$TMP/other" factory/ab-x7kZ1-other
+  [ "$(worktree_of "$REPO" ab-x7k.1)" = "$TMP/my wt" ]
 }
 
 @test "task_context: branch from the slugged title unless the task has one, base from the checkout" {
@@ -4542,6 +4800,25 @@ SH
   git -C "$REPO" branch factory/toy-1-old-slug
   run context_of "$REPO"
   [ "${lines[2]}" = factory/toy-1-old-slug ]
+  # a child bead's agents: Herdr takes no dot in an agent's name
+  TASK_ID=toy-1.2
+  run context_of "$REPO"
+  [ "${lines[2]}" = factory/toy-1.2-add-csv-export ]
+  [ "${lines[3]}" = "toy-1_2-plan toy-1_2-build toy-1_2-review" ]
+}
+
+@test "cmd_status: Factory's agents by task and role, a child bead's under its id, the workspace's label once" {
+  herdr() {
+    case "$1 $2" in
+      "workspace list") printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"toy-1.2 Add CSV export"}]}}' ;;
+      "agent list") printf '{"result":{"agents":[{"name":"toy-1_2-plan","agent_status":"idle","workspace_id":"w1"},{"name":"toy-1_2-build","agent_status":"working","workspace_id":"w1"},{"name":"shell","agent_status":"idle","workspace_id":"w2"}]}}' ;;
+    esac
+  }
+  run cmd_status
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 3 ]
+  [[ ${lines[1]} =~ ^toy-1\.2\ +build\ +working\ +w1\ +Add\ CSV\ export$ ]]
+  [[ ${lines[2]} =~ ^toy-1\.2\ +plan\ +idle\ +w1\ *$ ]]
 }
 
 @test "task_context: a task keeps the base its record was read from, whatever the checkout is on; --fresh takes the checkout's anew" {
@@ -4581,10 +4858,13 @@ SH
     mkdir -p "$WT"
   }
   record_base() { printf 'record_base finds: %s\n' "$(cat "$TASK_STATE/base" 2>/dev/null || printf none)"; }
+  tree_state() { :; } # of a worktree that is no git checkout here
   run open_task_workspace "$REPO"
+  [ "$status" -eq 0 ]
   [[ $output == *"record_base finds: abc refs/heads/old"* ]]
   printf 'built 2\n' >"$TASK_STATE/state"
   FACTORY_FRESH=1 run open_task_workspace "$REPO"
+  [ "$status" -eq 0 ]
   [[ $output == *"record_base finds: none"* ]]
   [ ! -e "$TASK_STATE/state" ] # a --fresh run that stops from here on leaves no step to resume after
 }
@@ -4593,11 +4873,7 @@ SH
   make_repo
   add_origin
   # a pull request merged on origin since you last pulled
-  git clone -q -b main "$TMP/origin.git" "$TMP/other"
-  printf 'merged\n' >"$TMP/other/merged.txt"
-  git -C "$TMP/other" add merged.txt
-  git -C "$TMP/other" -c user.email=t@example.invalid -c user.name=t commit -qm merged
-  git -C "$TMP/other" push -q origin main
+  upstream merged.txt $'merged\n' merged
   local tip
   tip=$(git -C "$TMP/origin.git" rev-parse main)
   task_worktree
@@ -4676,7 +4952,7 @@ SH
   run setup_task "$REPO" toy-9
   [ "$status" -eq 1 ]
   [[ $output == *"toy-9 builds on toy-u (factory/toy-u-open), not merged into main yet, and would start without that code: merge it first, or drop the dependency (bd dep remove) if toy-9 does not need it"* ]]
-  run ! grep -q -- '--claim' "$TMP/bd.log"
+  run -1 grep -q -- '--claim' "$TMP/bd.log"
   # a task under way keeps its base, and goes on
   mkdir -p "$(task_state "$REPO" toy-9)"
   printf 'abc refs/heads/main\n' >"$(task_state "$REPO" toy-9)/base"
@@ -4688,12 +4964,24 @@ SH
   FACTORY_FRESH=1 run setup_task "$REPO" toy-9
   [ "$status" -eq 1 ]
   [[ $output == *"toy-9 builds on toy-u (factory/toy-u-open)"* ]]
-  run ! grep -q -- '--claim' "$TMP/bd.log"
+  run -1 grep -q -- '--claim' "$TMP/bd.log"
   # merged, it waits no more
   git -C "$REPO" merge -q factory/toy-u-open
   FACTORY_FRESH=1 run setup_task "$REPO" toy-9
   [ "$status" -eq 0 ]
   grep -q 'update toy-9 --claim' "$TMP/bd.log"
+  # a task bd cannot show is no task without blockers
+  rm "$TMP/bd.log"
+  bd() {
+    printf '%s\n' "$*" >>"$TMP/bd.log"
+    case "$*" in
+      *show*) printf 'database is locked\n' >&2 && return 1 ;;
+    esac
+  }
+  FACTORY_FRESH=1 run setup_task "$REPO" toy-9
+  [ "$status" -eq 1 ]
+  [[ $output == *"bd could not show toy-9 in $REPO, to read the tasks it builds on"* ]]
+  run -1 grep -q -- '--claim' "$TMP/bd.log"
 }
 
 @test "worktree_path: short directory under Herdr's worktree dir, from its config when set" {
@@ -4715,7 +5003,7 @@ SH
   [ "$status" -eq 1 ]
 }
 
-@test "on_interrupt notes the bead and exits 130" {
+@test "on_interrupt: a note on the bead, and exit 130, a failed note too" {
   fake_task
   STEP=building
   WS=w9
@@ -4726,9 +5014,14 @@ SH
   [[ $output == *"interrupted during building"*"continue with: factory run [flags] $TMP toy-1"* ]]
   [ "$(grep -c '' "$TMP/bd.log")" -eq 1 ]
   grep -q "comment toy-1 Factory: interrupted during building" "$TMP/bd.log"
+  # a note that fails still ends the run with 130, which ends a queue, with errexit on as in a
+  # run's trap (bats's run turns it off)
+  run bash -c 'source "$1"; TASK_ID=toy-1 STEP=building WS=w9 WT=$2; bd() { return 1; }; on_interrupt "$2"' _ "$BATS_TEST_DIRNAME/../factory" "$TMP"
+  [ "$status" -eq 130 ]
+  [[ $output == *"could not leave the note on toy-1"* ]]
 }
 
-@test "resume markers: written <round>, reviewed, planned, built <round>, cleared by --fresh" {
+@test "resume markers: written <round>, reviewed, planned, built <round>, none with --fresh" {
   WT=$TMP
   mkdir -p "$TMP/.factory/run"
   FACTORY_FRESH=0
@@ -4743,9 +5036,8 @@ SH
   [ "$(resume_point)" = "built 2" ]
   [ -s "$TASK_STATE/state" ] # Factory's, out of the run dir the agents write
   [ ! -e "$TMP/.factory/run/state" ]
-  FACTORY_FRESH=1
+  FACTORY_FRESH=1 # which also drops the marker as the workspace opens (open_task_workspace)
   [ -z "$(resume_point)" ]
-  [ ! -e "$TASK_STATE/state" ]
 }
 
 @test "show_md: glow renders when present, plain indent otherwise" {
@@ -4766,27 +5058,50 @@ SH
   [[ $output != *continued* ]]
 }
 
-@test "copilot_loop: a round answered without a commit is replied to and ends the loop" {
+@test "copilot_loop: a round answered without a commit is replied to and ends the loop; one neither changed nor answered gets no reply" {
   make_repo
   on_work_branch
   mkdir -p "$REPO/.factory/run"
   FACTORY_COPILOT_ROUNDS=3
   copilot_request() { :; }
   copilot_wait() { :; }
-  copilot_verdict() { printf 'Changes recommended'; }
+  copilot_reviews() { printf '[]'; }
+  copilot_verdict_of() { printf 'Changes recommended'; }
   copilot_comments() { printf 'run.sh:1: use set -e\n'; }
-  ask() { :; }
-  copilot_reply() { printf 'replied round %s on %s\n' "$2" "$3"; }
+  ask() { printf 'set -e would end the script on its first grep\n' >"$REPO/.factory/run/copilot-1-response.md"; }
+  copilot_reply() { printf 'replied round %s on %s\n' "$2" "${3:-no commit}"; }
   copilot_resolve() { printf 'resolved %s\n' "$2"; }
   run copilot_loop builder https://example.invalid/pull/7
   [ "$status" -eq 1 ]
   sha=$(git -C "$REPO" rev-parse HEAD)
-  [[ $output == *"replied round 1 on $sha"*"resolved $sha"* ]]
+  [[ $output == *"replied round 1 on no commit"*"resolved $sha"* ]]
   [[ $output != *"round 2"* ]]
   rc=0
   copilot_loop builder https://example.invalid/pull/7 >/dev/null || rc=$?
   [ "$rc" -eq 1 ]
   [ "$COPILOT_NOTE" = "Copilot's comments answered without changes" ]
+  # a turn that neither changed nor answered anything: no reply, the threads stay open
+  ask() { :; }
+  run copilot_loop builder https://example.invalid/pull/7
+  [ "$status" -eq 1 ]
+  [[ $output != *replied* ]]
+  [[ $output != *resolved* ]]
+  rc=0
+  copilot_loop builder https://example.invalid/pull/7 >/dev/null || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$COPILOT_NOTE" = "the builder neither changed anything nor answered Copilot's round 1" ]
+}
+
+@test "comment_count and copilot_reviews: a comment's further lines count for nothing; every page of the reviews is read" {
+  run comment_count <<<$'a.py:1: one\n    more of it\n    \n    and more\nb.py:2: two'
+  [ "$output" = 2 ]
+  WT=$TMP
+  gh() { # the second page only to --paginate; slurped, either form of gh's pages is read
+    printf '[{"id":1},{"id":2}]\n'
+    [[ " $* " != *" --paginate "* ]] || printf '[{"id":3}]\n'
+  }
+  run copilot_reviews 7
+  [ "$(jq -c 'map(.id)' <<<"$output")" = "[1,2,3]" ]
 }
 
 @test "copilot_loop: fixes left uncommitted end the loop before the gate" {
@@ -4796,7 +5111,8 @@ SH
   FACTORY_COPILOT_ROUNDS=3
   copilot_request() { :; }
   copilot_wait() { :; }
-  copilot_verdict() { printf 'Changes recommended'; }
+  copilot_reviews() { printf '[]'; }
+  copilot_verdict_of() { printf 'Changes recommended'; }
   copilot_comments() { printf 'run.sh:1: use set -e\n'; }
   ask() { printf 'set -e\necho hi\n' >"$REPO/run.sh"; } # its commit refused by a locked signer
   GATE=.factory/gate
@@ -4814,7 +5130,7 @@ SH
   [ "$COPILOT_NOTE" = "the builder left its fixes for Copilot's round 1 uncommitted" ]
 }
 
-@test "help and unknown command" {
+@test "main: help, a command's usage and arguments, and an unknown command" {
   run main help
   [ "$status" -eq 0 ]
   [[ $output == *"factory run"* ]]
@@ -4828,6 +5144,19 @@ SH
   run main bogus
   [ "$status" -eq 1 ]
   [[ $output == *"unknown command"* ]]
+  bd() { printf '%s\n' "$*" >>"$TMP/bd.log"; }
+  run main add "$TMP" Add CSV export # an unquoted title
+  [ "$status" -eq 1 ]
+  [[ $output == *'usage: factory add <repo> ["title" [description]]'* ]]
+  FACTORY_BD_PUSH=yes run main add "$TMP" "Add CSV export"
+  [ "$status" -eq 1 ]
+  [[ $output == *"FACTORY_BD_PUSH=yes: 0 or 1"* ]]
+  [ ! -e "$TMP/bd.log" ] # nothing filed
+  run main queue "$TMP" 3x
+  [ "$status" -eq 1 ]
+  [[ $output == *"usage: factory queue"* ]]
+  run main queue "$TMP" 3 4
+  [[ $output == *"usage: factory queue"* ]]
 }
 
 @test "finish_task: hands over saying why the guardrails failed, or that origin's branch is not the commit Factory pushed" {
@@ -4963,15 +5292,17 @@ SH
   answer_event "plan approved, protected paths allowed"
   answer_event $'note on the build: rename the flag\nand its test'
   answer_event "build aborted"
+  answer_event "the planner asked: Which flag? Answer: --verbose Notes: the one approved" # no gate's
   run jq -c '[.gate, .answer, .note]' "$TMP/events.jsonl"
   [ "${lines[0]}" = '["plan","approve",""]' ]
   [ "${lines[1]}" = '["plan","waive",""]' ]
   [ "${lines[2]}" = '["build","note","rename the flag\nand its test"]' ]
   [ "${lines[3]}" = '["build","abort",""]' ]
+  [ "${#lines[@]}" -eq 4 ]
   [ "$(jq -s 'map(.secs >= 42) | all' "$TMP/events.jsonl")" = true ]
 }
 
-@test "run_gate and guard_branch record each gate run and guardrail check, with the checks that failed" {
+@test "run_gate and guard_branch: each gate run and guardrail check recorded, with the checks that failed" {
   fake_task
   WT=$TMP/wt BRANCH=work
   mkdir -p "$TMP/wt/.factory/run" "$TASK_STATE"

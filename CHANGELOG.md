@@ -10,30 +10,35 @@ in its pane. The guardrails stop more than before: a change to any file under `.
 but `.factory/run/` needs your waiver at plan approval; a NUL byte added to any file but
 an image, a PDF, a font, an archive, audio or video fails the branch; and a submodule
 added or moved, a symlink to a place git does not show, or an ignored file at a protected
-path fails it whatever you waive. A typo in a knob now stops the run instead of being
-read as something else. The agents may no longer run `git push`, `gh` or Factory itself.
-A task 0.1.x started stops at its rerun on the files 0.1.x kept in its run dir, which
-Factory reads from there no longer. Rerun it with `--fresh` to start it over; or, for it to
-resume where it was, move `.factory/run/state` to the task's state dir, as the message
-says, with `allow-protected` if you had waived the protected paths, listing in it those
-the build may change, a path a line, and `decisions.md` to keep your answers in the pull
-request, and remove the others. A build 0.1.x approved goes through one more round of
-gate, reviews and your approval, as 0.1.x recorded no check of it. Upgrade between runs:
-a run that waits at a gate takes your answer where its own Factory looks for it.
+path fails it whatever you waive. A typo in a knob's value, or in a knob's name in
+`.factory/env`, now stops the command instead of being read as something else or ignored.
+A repo whose own git config converts files, such as a local `core.autocrlf` or git-crypt's
+filter, now stops before any agent works, as its checkout reads as changed (see the
+README's Guardrails). `factory clean --force` drops one task now, named by its bead id.
+`factory next` and `queue` need flock (util-linux) now. The agents may no longer run
+`git push`, `gh` or Factory itself. A task 0.1.x started stops at its rerun on the files
+0.1.x kept in its run dir, which Factory reads from there no longer. Rerun it with
+`--fresh` to start it over; or, for it to resume where it was, move `.factory/run/state`
+to the task's state dir, as the message says, with `allow-protected` if you had waived
+the protected paths, listing in it those the build may change, a path a line, and remove
+the others. A build 0.1.x approved goes through one more round of gate, reviews and your
+approval, as 0.1.x recorded no check of it. Upgrade between runs: a run that waits for
+your approval takes your answer where its own Factory looks for it.
 
 ### Added
 - The approvals ask you in a question dialog in the agent's pane, the planner's for the
   plan and the builder's for the build: Approve, Abort, for the plan also Approve, allow
   protected paths, or a typed note to have it revised, which arrives as typed, with no
   shell in between. Hooks that Factory gives the agent as it starts it (`--settings`)
-  hand your answer to the gate, so the agent never relays it, and mark the dialog as open
+  hand your answer to the run, so the agent never relays it, and mark the dialog as open
   meanwhile, so that Factory neither types into it nor takes it for the end of the
   agent's turn. Factory's terminal prompt and the `fy` commands still answer too, `!fy`
   typed in a pane that shows no dialog (keys typed into the dialog go to it), and Factory
   closes the dialog when they do.
 - Every answer you give on a task, the planner's questions included, goes into Factory's
   state for the task, onto the bead as a comment, and into the pull request's description.
-  A planner that starts over reads it, as `.factory/run/decisions.md`, before asking again.
+  A planner that starts over reads it, as `.factory/run/decisions.md`, before asking
+  again.
 - A run that opens a pull request (`--pr`, `FACTORY_PR=1`) checks at its start, before it
   claims a bead, that origin takes a push without a prompt, with a dry-run push that sends
   nothing. A missing credential or write access stops the run there, with git's error,
@@ -45,10 +50,10 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
 - From the second build round on, the reviewers check what changed since their last
   notes, with the builder's answer to them (`response-N.md`, which nothing read) and
   your note on the build, as the plan's reviewers already did.
-- A task that starts on a checkout git reads as changed stops before any agent works,
-  instead of failing every check after hours of work.
 - `factory doctor` also checks that `fy` resolves from a login shell, as the `!fy`
-  commands in a pane need, and that git is 2.31 or newer.
+  commands in a pane need, that git is 2.31 or newer, and that flock is there, which
+  `factory next` and `queue` need; gh, which only pull requests need, shows as absent
+  without failing it.
 - The plan ends saying whether the build must change protected paths, as
   `Protected paths: none` or which, so you know at approval whether to allow them. The
   planner is told which paths are protected; Factory warns at the approval when the plan
@@ -75,28 +80,26 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   anywhere under it fails the guardrails, waiver or not. Only the gate,
   `.factory/protected`, `.factory/guardrails.txt` and `.factory/env` were protected,
   though the guardrails read no line under `.factory/`, so an example in `.factory/guard/`
-  that a repo's own gate holds its rules to could change unseen. Your own `.factory/env`
-  in the repo's main checkout stays exempt from the checks for uncommitted and ignored
-  files.
-- The knobs are checked before a bead is claimed: an approval mode other than `ask` or
-  `auto`, a flag other than 0 or 1, or a count that is no whole number stops the run with
-  the knob's name. `FACTORY_APPROVAL=Ask` skipped both of your approvals, and
-  `FACTORY_PR=true` died halfway through a run.
+  that a repo's own gate holds its rules to could change unseen.
 - The agents may not run `git push`, `gh` or Factory itself: the settings Factory starts
-  them with deny them, so that no agent pushes unchecked commits, answers your gate with
-  `fy approve` or merges its own pull request. Your own `!` commands in a pane run as
+  them with deny them, so that no agent pushes unchecked commits, answers your approval
+  with `fy approve` or merges its own pull request. Your own `!` commands in a pane run as
   typed.
-- `factory queue` runs each task as a `factory next` of its own. A task that stops, or
-  needs you, ends there and the queue goes on with the next one; Ctrl-C ends the queue.
-- `factory pr`, and a rerun after the build's approval, check a branch that moved on since
-  its last check, such as by a fixup you committed by hand, instead of refusing to push
-  it; the rerun also takes it through another round of reviews and your approval.
 - In Rust, whose unit tests live in the file they test, a `#[test]` or an assertion added
   to a changed `.rs` file counts for the tests-required check.
 - Each refusal of the guardrails, and each stop, says what to do next.
 - `factory pr` refuses `--auto` and `--fresh`, which do nothing there.
 - `factory tasks`, `approve`, `reject` and `abort` read no knob, and no longer load the
   repo's `.factory/env` or say which knobs it set.
+- `factory pr` checks after Copilot's rounds, as a run does, that origin's copy of the
+  branch is the commit it pushed, and names what the worktree holds that the pull request
+  lacks.
+- Every command takes any directory of a repo for the repo: `factory run`, `pr`, `init`,
+  `next`, `queue`, `add`, `tasks` and `sync` took only its top.
+- The agents' prompts tell them how you approve only where Factory asks you, not under
+  `--auto`, where those commands refuse.
+- Factory needs Bash 4.4 or newer, as the README now says, where it said Bash 4: an older
+  Bash takes an empty list for an unset variable, which stops Factory.
 
 ### Removed
 - **Breaking:** `factory answer` (`!fy answer` in a pane) and the questions relay
@@ -131,20 +134,30 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   Blik's bk-9tt the builder's commit failed with 1Password locked; Factory ran the gate on
   the uncommitted fixes for 16 minutes, the guardrails failed, and the bead was closed
   with the pull request lacking them. Factory now hands the task over when the worktree
-  holds commits or changes the pull request lacks, naming them and `fy pr`, which checks
-  and pushes them once they are committed; fixes left uncommitted skip the gate.
+  holds commits or changes the pull request lacks, naming them and `factory pr`, which
+  checks and pushes them once they are committed; fixes left uncommitted skip the gate.
 - `factory next` and `factory queue` took up a task whose blocker in bd still had its pull
   request open: Factory closes a bead once its pull request is open, which makes the tasks
   it blocks ready in bd, and they started from a base without its code. On Blik, bk-cxs
   came next while bk-9tt's pull request, with the viewer bk-cxs builds on, was open.
   Such a task now waits for the merge: `factory next` skips it, naming the pull request,
   and takes the next ready task, and `factory run` stops on it before claiming its bead.
+- A task that started on a checkout git reads as changed failed every check after hours of
+  work; it now stops before any agent works.
+- `FACTORY_APPROVAL=Ask` skipped both of your approvals, `FACTORY_PR=true` died halfway
+  through a run, and `FACTORY_POLL_SECONDS=0` had the approvals read your terminal as
+  closed. The knobs are now checked before a bead is claimed, by `factory pr`, `add`,
+  `clean` and `check` too: an approval mode other than `ask` or `auto`, a flag other than
+  0 or 1, or a count or wait that is no number above 0 stops the command with the knob's
+  name, and so does a name in `.factory/env` that is no knob. `.factory/env` is read from
+  the top of the checkout, wherever in it a command points.
 - A line in `.factory/protected` that excludes a path, `:(exclude).factory` say, took all
   of `.factory/` out of the protected-paths check, the change to that very line included,
   and with it the gate and the guardrails' own rules. Factory now checks its own
   `.factory/` apart from the repo's lines.
 - A rules file the guardrails could not read, as `FACTORY_GUARDRAILS` naming no file,
-  passed every line the branch added; it fails the check now.
+  passed every line the branch added; it fails the check now, and `factory doctor` reports
+  it.
 - The forbidden patterns missed `|| true`, `|| :` and `|| exit 0` before a `;`, a `)` or
   a quote, Rust's crate-wide `#![allow(...)]` and its `#[expect(...)]`,
   `#[ignore = "reason"]`, and Go's `t.Skipf` and `t.SkipNow`; they catch them now. A `||`
@@ -154,6 +167,40 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
 - The tests-required check counted a deleted test file, or one moved unchanged, as a test
   changed, and a deleted code file, or one moved unchanged, as a change of code. None of
   them counts now: a branch that only deletes or moves files needs no test.
+- `factory next` and `factory queue` filed a task of their own, titled with the bead's id,
+  for a ready child bead (`ab-x7k.1`, as `bd create --parent` names one), and left the
+  child claimed. A child's id is a bead id to Factory now.
+- `factory next` on a repo without a gate claimed a ready task and left it in progress,
+  and so did `factory queue`. Both now stop before they claim anything.
+- `factory clean <repo> --force` without a bead id dropped every task's workspace,
+  worktree, branch and state, a live run's too, and closed their beads. `--force` now
+  needs the bead id. An unknown flag, which cleaned nothing, and a second bead id, which
+  took the first one's place, stop the command now.
+- Copilot's comments were counted by their lines, so one of several paragraphs counted as
+  several. A builder's turn that neither changed nor answered anything still had Factory
+  post that the round was addressed and resolve every thread; it ends the Copilot loop
+  with a note now, the threads left open. And on a pull request with more than 30 reviews,
+  Factory never saw Copilot's latest and waited for one in vain; it reads every page now.
+- A rebase before a pull request that failed for a reason other than conflicts, a stale
+  `index.lock` or a hook, asked the builder to resolve conflicts in no file, then stopped
+  without git's reason. It now stops at once, with git's error. A conflict that rerere
+  resolves as it was resolved before goes to the builder to check, whatever
+  `rerere.autoUpdate` says.
+- A herdr error in plain text, such as a refused connection, ended a run without a word
+  while it waited for an agent, started one or counted the live ones; it stops the run
+  with herdr's message now.
+- Ctrl-C ended a run with status 1 instead of 130 when its note on the bead failed. It
+  ends with 130 now, and says the note failed.
+- `factory pr` ended without a word when bd could not show the bead, as with its database
+  locked; it says so now.
+- `factory check` deleted the gate's log it pointed you to after a failed gate; the log
+  stays now.
+- `factory add` with an unquoted title filed its first word, and dropped the rest; it
+  takes a title and a description at most now. Without a title, it ended without a word
+  when your editor exited with an error, as `:cq` aborts vim; it says nothing was filed
+  now. `factory queue` took a max that is no whole number, `3x` say, and ran nothing.
+- `factory pr`, `factory clean` and a rerun did not find a task's worktree in a path with
+  a space.
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.
@@ -163,22 +210,24 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
 - A rerun after a restart of Herdr's server (a reboot, an update) starts the task's agents
   again with Factory's arguments, their sessions resumed. Herdr brings them back with
   their resume alone, and adopted as they were they ran without their effort (the
-  planner's `max` fell back to your Claude Code default), model, permissions and dialog
-  hooks, so an answer in the approval dialog never reached the gate. A gate now also
-  offers its dialog only to an agent that runs with the hook.
+  planner's `max` fell back to your Claude Code default), model and permissions.
 - `factory tasks` showed bd's notice that its `--json` output changes in bd 2.0. Factory
   now reads bd's JSON in the envelope bd 2.0 makes its default, which ends the notice and
   keeps the task list, `factory next` and the task lookups working on bd 2.0.
 - `factory queue` ran its tasks in one shell with errors ignored: a pull request that
   failed to open closed the bead as approved, with no pull request, a task that needed you
-  read as done, and any stop ended the whole queue.
+  read as done, and any stop ended the whole queue. It now runs each task as a `factory
+  next` of its own: a task that stops, or needs you, ends there and the queue goes on with
+  the next one; Ctrl-C ends the queue, and so does a `factory next` that stops before it
+  claims a task, as every next after it would.
 - `factory next` read a bd error, such as a locked database, as nothing ready, and a repo
-  without beads too; it says so now.
+  without beads too; it says so now, and `factory queue` ends with the error.
 - A review left by an interrupted run passed for the same round's review on a rerun, its
   old verdict counted; each round's reviews are removed before it asks.
 - A failed read of Copilot's comments, such as on a rate limit, read as no comments, and
   the review counted as clean. It ends the Copilot loop with a note now.
 - Ctrl-C stopped the run but not its gate, which ran on in the worktree beside a rerun's.
+  The gate now runs in the foreground, and Ctrl-C stops it with the run.
 - Factory searched a working agent's whole screen for the startup dialogs it clears, and
   typed Esc, Enter, `q` or `r` into the agent's turn when the screen only showed such a
   dialog's words, as a run on Factory's own code does. It settles only a blocked agent.
@@ -186,9 +235,11 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   said "needs a human" without saying why; the guardrails' reasons now go into the
   message and onto the bead.
 - A rerun found only some of a task's agents alive and suggested `factory clean --force`,
-  which drops the work; it says to quit the others and rerun.
+  which drops the work; it says to quit the live ones and rerun, which starts all three
+  again.
 - The `extras/cargo-sccache` wrapper printed a write error on a compile's stderr now and
-  then, under `mise exec`, which leaves SIGPIPE ignored.
+  then, under `mise exec`, which leaves SIGPIPE ignored. It now reads every sccache on the
+  PATH before it picks one, so it writes into no closed pipe.
 - A rerun took the branch your checkout was on for the task's base, so a task rerun from
   another branch was rebased onto that one and opened its pull request against it; one
   merged and deleted on GitHub failed the pull request after all the work. A task now
@@ -210,19 +261,21 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   origin (origin's URLs, URL rewrites, the ssh command, proxies, http and credential
   settings) the first time it runs there, and a fetch or a push stops when any of it has
   changed since, naming the keys; your global config applies as it does to git. It fetches
-  the base by its full name from origin's URL into `refs/factory/<bead-id>/upstream/<base>`,
-  a ref nothing else writes, and into origin's tracking ref, without following either
-  where it is a symbolic ref, rebases onto that, and stops when it cannot fetch. It also stops when the base it
-  fetched does not hold the commit the branch was measured from, such as one an agent put
-  on your `main` before the task started, or one you have not pushed: the pull request
-  would carry it unchecked.
+  the base by its full name from origin's URL into
+  `refs/factory/<bead-id>/upstream/<base>`, a ref nothing else writes, and into origin's
+  tracking ref, without following either where it is a symbolic ref, rebases onto that,
+  and stops when it cannot fetch. It also stops when the base it fetched does not hold the
+  commit the branch was measured from, such as one an agent put on your `main` before the
+  task started, or one you have not pushed: the pull request would carry it unchecked.
 - The gate and the guardrails checked the commit checked out in the worktree, but Factory
   pushed the branch by name: a worktree left on another commit had them pass that commit
   while the push sent the branch's, and a commit made after the gate went out unchecked.
   Factory now gates and guards only the branch's tip, records the commit both passed on,
   and pushes exactly that commit by its id, as the Copilot rounds do. Before the bead is
   closed it checks that origin's copy of the branch is that commit, which an agent's own
-  push would not be.
+  push would not be. A branch that moved on since, as by a fixup you committed by hand, is
+  checked again before the push, by `factory pr` and by a rerun, which also takes it
+  through another round of reviews and your approval.
 - A worktree whose own git config set `core.worktree` pointed every git call of the
   guardrails at another checkout, a clean one, while the gate ran in the worktree itself.
   The guardrails now refuse a worktree that git does not read as the top of its checkout.
@@ -237,16 +290,16 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   check, and the reading of where a branch forks off its base, what it took in from origin
   and what it is rebased onto now ignore replace refs and grafts.
 - The guardrails passed a branch whose diff against the base git could not read, since
-  every check then read nothing: a line in `.git/shallow`, which an agent can write, cut the
-  branch off from the base, so that the two shared no history, and an object gone from the
-  repository failed the diff of a file the worktree still matched. The guardrails now fail
-  such a branch and say why, with git's error.
-- The check for uncommitted changes trusted what an agent can set: the worktree's index and
-  git config (a file marked assume-unchanged or skip-worktree, sparse patterns, an
+  every check then read nothing: a line in `.git/shallow`, which an agent can write, cut
+  the branch off from the base, so that the two shared no history, and an object gone from
+  the repository failed the diff of a file the worktree still matched. The guardrails now
+  fail such a branch and say why, with git's error.
+- The check for uncommitted changes trusted what an agent can set: the worktree's index
+  and git config (a file marked assume-unchanged or skip-worktree, sparse patterns, an
   fsmonitor hook, `core.checkStat=minimal`, `core.ignoreCase`, `core.fileMode=false`,
   `core.symlinks=false`, a submodule's `ignore` setting) and git's conversions
-  (`core.autocrlf`, a `text`, `eol` or `filter` attribute in `.git/info/attributes`) hid an
-  edited `.factory/gate`, or any other change, while the gate ran on it: a clean filter
+  (`core.autocrlf`, a `text`, `eol` or `filter` attribute in `.git/info/attributes`) hid
+  an edited `.factory/gate`, or any other change, while the gate ran on it: a clean filter
   handed git the committed `justfile` for an edited one. Git now compares the worktree
   with HEAD through an index of Factory's own, with those settings at their defaults, and
   Factory holds each tracked file's bytes to the commit's, converted as git would store
@@ -275,10 +328,10 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   config says.
 - One line of a repo's `.factory/guardrails.txt` that grep could not read switched off
   every forbidden pattern: the branch passed whatever it added. Such a line now fails the
-  guardrails, which name the file.
+  guardrails, which name the file and the line.
 - A renamed file read as added in full, so moving a module that already held a
   suppression, or a committed SQLite fixture, failed the branch. A renamed file counts
-  only the lines it changed; a copy's count in full.
+  only the lines it changed; a copy's lines count in full.
 - A NUL byte hid a text file's lines from the guardrails, though rustc compiles a Rust
   source with one in a comment: git shows a file with a NUL in its first 8000 bytes as
   binary, and grep stops printing lines at one further on. A `binary` or `-diff`
@@ -288,48 +341,42 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   every other file's lines are checked all the same.
 - A committed build artifact slipped past the build-artifact check when git read it as a
   rename of a deleted file of like content. A rename no longer hides one.
-- An agent could approve its own plan or build, abort it, hand the planner a note as yours,
-  or have a rerun skip the reviews: the gate's answers (`approved`, `reject.md`,
-  `aborted`), what it waits for (`waiting`) and the log of your answers (`decisions.md`)
-  were files in the run dir, which the agents write, a resume point there (`state`, such
-  as `built 1`) was taken for Factory's own when the task had no base recorded, and the
-  planner's `tree-at-ask` and `tree-at-answer` there excused whatever changes it listed as
-  yours. Factory now keeps all of them in its own state for the task, which only it, your
-  `fy approve`, `reject` and `abort`, and the dialogs' hooks write, and writes your answers
-  into the run dir for the planner over whatever is there. A file in the run dir by a name
-  Factory kept there before (`approved`, `reject.md`, `aborted`, `allow-protected`,
-  `state`, `tree-at-ask`, `tree-at-answer`) stops the next run before any agent works, and
-  fails the guardrails: only an agent would put it there. `--fresh` removes one.
+- An agent could approve its own plan or build, abort it, hand the planner a note as
+  yours, waive its own protected-path check, or have a rerun skip the reviews: the
+  approvals' answers (`approved`, `reject.md`, `aborted`), what a run waits for
+  (`waiting`), the waiver (`allow-protected`) and the resume point (`state`, such as
+  `built 1`) were files in the run dir, which the agents write, and the pull request
+  recorded the waiver as yours. Factory now keeps all of them in its own state for the
+  task, under `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`, which only it, your
+  `factory approve`, `reject` and `abort`, and the dialogs' hooks write; the waiver only
+  your answer at the plan's approval (`p`, the dialog, or
+  `factory approve <repo> <bead-id> --allow-protected`). It writes your answers into the
+  run dir for the planner over whatever is there. A file in the run dir by a name Factory
+  kept there (`approved`, `reject.md`, `aborted`, `allow-protected`, `state`,
+  `tree-at-ask`, `tree-at-answer`) stops the next run before any agent works, and fails
+  the guardrails, as one committed there does: only an agent would put it there. `--fresh`
+  removes one. `factory check` in a task's worktree honours the task's waiver.
 - A planner's commit passed the check that planning leaves the code untouched, which read
   only uncommitted changes. A planner turn that commits, or moves HEAD, the task's branch,
   Factory's refs for the task or a replace ref, now stops the run, and says which. The
   repo's other refs, which you, fetches and other tasks move meanwhile (your main, tags, a
   stash), decide nothing for the task.
-- A builder could waive its own protected-path check: the waiver was a file in the run
-  dir, which the agents write, and the pull request then recorded it as yours. Factory now
-  keeps your waiver in its own state for the task, under
-  `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`, which only your answer at the plan's
-  approval writes (`p`, the dialog, or
-  `factory approve <repo> <bead-id> --allow-protected`). An `allow-protected` file in the
-  run dir, or on the branch, waives nothing and fails the guardrails. `factory check` in a
-  task's worktree honours the task's waiver. A file committed in the run dir fails them
-  too, as no other check reads one.
 - A line of `.factory/protected` that git cannot read as a pathspec, such as `:(bogus)x`,
-  made git fail in both checks of protected paths, which then read no path and passed; only
-  git's own error reached the terminal. The guardrails now fail and say which line.
-- An ignored file at a protected path steered the gate unseen. Ignored by the repository's
-  `.gitignore` or by your global excludes, it escaped both the uncommitted-changes check
-  and the guardrails, yet the gate read it: in a repo whose `.factory/protected` lists
-  mise's configs, an ignored `.mise.local.toml` could set
+  made git fail in both checks of protected paths, which then read no path and passed;
+  only git's own error reached the terminal. The guardrails now fail and say which line.
+- An ignored file at a protected path steered the gate unseen. Ignored by the
+  repository's `.gitignore` or by your global excludes, it escaped both the
+  uncommitted-changes check and the guardrails, yet the gate read it: in a repo whose
+  `.factory/protected` lists mise's configs, an ignored `.mise.local.toml` could set
   `CARGO_ENCODED_RUSTFLAGS="--cap-lints=allow"` for every mise shim, and clippy passed.
-  Such a file now fails the guardrails, waiver or not. Exempt are `.factory/run/`, and your
-  own `.factory/env` in the repo's main checkout, where no agent works.
+  Such a file now fails the guardrails, waiver or not. Exempt are `.factory/run/`, and
+  your own `.factory/env` in the repo's main checkout, where no agent works.
 - A symlink let the gate read what the guardrails did not see. One into an ignored place
-  such as `target/`, into `.git` or out of the worktree showed its content in no diff:
-  `.cargo -> target/cfg` made an ignored file Cargo's config. One to a directory gave the
-  files under it paths that no protected glob names. The guardrails now refuse a symlink
-  the branch adds, renames or points elsewhere that leads to such a place, waiver or not,
-  and one to a directory unless you waived the protected paths.
+  such as `target/`, into `.git`, into a submodule or out of the worktree showed its
+  content in no diff: `.cargo -> target/cfg` made an ignored file Cargo's config. One to a
+  directory gave the files under it paths that no protected glob names. The guardrails now
+  refuse a symlink the branch adds, renames or points elsewhere that leads to such a
+  place, waiver or not, and one to a directory unless you waived the protected paths.
 - A submodule the branch added, or pointed at another commit, brought in files that the
   gate read and no diff showed, and git config an agent can write (`diff.submodule`,
   `diff.ignoreSubmodules`) could hide even its one `+Subproject commit` line. The

@@ -31,7 +31,8 @@ The CLI is `factory`; `fy` is the alias used below.
 Every task gets its own Git worktree and Herdr workspace, so you can watch or step in.
 The agents are your normal `claude` and `codex` sessions, so your skills, MCP servers,
 hooks, `CLAUDE.md` and `AGENTS.md` apply unchanged; a run adds no instruction files
-(`fy init` offers an `AGENTS.md` stub only to a repo that has none).
+(`fy init` writes an `AGENTS.md` stub only into a repo that has neither it nor a
+`CLAUDE.md`).
 Whenever an agent stops for a question or an approval you get a Herdr toast.
 
 ## How a run goes
@@ -99,12 +100,12 @@ gets you a toast and more time; only a turn that has stalled by then fails the r
 
 ## Requirements
 
-- Linux with Bash 4 or newer (macOS with a newer Bash and GNU coreutils is untested).
+- Linux with Bash 4.4 or newer (macOS with a newer Bash and GNU coreutils is untested).
 - [Herdr](https://herdr.dev), [Claude Code](https://code.claude.com/docs)
   and [Codex](https://github.com/openai/codex).
 - [mise](https://mise.jdx.dev), which installs the dev tools and
-  [Beads](https://github.com/steveyegge/beads) (`bd`) from `mise.toml`; `jq`, and `git`
-  2.31 or newer; `gh` for pull requests.
+  [Beads](https://github.com/gastownhall/beads) (`bd`) from `mise.toml`; `jq`, `git` 2.31
+  or newer, `flock` (util-linux) for `fy next` and `fy queue`, and `gh` for pull requests.
 
 Status: early. Built and used by one person on Arch Linux; expect rough edges elsewhere.
 
@@ -121,14 +122,18 @@ Status: early. Built and used by one person on Arch Linux; expect rough edges el
    ln -s "$PWD/factory" ~/.local/bin/fy        # the alias the agents, the dialogs and this README use
    ```
 3. Make `bd`, and `fy` for the `!fy` commands, resolve from a fresh login shell, because
-   Claude Code runs its commands from one:
+   Claude Code runs its commands from one: `bd` through mise's global config, `fy` through
+   `~/.local/bin` on that shell's PATH:
    ```sh
    mise use -g 'ubi:steveyegge/beads[exe=bd]@1.2.2'
+   # in ~/.bash_profile, unless ~/.local/bin is on its PATH already:
+   export PATH="$HOME/.local/bin:$PATH"
    ```
    Anything your gate needs (`just`, language toolchains) has the same requirement.
-4. Check: `fy doctor`. It reports each prerequisite, the git version, whether the Herdr
-   server answers, and whether `bd` and `fy` resolve from a login shell; fix what it marks
-   MISSING and run it again.
+4. Check: `fy doctor`. It reports the tools a run needs (herdr, claude, codex, bd, jq and
+   git), flock for `fy next` and `fy queue`, gh for pull requests, the git version,
+   whether the Herdr server answers, the guardrails file, and whether `bd` and `fy`
+   resolve from a login shell; fix what it marks MISSING and run it again.
 
 ## Use
 
@@ -139,7 +144,7 @@ fy init    ~/src/app                         # lean bd init, short prefix, gate,
 # tasks
 fy add     ~/src/app "Add CSV export" "..."  # file a task
 fy add     ~/src/app                         # ...or compose title and description in $EDITOR
-fy tasks   ~/src/app                         # open tasks in the order next takes them
+fy tasks   ~/src/app                         # open tasks: in progress, then next's order
 fy tasks   ~/src/app --all                   # ...or every task, as bd list shows them
 
 # runs
@@ -195,8 +200,8 @@ relays it, and tells Factory while a dialog is open. An agent that runs without 
 one an older Factory started or one Herdr restored while the run went on, shows no
 dialog: answer in Factory's terminal or with the commands below.
 
-The gate also takes your answer in two more places, whichever comes first, and closes the
-dialog when it does. In Factory's terminal, at its prompt. Or as a command: from any
+The approval also takes your answer in two more places, whichever comes first, and closes
+the dialog when it does. In Factory's terminal, at its prompt. Or as a command: from any
 terminal, naming the repo and bead, `fy approve <repo> <bead-id>`; or after a `!` in one
 of the task's panes that shows no dialog, which Claude Code and Codex run as a shell
 command rather than through the agent, for the task whose worktree the pane is in: `!fy
@@ -257,10 +262,11 @@ with a comment saying why, and the workspace stays open. Once merged (squash mer
 when the pull request shows as merged), `fy clean` removes the workspace, worktree and
 branch and Factory's state for the task, and closes the bead. It judges a branch merged
 against the base the task kept. A task whose bead is still open is kept unless its pull
-request shows as merged; close the bead, or use `--force`. Until a task's branch is
-merged, the tasks it blocks in bd wait for it: bd has them ready once its bead is closed,
-but they would start without its code, so `fy next` and `fy queue` skip them, naming its
-pull request, and `fy run` stops on one before claiming its bead.
+request shows as merged; close the bead, or drop the task with `fy clean <repo> <bead-id>
+--force`. Until a task's branch is merged, the tasks it blocks in bd wait for it: bd has
+them ready once its bead is closed, but they would start without its code, so `fy next`
+and `fy queue` skip them, naming its pull request, and `fy run` stops on one before
+claiming its bead.
 
 ### Pull requests and Copilot
 
@@ -320,10 +326,11 @@ comments and the builder's pushback), `gate-N.log` (also `gate-pr.log` and
 `gate-copilot-N.log`), and `env.sh` (the PATH the panes' shells start with).
 
 The agents write the worktree, so what only you and Factory decide is kept out of it, in
-Factory's own state for the task under `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`:
-`state`, where a rerun resumes (`--fresh` clears it); `waiting`, what the run waits for at
-a gate, while it waits, and `approved`, `reject.md` or `aborted`, an answer from a dialog
-or `fy approve`, `reject` or `abort`, until the gate takes it; `allow-protected`, the
+Factory's own state for the task, in
+`${XDG_STATE_HOME:-~/.local/state}/factory/tasks/<repo>-<hash>/<bead-id>/`: `state`, where
+a rerun resumes (`--fresh` clears it); `waiting`, what the run waits for at an approval,
+while it waits, and `approved`, `reject.md` or `aborted`, an answer from a dialog or `fy
+approve`, `reject` or `abort`, until the run takes it; `allow-protected`, the
 protected paths you allowed, a path a line, as the plan named them when you approved it;
 the planner's `tree-at-ask` and `tree-at-answer`, what you changed while its question
 dialog was open; `decisions.md`, your answers;
@@ -338,12 +345,13 @@ guardrails: only an agent would put one there. `--fresh` removes one, as it star
 task over. Origin's base branch, as Factory fetched
 it, is the ref `refs/factory/<bead-id>/upstream/<base>`, and origin's tracking ref gets it
 too, for a gate that diffs against it. `fy clean` removes them with the task. Beside the
-tasks' state, `transport` holds the repo's git config for reaching origin, as Factory first
-found it; remove it after you change that config yourself. Beside it, `events.jsonl` keeps
-what the runs of the repo's tasks did, a JSON line an event: each run's start and end, the
-agents' turns, the gate's runs, the guardrails' checks, the reviewers' verdicts and your
-answers, with the time each took, and at an orderly end the tokens each agent's session
-has used. `fy clean` leaves it, and `fy stats` sums it up.
+tasks' state, in `<repo>-<hash>/`, `transport` holds the repo's git config for reaching
+origin, as Factory first found it; remove it after you change that config yourself.
+`next.lock` is what `fy next` holds while it chooses and claims a task, and `events.jsonl`
+keeps what the runs of the repo's tasks did, a JSON line an event: each run's start and
+end, the agents' turns, the gate's runs, the guardrails' checks, the reviewers' verdicts
+and your answers, with the time each took, and at an orderly end the tokens each agent's
+session has used. `fy clean` leaves it, and `fy stats` sums it up.
 
 ### Stats
 
@@ -514,12 +522,13 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
 
 The guardrails keep an agent honest, not contained: its shell runs as you, so an agent
 set on it could still write Factory's state for the task, change what lies outside the
-worktree, such as a `.cargo/config.toml` in a directory above it or a file in an ignored
-`node_modules`, or run `fy approve` by a path the agents' settings do not name. The
-pull request's diff is what a person reads before merging. Not supported: a sparse
-checkout, whose missing files read as deleted; a worktree on a filesystem without
-executable bits, where every executable file reads as changed; a filter only the repo's
-own git config defines, such as git-crypt's.
+worktree, such as a `.cargo/config.toml` in a directory above it, or what git status does
+not show, such as a file in an ignored `node_modules` or one in a submodule's directory,
+or run `fy approve` by a path the agents' settings do not name. The pull request's diff
+is what a person reads before merging. Not supported: a sparse checkout, whose missing
+files read as deleted; a worktree on a filesystem without executable bits, where every
+executable file reads as changed; a filter only the repo's own git config defines, such
+as git-crypt's.
 
 ## Sandboxing
 
@@ -567,12 +576,15 @@ holds only the credentials a run needs, as `extras/factory-user/` sets up.
 | `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
 | `FACTORY_FRESH` | `0`; `1` starts over instead of resuming (`--fresh`) |
 
-`fy help` prints the current values.
+`fy help` prints the current values, and `fy help <repo>` those with the repo's
+`.factory/env` applied.
 
 A repo can commit its own defaults in `.factory/env`, one `FACTORY_NAME=value` per line,
-blank lines and `#` comments allowed. The file is parsed, never sourced: values are taken
-verbatim, with no quotes and no expansion. Precedence is flags, then the environment, then
-`.factory/env`, then the defaults above. Like the gate, the file is protected from the agents.
+blank lines and `#` comments allowed; Factory reads it from the top of the checkout, and a
+name there that is no knob stops the command. The file is parsed, never sourced: values
+are taken verbatim, with no quotes and no expansion. Precedence is flags, then the
+environment, then `.factory/env`, then the defaults above. Like the gate, the file is
+protected from the agents.
 
 ## Optional extras
 
@@ -662,9 +674,10 @@ The builder side gets the same through `claude plugin install github@claude-plug
 **Copilot code review** needs a Copilot subscription on the GitHub account.
 
 **Desktop notifications.** Factory's toasts (plan or build ready, questions, blocked,
-done) are Herdr notifications, so where they appear is Herdr's `[ui.toast] delivery`
-setting: `herdr` shows them inside Herdr only, `system` hands them to the desktop's
-notification service so an approval request reaches you on another workspace. Set it in
+needs you, done) are Herdr notifications, so where they appear is Herdr's `[ui.toast]
+delivery` setting: `herdr` shows them inside Herdr only, `system` hands them to the
+desktop's notification service so an approval request reaches you on another workspace,
+`terminal` asks the terminal you attach from to show one, and `off` shows none. Set it in
 `~/.config/herdr/config.toml` and apply with `herdr server reload-config`.
 
 **Herdr agent integrations.** `herdr integration install claude` and `codex` switch
@@ -678,9 +691,9 @@ beads a short prefix from the repo's name: the initials of several words (AllesB
 Left to itself, bd inherits the prefix of a `.beads` in a directory above, such as a Gas
 Town's `hq`, and `bd rename-prefix` renames an existing one. Factory takes a bead id only
 as lowercase letters and digits on either side of one hyphen, starting with a letter
-(`ab-x7k`); `fy run` files anything else, and an id bd does not know, as the title of a
-new task. Untrack `.beads/interactions.jsonl` yourself to keep
-`git status` quiet.
+(`ab-x7k`), and a child's numbers after dots (`ab-x7k.1`); `fy run` files anything else,
+and an id bd does not know, as the title of a new task. Untrack
+`.beads/interactions.jsonl` yourself to keep `git status` quiet.
 
 **Rendered Markdown at the prompts.** With [glow](https://github.com/charmbracelet/glow) on
 your PATH, the plan is rendered in the terminal instead of
@@ -689,7 +702,7 @@ built-in one or a JSON of your own, for example a Nord one to match your termina
 
 ## Why so lean
 
-Factory is a single Bash script of about three thousand lines, and that is the point.
+Factory is a single Bash script of about four thousand lines, and that is the point.
 Current models plan, build and review well when given a clear task, a real codebase and
 a hard definition of done; what they need from a harness is less than the frameworks of
 a year ago assumed. So Factory bets on a few things:
@@ -706,8 +719,9 @@ a year ago assumed. So Factory bets on a few things:
   dialogs multiply.
 - **Your own tools over a toolbox.** The agents are plain `claude` and `codex` sessions;
   every skill, MCP server and hook you already use applies. Factory itself adds only its
-  dialog hooks to the planner's and the builder's sessions (`--settings`), which take your
-  answers in their question dialogs to the run.
+  settings to the planner's and the builder's sessions (`--settings`): the dialog hooks,
+  which take your answers in their question dialogs to the run, and a deny rule for `git
+  push`, `gh` and Factory itself.
 - **Humans at the points that matter.** Approving the plan, approving the build, and
   merging. Everything in between runs on its own, and every stop becomes a toast.
 - **State in the repo's orbit.** Tasks and memories live in Beads beside the code and
@@ -725,10 +739,10 @@ Factory borrows deliberately, and leaves out even more deliberately.
   and a plan consultant before anything is built, and a loop that does not stop until the
   work is done. Factory keeps the roles, the interview, the dual plan review and the loop,
   and drops the harness around them.
-- [Gas Town](https://github.com/steveyegge/gastown) and [Beads](https://github.com/steveyegge/beads)
-  showed that agents need a work ledger that outlives a session: tasks, comments and
-  memories in a database beside the code, pushed with it. Factory uses Beads as is and
-  skips the town.
+- [Gas Town](https://github.com/gastownhall/gastown) and
+  [Beads](https://github.com/gastownhall/beads) showed that agents need a work ledger
+  that outlives a session: tasks, comments and memories in a database beside the code,
+  pushed with it. Factory uses Beads as is and skips the town.
 - [AI Guardrails](https://github.com/florianbuetow/ai-guardrails) showed that the rules
   worth having are the ones a machine checks: a strict gate, forbidden patterns, no silent
   defaults. Factory's guardrails and its own CI follow that model.

@@ -1,5 +1,5 @@
 [tools]
-uv = "latest"
+uv = "0.12.10"
 just = "1.58.0"
 shfmt = "3.14.1"
 shellcheck = "0.11.0"

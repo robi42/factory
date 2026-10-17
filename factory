@@ -63,8 +63,9 @@ die() {
   printf '\033[31m[factory] error:\033[0m %s\n' "$*" >&2
   # inside $(...) exit ends only the subshell, and a caller in a || list would carry on
   [[ -z ${FACTORY_PID:-} || $BASHPID == "$FACTORY_PID" ]] || kill -s USR1 "$FACTORY_PID"
-  exit 1
+  exit "$DIE_STATUS"
 }
+DIE_STATUS=1 # die's exit status, a die's in a subshell too; a factory next's is 4 until its claim
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
 need_all() {
   local t
@@ -82,15 +83,15 @@ usage() {
   row 'factory queue   <repo> [max]' 'run ready beads one after another'
   row '  flags: --pr, --auto, --no-copilot, --fresh' 'open a PR; skip both approvals; no Copilot review; do not resume'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
-  row 'factory tasks   <repo> [--all]' 'open tasks in the order next takes them; args (--all) go to bd list'
-  row 'factory sync    <repo>' 'pull, then push the Beads database to its git remote'
+  row 'factory tasks   <repo> [--all | bd list args...]' 'open tasks: in progress, then in the order next takes them'
+  row 'factory sync    <repo>' 'pull, then push the Beads database to its sync remote'
   row 'factory init    <repo> [bd init args...]' 'lean bd init with a short prefix, detect the gate, AGENTS.md stub'
   row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the plan or build; --allow-protected (plan only) allows the protected paths it names'
   row "factory reject  <repo> <bead-id> '<note>'" 'send a note back; the plan or build comes back revised'
   row 'factory abort   <repo> <bead-id>' 'abort the task at its waiting plan or build'
   row '  in a task'"'"'s worktree: no <repo> <bead-id>' 'the task is the one there: !fy approve in a pane that shows no dialog'
   row 'factory pr      <repo> <bead-id> [--no-copilot]' 'check, push an existing task branch and open a pull request'
-  row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks'
+  row 'factory clean   <repo> [bead-id] [--force]' 'remove workspaces, worktrees and branches of merged tasks; --force: of one you abandoned'
   row 'factory check   <worktree> <base>' 'run gate + guardrails on a branch, no agents'
   row 'factory stats   <repo>' 'how its tasks went: rounds, failures, your notes, time, tokens'
   row 'factory status' 'live Factory agents in Herdr'
@@ -103,19 +104,19 @@ usage() {
   row "FACTORY_PLAN_EFFORT=$FACTORY_PLAN_EFFORT" 'planner effort: low, medium, high, xhigh, max'
   row "FACTORY_BUILD_EFFORT=$FACTORY_BUILD_EFFORT" 'builder effort: low, medium, high, xhigh, max'
   row "FACTORY_REVIEW_EFFORT=$FACTORY_REVIEW_EFFORT" 'reviewer effort: the same, and ultra'
-  row "FACTORY_PLAN_ROUNDS=$FACTORY_PLAN_ROUNDS" 'plan review rounds before the build (always at least one); a note of yours gets one more'
+  row "FACTORY_PLAN_ROUNDS=$FACTORY_PLAN_ROUNDS" 'plan review rounds before the build; a note of yours gets one more'
   row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up; a note of yours at the last gets one more'
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
   row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'a stalled turn fails after this; one working or waiting for your input toasts you and goes on'
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
   row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" '1: code changes must touch a test file (in Rust, a test in the file will do)'
-  row "FACTORY_APPROVAL=$FACTORY_APPROVAL" 'ask: you approve each plan and build; auto: skip'
+  row "FACTORY_APPROVAL=$FACTORY_APPROVAL" 'ask: you approve each plan and build; auto (--auto): skip'
   row "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS" 'seconds between checks for the approve, reject and abort files, and on an open question'
-  row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request'
-  row "FACTORY_COPILOT=$FACTORY_COPILOT" '1: request a Copilot review on the PR and act on its comments'
+  row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request (--pr)'
+  row "FACTORY_COPILOT=$FACTORY_COPILOT" '1: request a Copilot review on the PR and act on its comments (0: --no-copilot)'
   row "FACTORY_COPILOT_ROUNDS=$FACTORY_COPILOT_ROUNDS" 'Copilot review rounds before giving up'
   row "FACTORY_COPILOT_WAIT_S=$FACTORY_COPILOT_WAIT_S" 'seconds to wait for each Copilot review'
-  row "FACTORY_BD_PUSH=$FACTORY_BD_PUSH" '1: push beads to their sync remote after tasks, adds, PRs and cleans'
+  row "FACTORY_BD_PUSH=$FACTORY_BD_PUSH" '1: push the Beads database to its sync remote after tasks, adds, PRs and cleans'
   row "FACTORY_GUARDRAILS=$FACTORY_GUARDRAILS" 'forbidden-pattern list; a repo'"'"'s .factory/guardrails.txt replaces it'
   row "FACTORY_FRESH=$FACTORY_FRESH" '1: start the task over instead of resuming (--fresh)'
 }
@@ -142,7 +143,8 @@ check_knobs() {
   for k in FACTORY_PLAN_ROUNDS FACTORY_ROUNDS FACTORY_COPILOT_ROUNDS FACTORY_COPILOT_WAIT_S FACTORY_TURN_TIMEOUT_MS; do
     [[ ${!k} =~ ^[1-9][0-9]*$ ]] || die "$k=${!k}: a whole number above 0"
   done
-  [[ $FACTORY_POLL_SECONDS =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS: a number of seconds"
+  [[ $FACTORY_POLL_SECONDS =~ ^[0-9]+(\.[0-9]+)?$ && $FACTORY_POLL_SECONDS =~ [1-9] ]] \
+    || die "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS: a number of seconds above 0"
 }
 
 # check_push repo: a run with FACTORY_PR=1 ends by pushing its branch, maybe hours later with
@@ -153,10 +155,10 @@ check_push() {
   local out
   ((FACTORY_PR)) || return 0
   need gh
-  git -C "$1" remote get-url origin >/dev/null 2>&1 || die "$1 has no origin remote to push the pull request's branch to"
+  git -C "$1" remote get-url origin >/dev/null 2>&1 || die "$1 has no origin remote to push the pull request's branch to; add one, or run without --pr (FACTORY_PR=0)"
   if ! out=$(GIT_TERMINAL_PROMPT=0 git -C "$1" push --dry-run --quiet origin HEAD:refs/heads/factory/push-check 2>&1); then
     printf '%s\n' "$out" >&2
-    die "origin takes no push from $1 without a prompt, so the run could not open its pull request; fix git's credentials (for GitHub over https: gh auth setup-git), or run without --pr (FACTORY_PR=0)"
+    die "origin takes no push from $1 without a prompt, so the run could not open its pull request; fix git's credentials (for GitHub over https: gh auth setup-git, or, with gh from mise, a helper that runs mise's gh shim, as extras/factory-user/README.md shows), or run without --pr (FACTORY_PR=0)"
   fi
 }
 
@@ -172,7 +174,7 @@ check_base() {
     die "the task's base, $BASE, is no branch on origin, so its pull request could not be opened; push it$([[ -z $wt ]] || printf ', or check out the base the task should have and rerun with --fresh, which starts it over')"
   fi
   printf '%s\n' "$out" >&2
-  die "could not read origin's branches for the task's base, $BASE"
+  die "could not read origin's branches for the task's base, $BASE (above); fix git's access to origin, then rerun"
 }
 
 # check_deps repo: a task taken up anew, or started over, stops before its bead is claimed while
@@ -181,12 +183,12 @@ check_base() {
 check_deps() {
   local why
   ((FACTORY_FRESH)) || [[ ! -s $TASK_STATE/base ]] || return 0
-  why=$(waits_for "$1" "$TASK_ID" "$BASE")
+  why=$(waits_for "$1" "$TASK_ID" "$BASE") || die "bd could not show $TASK_ID in $1, to read the tasks it builds on"
   [[ -z $why ]] || die "$TASK_ID builds on $why, not merged into $BASE yet, and would start without that code: merge it first, or drop the dependency (bd dep remove) if $TASK_ID does not need it"
 }
 
 # ----------------------------------------------------------------- herdr ----
-# h: run a herdr command, print its JSON, die on error JSON.
+# h: run a herdr command and print its JSON; one that fails dies with herdr's message (herr_msg)
 h() {
   local out
   if ! out=$(herdr "$@" 2>&1); then
@@ -196,6 +198,7 @@ h() {
 }
 
 herr_code() { jq -r '.error.code // empty' <<<"$1" 2>/dev/null; }
+herr_msg() { jq -r '.error.message // .' <<<"$1" 2>/dev/null || printf '%s' "$1"; }
 
 # screen_of agent: what the agent's pane shows now
 screen_of() { herdr agent read "$1" --source visible 2>/dev/null; }
@@ -210,7 +213,6 @@ poll() {
   done
   return 1
 }
-herr_msg() { jq -r '.error.message // .' <<<"$1" 2>/dev/null || printf '%s' "$1"; }
 
 # toast title body sound; the title is prefixed with the product name
 toast() {
@@ -227,11 +229,11 @@ attention() {
 agent_status() { h agent get "$1" | jq -r '.result.agent.agent_status'; }
 agent_seq() { h agent get "$1" | jq -r '.result.agent.state_change_seq // 0'; } # Herdr's count of its state changes
 
-# wait_for name timeout_ms state... : block until the agent reaches one of the states.
-# Waits in one-minute chunks: every chunk re-checks the screen for a known dialog, every
+# wait_for name timeout_ms state... -> the state the agent reached, one of those given. Waits
+# in one-minute chunks: each re-checks a blocked agent's screen for a known dialog, and every
 # five minutes prints a heartbeat, so a long gate run is visibly a wait and not a hang.
 wait_for() {
-  local name=$1 timeout=$2 out code status waited=0 chunk=60000 nagged=0
+  local name=$1 timeout=$2 out status waited=0 chunk=60000 nagged=0
   shift 2
   local args=()
   local s
@@ -241,8 +243,7 @@ wait_for() {
       jq -r '.result.agent.agent_status' <<<"$out"
       return 0
     fi
-    code=$(herr_code "$out")
-    [[ $code == timeout ]] || die "$name: waiting for ${*}: $(herr_msg "$out")"
+    [[ $(herr_code "$out") == timeout ]] || die "$name: waiting for ${*}: $(herr_msg "$out")"
     waited=$((waited + chunk))
     status=$(agent_status "$name")
     if ((waited >= timeout)); then
@@ -326,10 +327,11 @@ settle_dialogs() {
 # dialog_hooks plan|build -> Claude Code settings for the task's planner or builder: its
 # question dialogs report to factory dialog-hook as they open (PreToolUse), when answered
 # (PostToolUse), and at the end of each turn (Stop). The hook is told the task, its run dir and
-# Factory's state for it, not left to find them from wherever the agent's shell is. The agent may not run what is
-# Factory's or the human's to run (permissions.deny, a check on its commands, not a sandbox): a
-# push, which would put unchecked commits in the pull request, gh, and Factory itself, whose
-# approve would answer the human's gate. A hook runs outside these rules.
+# Factory's state for it, not left to find them from wherever the agent's shell is. The agent
+# may not run what is Factory's or the human's to run (permissions.deny, a check on its
+# commands, not a sandbox): a push, which would put unchecked commits in the pull request, gh,
+# and Factory itself, whose approve would answer the human's gate. A hook runs outside these
+# rules.
 dialog_hooks() {
   jq -n --arg cmd "$(printf '%q dialog-hook %s %q %q %q' "$FACTORY_HOME/factory" "$1" "$TASK_ID" "$WT/$RUN_DIR" "$TASK_STATE")" \
     --arg self "$FACTORY_HOME/factory" \
@@ -360,7 +362,7 @@ close_extra_panes() {
 live_agents() {
   local ws=$1
   shift
-  herdr agent list 2>/dev/null | jq -r --arg ws "$ws" --argjson names "$(printf '%s\n' "$@" | jq -R . | jq -s .)" \
+  h agent list | jq -r --arg ws "$ws" --argjson names "$(printf '%s\n' "$@" | jq -cRn '[inputs]')" \
     '[.result.agents[] | select(.workspace_id == $ws and ((.name // "") as $n | $names | index($n)))] | length'
 }
 
@@ -381,7 +383,7 @@ prime_shell() {
 
 # start_agent name kind pane [agent args...]
 start_agent() {
-  local name=$1 kind=$2 pane=$3 out code i
+  local name=$1 kind=$2 pane=$3 out i
   shift 3
   for i in 1 2 3 4 5; do
     if out=$(herdr agent start "$name" --kind "$kind" --pane "$pane" --timeout 90000 -- "$@" 2>&1); then
@@ -389,8 +391,7 @@ start_agent() {
       settle_dialogs "$name"
       return 0
     fi
-    code=$(herr_code "$out")
-    case $code in
+    case $(herr_code "$out") in
       agent_not_ready)
         settle_dialogs "$name"
         return 0
@@ -410,7 +411,7 @@ start_agent() {
       *) die "start $name: $(herr_msg "$out")" ;;
     esac
   done
-  die "start $name: pane $pane never became an available shell"
+  die "start $name: pane $pane never became an available shell; look at it"
 }
 
 # ask name text: one turn of the agent (take_turn), recorded with the time it took
@@ -584,13 +585,14 @@ unblock() {
   done
 }
 
-# ask_for_file name text file: like ask, but the turn only counts once the file exists.
+# ask_for_file name text file: like ask, but the turn only counts once the file is written, not
+# missing or empty
 ask_for_file() {
   local name=$1 text=$2 file=$3
   ask "$name" "$text"
   [[ -s $file ]] && return 0
-  warn "$name replied but $file is missing; asking again"
-  ask "$name" "You replied, but $file does not exist. Write it now and reply as asked."
+  warn "$name replied but $file is missing or empty; asking again"
+  ask "$name" "You replied, but $file is missing or empty. Write it now and reply as asked."
   [[ -s $file ]] || die "$name never wrote $file; look at its pane, then rerun to take the task up again"
 }
 
@@ -602,7 +604,7 @@ launched_with() {
   pane=$(herdr agent get "$name" 2>/dev/null | jq -r '.result.agent.pane_id // empty') || return 2
   [[ -n $pane ]] || return 2
   argvs=$(pane_argvs "$pane") || return 2
-  rc=$(jq -r --argjson want "$(printf '%s\n' "$@" | jq -R . | jq -s .)" \
+  rc=$(jq -r --argjson want "$(printf '%s\n' "$@" | jq -cRn '[inputs]')" \
     'if length == 0 then 2 elif any(.[]; ($want - .) == []) then 0 else 1 end' <<<"$argvs") || return 2
   return "$rc"
 }
@@ -618,8 +620,8 @@ pane_argvs() {
 # for seconds yet, and a prompt sent meanwhile loses its Enter.
 prompt_box_up() { poll 60 1 box_drawn "$1" || warn "$1: no prompt box after a minute; the next prompt may not go in"; }
 
-# box_drawn name: the agent's screen shows the prompt box, an empty ❯ line between two rules, as
-# no shell's prompt does; screen_ends_in tells it from a dialog, a draft in it too
+# box_drawn name: the agent's screen shows the prompt box, a ❯ line between two rules, empty or
+# with a draft, as no shell's prompt does; a dialog's numbered ❯ option is no box
 box_drawn() {
   screen_of "$1" | awk 'NF { l[++n] = $0 } END {
     for (i = 2; i < n; i++) if (l[i] ~ /^❯/ && l[i] !~ /^❯[[:space:]]*[0-9]+\./ && l[i - 1] ~ /^─/ && l[i + 1] ~ /^─/) exit 0
@@ -634,7 +636,7 @@ resumed_session() {
 
 # agent_quit name pane claude|codex: the agent quits, its pane's shell is back in front, and Herdr
 # lists it no more, so that its name can be started again. An agent that has just started can
-# lose the Enter of its quit command and keep it in its input: ctrl+c clears that for a retry.
+# lose the Enter of its quit command and keep it in its input: Ctrl-C clears that for a retry.
 agent_quit() {
   local quit=/exit try
   [[ $3 != codex ]] || quit=/quit
@@ -689,8 +691,9 @@ repo_of() {
 # bd_note repo id text: a comment on the bead, tagged so it reads as Factory's in bd show
 bd_note() { bd -C "$1" comment "$2" "Factory: $3" >/dev/null; }
 
-# is_bead_id word: 0 when the word reads as a bead id, letters and digits on either side of one hyphen
-is_bead_id() { [[ $1 =~ ^[a-z][a-z0-9]*-[a-z0-9]+$ ]]; }
+# is_bead_id word: 0 when the word reads as a bead id: letters and digits on either side of one
+# hyphen, and a child's numbers after dots (ab-x7k.1, as bd create --parent names it)
+is_bead_id() { [[ $1 =~ ^[a-z][a-z0-9]*-[a-z0-9]+(\.[0-9]+)*$ ]]; }
 
 # slugify text -> lowercase, dashes for anything else, at most 40 characters
 slugify() {
@@ -721,9 +724,8 @@ branch_of() {
 }
 
 # bead_of_branch branch -> the bead id in a factory branch name
-bead_of_branch() { sed -E 's#^factory/([a-z][a-z0-9]*-[a-z0-9]+).*#\1#' <<<"$1"; }
+bead_of_branch() { sed -E 's#^factory/([a-z][a-z0-9]*-[a-z0-9]+(\.[0-9]+)*).*#\1#' <<<"$1"; }
 
-# resolve_task repo arg -> TASK_ID TASK_TITLE TASK_DESC
 # bead_task repo bead-id: TASK_ID TASK_TITLE TASK_DESC from the bead
 bead_task() {
   TASK_ID=$2
@@ -788,7 +790,7 @@ resolve_gate() {
   find_gate "$1" || die "no gate for $1: set FACTORY_GATE, or add .factory/gate (factory init writes one when it can)"
 }
 
-# detect_gate repo -> the command a repo's own convention suggests, empty if none.
+# detect_gate repo -> the command a repo's own convention suggests; 1 when there is none.
 detect_gate() {
   local r=$1 t
   if [[ -x $r/bin/test ]]; then
@@ -914,7 +916,8 @@ kept_out() {
 # executable bit (core.fileMode) or a symlink made a file (core.symlinks).
 tree_state() {
   local kept dir out
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS GIT_INDEX_FILE # the true graph
+  # the true graph, and an index of its own
+  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS GIT_INDEX_FILE
   mapfile -t kept < <(kept_out "$1")
   dir=$(mktemp -d)
   GIT_INDEX_FILE=$dir/index
@@ -970,7 +973,7 @@ masked() {
     $1 != $2 && !($3 in shown) { print " M " $3 " " note }' "$2/status" -
 }
 
-# file_hash file -> the sha256 of the file's bytes, none for a file there is not
+# file_hash file -> the sha256 of the file's bytes, nothing for a file there is not
 file_hash() { [[ ! -f $1 ]] || sha256sum <"$1" | cut -d ' ' -f 1; }
 
 # tree_dirty worktree: 0 when tree_state lists a file
@@ -1088,7 +1091,7 @@ guard_clean() {
     printf 'uncommitted changes in the worktree; commit your work (ignore build artifacts, do not commit them)\n'
   fi
   if grep -qF "$MASKED" <<<"$dirty"; then
-    printf "files that are not the commit's, though git shows no change: a conversion set in the repo's own git config or info/attributes hides it; restore them (git checkout -- <file>), and convert files only through .gitattributes\n"
+    printf "files that are not the commit's, though git shows no change: a conversion set in the repo's own git config or info/attributes hides it; take that conversion out of there (convert files only through .gitattributes), then restore each file (rm <file>, then git checkout -- <file>)\n"
   fi
   # the tracked files, by name: git's own status may show none of them (masked)
   sed '/^?? /d' <<<"$dirty"
@@ -1102,11 +1105,12 @@ guard_commits() {
   return 1
 }
 
-# guard_readable worktree base: git can read the branch's whole diff, which is read here once
-# for the count of its NUL bytes, GUARD_NULS (guard_lines). When git cannot, the checks read
-# nothing and would pass: a line in .git/shallow, which an agent can write, cuts the branch off
-# from the base, so that base...HEAD has no merge base, and an object gone from the repository
-# fails the diff of a file while the worktree matches.
+# guard_readable worktree base: git can read the branch's diff outside .factory/, the one
+# guard_lines reads, which is read here once for the count of its NUL bytes, GUARD_NULS
+# (guard_lines). When git cannot, the checks read nothing and would pass: a line in
+# .git/shallow, which an agent can write, cuts the branch off from the base, so that
+# base...HEAD has no merge base, and an object gone from the repository fails the diff of a
+# file while the worktree matches.
 guard_readable() {
   local err rc=0
   err=$(mktemp)
@@ -1122,8 +1126,8 @@ guard_readable() {
   return $((rc != 0))
 }
 
-# guard_artifacts worktree base: no build artifact added. --no-renames, as the symlink and
-# gitlink checks pass: git pairs an added artifact with a deleted file of like content as a
+# guard_artifacts worktree base: no build artifact added. --no-renames, as in the symlink and
+# gitlink checks: git pairs an added artifact with a deleted file of like content as a
 # rename (R), which --diff-filter=A leaves out, so a committed build/out.o git read as renamed
 # from a data file would pass unflagged.
 guard_artifacts() {
@@ -1493,10 +1497,10 @@ task_head() {
 
 # base_ref: the ref the branch forks from: the local base branch, origin's tracking ref, or
 # origin's as Factory fetched it (upstream_ref), whichever the branch forked from latest, the
-# later of these on a tie. Origin's after the pull request rebase, also once origin has moved on again (a stale local
-# base would blame the branch for what the upstream added); the local one while it carries
-# commits origin does not, or without an origin. Full names: a tag or a branch named
-# origin/<base> would be read as either.
+# later of these on a tie. Origin's after the rebase for a pull request, also once origin has
+# moved on again (a stale local base would blame the branch for what the upstream added); the
+# local one while it carries commits origin does not, or without an origin. Full names: a tag
+# or a branch named origin/<base> would be read as either.
 base_ref() {
   local ref best="refs/heads/$BASE" fork last=""
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
@@ -1527,9 +1531,10 @@ recorded_base_branch() {
 
 # record_base: the commit the branch is measured from, with the ref it was read from, kept in
 # Factory's state once, as Factory takes up the task's worktree: where the branch forks off the
-# base ref (base_ref). Only Factory's rebase onto the base moves it on (rebase_onto_base). The
-# ref itself is no base: an agent can move main or origin/main (git update-ref), your main with
-# it, so that its commits drop out of every diff read against the ref. What the gate and the
+# base ref (base_ref). Only Factory moves it on: as it rebases the branch onto origin's base
+# (rebase_onto_base), or as the branch took in newer commits of it (took_in). The ref itself
+# is no base: an agent can move main or origin/main (git update-ref), your main with it, so
+# that its commits drop out of every diff read against the ref. What the gate and the
 # guardrails passed on was measured from the base before, so a base taken anew voids it. The
 # repo's transport config is recorded with the first base (record_transport).
 record_base() {
@@ -1603,7 +1608,7 @@ task_base() {
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   read -r sha ref 2>/dev/null <"$TASK_STATE/base" || die "no base commit recorded for $TASK_ID in $TASK_STATE"
   git -C "$WT" merge-base --is-ancestor "$sha" "$ref" 2>/dev/null \
-    || die "$ref no longer holds $sha, the commit $BRANCH is measured from: something other than Factory moved it, maybe rewrote your $BASE; look at it before you go on, and if it was you, remove $TASK_STATE/base for a rerun to measure the branch from where it forks off then"
+    || die "$ref no longer holds $sha, the commit $BRANCH is measured from: it was rewritten since, by you, by a force-push to origin's $BASE that Factory fetched, or by an agent; look at it before you go on, and if that is as it should be, remove $TASK_STATE/base for a rerun to measure the branch from where it forks off then"
   printf '%s' "$sha"
 }
 
@@ -1618,8 +1623,8 @@ origin_url() {
   was=$(<"$file")
   now=$(transport_config) || die "could not read the git config of $WT"
   if [[ $now != "$was" ]]; then
-    changed=$(LC_ALL=C comm -3 <(LC_ALL=C sort <<<"$was") <(LC_ALL=C sort <<<"$now") | awk 'NF {print $1}' | LC_ALL=C sort -u | paste -sd ' ')
-    die "the git config $WT reaches origin with is not the one Factory recorded: $changed changed. Something other than Factory changed it, maybe an agent: refusing to fetch from or push to origin. Look at git config --local --list there; if it was you, remove $file for the next run to record it anew"
+    changed=$(changed_keys "$was" "$now")
+    die "the git config $WT reaches origin with is not the one Factory recorded: $changed changed. Something other than Factory changed it, maybe an agent: refusing to fetch from or push to origin. Look at git config --show-scope --list there; if it was you, remove $file for the next run to record it anew"
   fi
   git -C "$WT" remote get-url origin 2>/dev/null
 }
@@ -1750,7 +1755,7 @@ gate_then_guards() {
 
 # regate builder-agent label: the tip of the branch is not what the gate and the guardrails
 # passed on, as after a rebase or a commit by hand; they must pass on it before a push.
-regate() { gate_then_guards "$1" "$2" || die "gate or guardrails fail on the tip of $BRANCH; see $WT/$RUN_DIR"; }
+regate() { gate_then_guards "$1" "$2" || die "gate or guardrails fail on the tip of $BRANCH (above; the gate's log is in $WT/$RUN_DIR): fix them there, then factory pr $TASK_REPO $TASK_ID"; }
 
 # -------------------------------------------------------------------- pr ----
 # rebase_in_progress worktree: 0 while a rebase is under way there
@@ -1759,13 +1764,13 @@ rebase_in_progress() {
   -d $(git -C "$1" rev-parse --path-format=absolute --git-path rebase-apply) ]]
 }
 
-# rebase_onto_base builder-agent: bring the branch up to date with origin's base before a PR,
-# as Factory fetched it (fetch_base), never onto a local ref. The commit it was rebased onto is
-# the one it is measured from then (task_base), and the gate and the guardrails must pass on the
-# rebased tip (guarded). Origin's base must hold the commit the branch was measured from: one
-# that only a local ref held, an agent's say, would go into the pull request unchecked.
+# rebase_onto_base builder-agent: rebase the branch onto origin's base before a PR, as Factory
+# fetched it (fetch_base), never onto a local ref. The commit it was rebased onto is the one it
+# is measured from then (task_base), and the gate and the guardrails must pass on the rebased
+# tip (guarded). Origin's base must hold the commit the branch was measured from: one that only
+# a local ref held, an agent's say, would go into the pull request unchecked.
 rebase_onto_base() {
-  local agent=$1 files onto base
+  local agent=$1 files onto base err
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   # a base moved by another hand fails here, before the branch moves onto it
   base=$(task_base) || exit 1
@@ -1776,22 +1781,26 @@ rebase_onto_base() {
     return 0
   fi
   log "rebasing $BRANCH onto origin's $BASE"
-  if ! git -C "$WT" rebase -q "$onto" >/dev/null 2>&1; then
+  # A conflict rerere resolves as it was resolved before stays unmerged, for the builder to
+  # check: staged (rerere.autoUpdate), it would leave no file to name, as a failure of another
+  # kind does.
+  if ! err=$(git -C "$WT" rebase -q --no-rerere-autoupdate "$onto" 2>&1); then
     files=$(git -C "$WT" diff --name-only --diff-filter=U | paste -sd' ')
+    [[ -n $files ]] || die "could not rebase $BRANCH onto origin's $BASE in $WT: $err$(rebase_in_progress "$WT" && printf '; git rebase --abort there undoes it')"
     warn "rebase conflicts in: $files; asking the builder"
     ask "$agent" "$(rebase_fix_prompt "origin's $BASE" "$files")"
     if rebase_in_progress "$WT"; then
       die "the rebase onto origin's $BASE is still in progress in $WT; finish or abort it"
     fi
-    tree_dirty "$WT" && die "the worktree is dirty after the rebase; commit or clean it"
-    git -C "$WT" merge-base --is-ancestor "$onto" HEAD || die "$BRANCH is still not on top of origin's $BASE"
+    tree_dirty "$WT" && die "$WT has uncommitted changes after the rebase; commit or stash them, then rerun"
+    git -C "$WT" merge-base --is-ancestor "$onto" HEAD || die "$BRANCH is still not on top of origin's $BASE; rebase it in $WT, then rerun"
   fi
   printf '%s %s\n' "$onto" "$(upstream_ref)" >"$TASK_STATE/base"
 }
 
 # pr_checks -> markdown bullets describing what the run directory proves
 pr_checks() {
-  local d="$WT/$RUN_DIR" f v gates reviews
+  local d="$WT/$RUN_DIR" f gates reviews
   shopt -s nullglob
   gates=("$d"/gate-*.log)
   reviews=("$d"/review-*.md)
@@ -1804,8 +1813,7 @@ pr_checks() {
   fi
   if ((${#reviews[@]})); then
     while IFS= read -r f; do
-      v=$(verdict_of "$f") || v=NONE
-      printf -- '- %s: %s\n' "$(basename "$f" .md)" "$v"
+      printf -- '- %s: %s\n' "$(basename "$f" .md)" "$(verdicts "$f")"
     done < <(printf '%s\n' "${reviews[@]}" | sort -V)
   fi
   waived && printf -- '- Protected paths allowed by the human: %s\n' "$(allowed_paths)"
@@ -1854,16 +1862,26 @@ raise_pr() {
   rebase_onto_base "$1"
   guarded || regate "$1" pr
   push_gated -q --force-with-lease || die "could not push $BRANCH to origin"
-  # pushed by its id, the branch gets no upstream from -u; it tracks origin's as before
+  # pushed by its id, the branch gets no upstream from git push -u: it tracks origin's from here
   git -C "$WT" branch -q --set-upstream-to="origin/$BRANCH" || warn "$BRANCH tracks no branch on origin"
   PR_URL=$(existing_pr) || die "gh could not list the pull requests of $BRANCH"
   if [[ -n $PR_URL ]]; then
-    log "pull request already open, reusing it"
+    log "pull request already open, reusing it: $PR_URL"
   else
     PR_URL=$(gh_wt pr create --base "$BASE" --head "$BRANCH" --title "$TASK_ID: $TASK_TITLE" --body "$(pr_body)") \
       || die "gh could not open a pull request for $BRANCH"
+    log "opened $PR_URL"
   fi
   metric pr url "$PR_URL"
+}
+
+# pull_request builder-agent: raise_pr, then Copilot's review rounds where they are on;
+# COPILOT_NOTE says how those ended
+pull_request() {
+  COPILOT_NOTE=""
+  raise_pr "$1"
+  ((FACTORY_COPILOT)) || return 0
+  copilot_loop "$1" "$PR_URL" || warn "Copilot loop ended without a clean review: $COPILOT_NOTE; see $PR_URL"
 }
 
 # pushed_holds: 0 when origin's copy of the branch is the commit Factory pushed; one an agent
@@ -1887,23 +1905,28 @@ unpushed() {
 }
 
 # --------------------------------------------------------------- copilot ----
-# GitHub Copilot code review never approves formally; its review body starts with a verdict
-# line such as "### 🟢 Approval recommended", and its inline comments are posted by the user
-# "Copilot". Done means: the review of the head commit recommends approval, or has no comments.
+# GitHub Copilot code review never approves formally; its review body carries a verdict heading
+# such as "### 🟢 Approval recommended", below an overview header in newer reviews, and its
+# inline comments are posted by the user "Copilot". Done means: the review of the head commit
+# recommends approval, or has no comments.
 # COPILOT_JQ: jq's copilot(login), a login of the Copilot reviewer, which reviews as
-# copilot-pull-request-reviewer[bot] and comments as Copilot
-COPILOT_JQ="def copilot(\$login): (\$login // \"\") | ascii_downcase | startswith(\"copilot\");"
+# copilot-pull-request-reviewer[bot] and comments as Copilot; and review_lines(sha), the lines
+# of the body of its latest review of that commit, from the reviews
+COPILOT_JQ="def copilot(\$login): (\$login // \"\") | ascii_downcase | startswith(\"copilot\");
+def review_lines(\$sha): [.[] | select(copilot(.user.login) and .commit_id == \$sha)] | last | (.body // \"\") | split(\"\\n\");"
 
 # copilot_request pr-number
 copilot_request() {
   gh_wt api -X POST "repos/{owner}/{repo}/pulls/$1/requested_reviewers" -f "reviewers[]=$COPILOT_BOT" >/dev/null
 }
 
-# copilot_reviewed pr-number sha -> 0 once Copilot reviewed that commit
+# copilot_reviews pr-number -> the pull request's reviews, every page of them, as one JSON array
+copilot_reviews() { gh_wt api --paginate "repos/{owner}/{repo}/pulls/$1/reviews" | jq -s 'add // []'; }
+
+# copilot_reviewed pr-number sha: 0 once Copilot reviewed that commit
 copilot_reviewed() {
   local n
-  n=$(gh_wt api "repos/{owner}/{repo}/pulls/$1/reviews" \
-    --jq "$COPILOT_JQ [.[] | select(copilot(.user.login) and .commit_id == \"$2\")] | length")
+  n=$(copilot_reviews "$1" | jq --arg sha "$2" "$COPILOT_JQ"'[.[] | select(copilot(.user.login) and .commit_id == $sha)] | length')
   [[ ${n:-0} -gt 0 ]]
 }
 
@@ -1919,27 +1942,20 @@ copilot_comments_of() {
     .[] | select(copilot(.user.login) and .original_commit_id == $sha) | "\(.path):\(.line // .original_line // "?"): \(.body | gsub("\r"; "") | gsub("\n"; "\n    "))"'
 }
 
+# comment_count: how many comments copilot_comments_of's lines on stdin hold: each starts a line,
+# and its body's further lines are indented under it
+comment_count() { grep -c '^[^ ]'; }
+
 # copilot_verdict_of sha: the first `### ` heading of Copilot's review body for one commit, from
 # reviews JSON on stdin. The body may open with an overview header above it.
 copilot_verdict_of() {
-  jq -r --arg sha "$1" "$COPILOT_JQ"'
-    [.[] | select(copilot(.user.login) and .commit_id == $sha)] | last | (.body // "") | split("\n") | map(select(startswith("### "))) | (.[0] // "") | ltrimstr("### ")'
-}
-
-# copilot_verdict pr-number sha
-copilot_verdict() {
-  gh_wt api "repos/{owner}/{repo}/pulls/$1/reviews" | copilot_verdict_of "$2"
+  jq -r --arg sha "$1" "$COPILOT_JQ"'review_lines($sha) | map(select(startswith("### "))) | (.[0] // "") | ltrimstr("### ")'
 }
 
 # copilot_summary_of sha: the sentence under Copilot's verdict heading, from reviews JSON on stdin.
 copilot_summary_of() {
-  jq -r --arg sha "$1" "$COPILOT_JQ"'
-    [.[] | select(copilot(.user.login) and .commit_id == $sha)] | last | (.body // "") | split("\n") | (map(startswith("### ")) | index(true)) as $i | if $i == null then "" else (.[$i + 1:] | map(select(length > 0)) | (.[0] // "")) end | select(startswith("<") | not)'
-}
-
-# copilot_summary pr-number sha
-copilot_summary() {
-  gh_wt api "repos/{owner}/{repo}/pulls/$1/reviews" | copilot_summary_of "$2"
+  jq -r --arg sha "$1" "$COPILOT_JQ"'review_lines($sha)
+    | (map(startswith("### ")) | index(true)) as $i | if $i == null then "" else (.[$i + 1:] | map(select(length > 0)) | (.[0] // "")) end | select(startswith("<") | not)'
 }
 
 # copilot_comments pr-number sha
@@ -1947,27 +1963,33 @@ copilot_comments() {
   gh_wt api --paginate "repos/{owner}/{repo}/pulls/$1/comments" | copilot_comments_of "$2"
 }
 
-# copilot_reply_body round sha comments-file [response-file] -> one PR comment for the round
+# copilot_reply_body round sha comments-file response-file -> one pull request comment for the
+# round: the comments the commit addressed, or, with no commit, that none changed anything; then
+# the builder's reasons for what it left as it was
 copilot_reply_body() {
-  local round=$1 sha=$2 comments=$3 response=${4:-}
-  printf 'Addressed Copilot review round %s in %s:\n\n' "$round" "${sha:0:7}"
+  local round=$1 sha=$2 comments=$3 response=$4
+  if [[ -n $sha ]]; then
+    printf 'Addressed Copilot review round %s in %s:\n\n' "$round" "${sha:0:7}"
+  else
+    printf 'Answered Copilot review round %s without changes:\n\n' "$round"
+  fi
   grep -oE '^[^ ]+:[0-9?]+:' "$comments" | sed 's/:$//; s/^/- /'
-  if [[ -n $response && -s $response ]]; then
-    printf '\nNot changed, and why:\n\n%s\n' "$(cat "$response")"
+  if [[ -s $response ]]; then
+    printf '\nNot changed, and why:\n\n%s\n' "$(<"$response")"
   fi
 }
 
-# copilot_reply pr-number round sha
+# copilot_reply pr-number round [sha]: the round's reply, naming the commit that addressed it
 copilot_reply() {
   local body
-  body=$(copilot_reply_body "$2" "$3" "$WT/$RUN_DIR/copilot-$2.md" "$WT/$RUN_DIR/copilot-$2-response.md")
-  gh_wt pr comment "$1" --body "$body" >/dev/null || warn "could not comment on the PR"
+  body=$(copilot_reply_body "$2" "${3:-}" "$WT/$RUN_DIR/copilot-$2.md" "$WT/$RUN_DIR/copilot-$2-response.md")
+  gh_wt pr comment "$1" --body "$body" >/dev/null || warn "could not post the reply to Copilot's round $2 on the pull request"
 }
 
 # copilot_resolve pr-number sha: resolve Copilot's review threads that start on that commit,
 # among the pull request's last 100, which are the newest: those of this round's review
 copilot_resolve() {
-  local ids id query mutation
+  local ids id query mutation n=0
   query=$(
     cat <<'Q'
 query($owner: String!, $repo: String!, $pr: Int!) {
@@ -1990,15 +2012,19 @@ Q
     return 0
   }
   for id in $ids; do
-    gh_wt api graphql -f query="$mutation" -F id="$id" >/dev/null || warn "could not resolve thread $id"
+    if gh_wt api graphql -f query="$mutation" -F id="$id" >/dev/null; then
+      n=$((n + 1))
+    else
+      warn "could not resolve thread $id"
+    fi
   done
-  [[ -n $ids ]] && log "resolved $(grep -c '' <<<"$ids") Copilot thread(s)"
-  return 0
+  ((n == 0)) || log "resolved $n Copilot thread(s)"
 }
 
-# copilot_loop builder-agent pr-url: request reviews and act on comments until a review is clean.
+# copilot_loop builder-agent pr-url: request reviews and act on their comments until a review has
+# none or recommends approval, FACTORY_COPILOT_ROUNDS at most; COPILOT_NOTE says how it ended
 copilot_loop() {
-  local agent=$1 url=$2 n sha round=1 comments verdict
+  local agent=$1 url=$2 n sha round=1 reviews comments verdict
   n=${url##*/}
   while ((round <= FACTORY_COPILOT_ROUNDS)); do
     sha=$(git -C "$WT" rev-parse HEAD)
@@ -2011,39 +2037,46 @@ copilot_loop() {
       COPILOT_NOTE="no Copilot review within $((FACTORY_COPILOT_WAIT_S / 60)) min"
       return 1
     }
-    if ! verdict=$(copilot_verdict "$n" "$sha") || ! comments=$(copilot_comments "$n" "$sha"); then
+    if ! reviews=$(copilot_reviews "$n") || ! verdict=$(copilot_verdict_of "$sha" <<<"$reviews") \
+      || ! comments=$(copilot_comments "$n" "$sha"); then
       COPILOT_NOTE="could not read Copilot's review of ${sha:0:7}"
       return 1
     fi
-    metric copilot round "$round" comments "$(grep -c . <<<"$comments")"
+    metric copilot round "$round" comments "$(comment_count <<<"$comments")"
     # Copilot's verdict line is the useful summary; keep it for the bead and the log.
     if [[ -z $comments ]]; then
       local summary
-      summary=$(copilot_summary "$n" "$sha")
+      summary=$(copilot_summary_of "$sha" <<<"$reviews")
       COPILOT_NOTE="Copilot: ${verdict:-reviewed}${summary:+: $summary}"
       log "$COPILOT_NOTE"
       return 0
     fi
     if [[ $verdict == *"Approval recommended"* ]]; then
-      COPILOT_NOTE="Copilot: $verdict, $(grep -c '' <<<"$comments") nit(s) left open"
+      COPILOT_NOTE="Copilot: $verdict, $(comment_count <<<"$comments") nit(s) left open"
       log "$COPILOT_NOTE"
       return 0
     fi
     log "Copilot: $verdict"
     printf '%s\n' "$comments" >"$WT/$RUN_DIR/copilot-$round.md"
     rm -f "$WT/$RUN_DIR/copilot-$round-response.md" # an earlier run's would be posted as this round's
-    log "Copilot left $(grep -c '' "$WT/$RUN_DIR/copilot-$round.md") comment(s); asking the builder"
+    log "Copilot left $(comment_count <"$WT/$RUN_DIR/copilot-$round.md") comment(s); asking the builder"
     ask "$agent" "$(copilot_fix_prompt "$round")"
-    if [[ $(git -C "$WT" rev-parse HEAD) == "$sha" ]] && ! tree_dirty "$WT"; then
-      copilot_reply "$n" "$round" "$sha" # the pushback alone; another review would say the same
-      copilot_resolve "$n" "$sha"
-      COPILOT_NOTE="Copilot's comments answered without changes"
-      return 1
-    fi
     # changes not committed fail the guardrails, after however long the gate takes: a commit
     # the signer refused, say, locked while nobody was there to unlock it
     if tree_dirty "$WT"; then
       COPILOT_NOTE="the builder left its fixes for Copilot's round $round uncommitted"
+      return 1
+    fi
+    if [[ $(git -C "$WT" rev-parse HEAD) == "$sha" ]]; then
+      # the pushback alone, which another review would only repeat; a turn that neither changed
+      # nor answered anything gets no reply, and the threads stay open
+      if [[ ! -s $WT/$RUN_DIR/copilot-$round-response.md ]]; then
+        COPILOT_NOTE="the builder neither changed anything nor answered Copilot's round $round"
+        return 1
+      fi
+      copilot_reply "$n" "$round"
+      copilot_resolve "$n" "$sha"
+      COPILOT_NOTE="Copilot's comments answered without changes"
       return 1
     fi
     gate_then_guards "$agent" "copilot-$round" || {
@@ -2058,7 +2091,7 @@ copilot_loop() {
     copilot_resolve "$n" "$sha"
     round=$((round + 1))
   done
-  COPILOT_NOTE="Copilot comments remain after $FACTORY_COPILOT_ROUNDS rounds"
+  COPILOT_NOTE="Copilot rounds used up; the fixes of round $FACTORY_COPILOT_ROUNDS went unreviewed"
   return 1
 }
 
@@ -2073,25 +2106,34 @@ $TASK_DESC
 You are the planner. Explore this repo, then write a short, specific implementation plan to $RUN_DIR/plan.md: the design in a few lines (which parts change, their responsibilities and interfaces, as simple as the task allows), which files change and how, and how to verify. The gate that must pass is: $GATE
 End the plan with one line, Protected paths: none, or Protected paths: and the paths the build must change, comma-separated and nothing else; once the human allows protected paths at approval, the build may change those and no others. Protected are these git pathspecs: $(protected_globs "$WT" | tr '\n' ' ')
 Do not write the code itself and do not change any file outside $RUN_DIR/; Factory checks.
-If the task is ambiguous in a way that would change the design, ask the human first with your AskUserQuestion tool (up to four questions, with options where they help); prefer a plan with stated assumptions when the ambiguity is minor.$([[ ! -s $TASK_STATE/decisions.md ]] || printf ' The human'"'"'s answers and decisions on this task so far are in %s; read them before asking again.' "$RUN_DIR/decisions.md")
-The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected to allow the protected paths it names), !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
+If the task is ambiguous in a way that would change the design, ask the human first with your AskUserQuestion tool (up to four questions, with options where they help); prefer a plan with stated assumptions when the ambiguity is minor.$([[ ! -s $TASK_STATE/decisions.md ]] || printf ' The human'"'"'s answers and decisions on this task so far are in %s; read them before asking again.' "$RUN_DIR/decisions.md")$(approval_rule plan)
 $MEMORY
 Once the file is written, reply with its content.
 P
 }
 
-# build_prompt: the builder's task: implement the approved plan on the branch, gate green
+# build_prompt [resume]: the builder's task: implement the approved plan on the branch, gate
+# green; a resumed build is told that part of it may be there already
 build_prompt() {
   cat <<P
 Task $TASK_ID: $TASK_TITLE
 
 Re-read $RUN_DIR/plan.md now; it is final and may have changed since you checked it. Implement it on this branch ($BRANCH) in this worktree. Run the gate until it passes: $GATE
 Commit when done; do not push, and do not rebase onto or merge $BASE: Factory brings the branch up to date itself. Factory tracks and closes bead $TASK_ID. Files under $RUN_DIR/ are ignored by git. $(protected_rule)
-No skipped tests, suppressed warnings, or swallowed errors; fix things properly.
-The human approves, revises or aborts the build in a dialog Factory has you show, or by typing !fy approve, !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself; when the human tells you such a thing in words, tell them which to type.
+No skipped tests, suppressions or swallowed errors; fix things properly.$(approval_rule build)$([[ ${1:-} != resume ]] || printf '\nPart of it may already be implemented or committed on this branch from an earlier run; check the branch and continue from there.')
 $MEMORY
 Reply with just DONE when finished.
 P
+}
+
+# approval_rule plan|build: how the human answers the approval, for the agent's prompt, where
+# Factory asks for one (FACTORY_APPROVAL=ask); under auto those commands would refuse
+approval_rule() {
+  [[ $FACTORY_APPROVAL == ask ]] || return 0
+  local allow=""
+  [[ $1 != plan ]] || allow=" (--allow-protected to allow the protected paths it names)"
+  printf '\nThe human approves, revises or aborts the %s in a dialog Factory has you show, or by typing !fy approve%s, %s or !fy abort in another pane, an apostrophe inside the quotes as %s. Never run these yourself; when the human tells you such a thing in words, tell them which to type.' \
+    "$1" "$allow" "!fy reject '<note>'" "'\\''"
 }
 
 # protected_rule: the builder's rule on the protected paths: leave them alone, but those the
@@ -2110,7 +2152,7 @@ protected_rule() {
 # gate_fix_prompt logfile
 gate_fix_prompt() {
   cat <<P
-The gate failed ($GATE). Last lines of $1:
+The gate failed ($GATE). Last lines of ${1#"$WT/"}:
 
 $(tail -n "$GATE_LOG_TAIL" "$1")
 
@@ -2118,14 +2160,14 @@ Fix it, run the gate until green, and commit. Reply with just DONE.
 P
 }
 
-# guard_fix_prompt violations text
+# guard_fix_prompt violations
 guard_fix_prompt() {
   cat <<P
-The factory guardrails rejected the branch:
+Factory's guardrails rejected the branch:
 
 $1
 
-Fix the cause (no suppressions, no skipped tests, no swallowed errors, no change to a protected path the human did not allow) and make sure everything is committed. Reply with just DONE.
+Fix the cause (no skipped tests, suppressions or swallowed errors, and no change to a protected path the human did not allow) and make sure everything is committed. Reply with just DONE.
 P
 }
 
@@ -2135,7 +2177,7 @@ review_prompt() {
 Review task $TASK_ID: $TASK_TITLE
 The plan is in $RUN_DIR/plan.md. The changes: git diff $(task_base)...HEAD
 Factory ran the gate on this commit and it passed; its log is $RUN_DIR/gate-$1.log. Do not run it again.
-Look for bugs, missed requirements, shortcuts (skipped tests, suppressed warnings, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.$(build_recheck "$1" "" "${2:-}")
+Look for bugs, missed requirements, shortcuts (skipped tests, suppressions, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.$(build_recheck "$1" "" "${2:-}")
 Write the review to $RUN_DIR/review-$1.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.
 P
@@ -2148,7 +2190,7 @@ Task $TASK_ID: $TASK_TITLE
 
 $TASK_DESC
 
-A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Point out real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1)).md" "${2:-}")
+A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Note real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1)).md" "${2:-}")
 Write your notes to $RUN_DIR/plan-review-$1.md and end that file with two lines: PLAN REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content.
 P
@@ -2239,10 +2281,11 @@ Commit. Reply with the content of response-$1.md if you wrote it, else with just
 P
 }
 
-# memory_prompt: the builder's last turn: what a future agent on the repo should know
+# memory_prompt: the builder's turn as the task finishes: what a future agent on the repo
+# should know
 memory_prompt() {
   cat <<P
-Last thing: anything a future agent on this repo should know (gotchas, conventions, how to run things)? Store each as: bd remember "..."
+Anything a future agent on this repo should know (gotchas, conventions, how to run things)? Store each as: bd remember "..."
 Skip what is obvious from the code. Reply with just DONE.
 P
 }
@@ -2300,7 +2343,7 @@ await_human() {
   local role=$1 agent=$2 dir=$3 stdin_open=1 rc
   while :; do
     drop_dead_dialog "$role" "$agent" "$dir"
-    toast "$TASK_ID $role ready" "$TASK_TITLE. Answer in the $(role_of "$role")'s pane or the Factory terminal" request
+    toast "$TASK_ID $role ready" "$TASK_TITLE. Answer in the $(role_of "$role")'s pane or Factory's terminal." request
     show_for_approval "$role" "$dir"
     open_gate "$role"
     show_dialog "$role" "$agent" "$dir"
@@ -2346,9 +2389,9 @@ file_answer() {
   if [[ -s $st/reject.md ]]; then
     note=$(<"$st/reject.md")
     rm -f "$st/reject.md"
-    close_gate "$role" "$dir" "$agent"
+    close_gate "$role" "$agent" "$dir"
     printf '\n' >&2
-    log "note received from a pane or factory reject"
+    log "note received in a pane or with factory reject"
     record_answer "$dir" "note on the $role: $note"
     pause_for_pane_reply
     take_note "$role" "$agent" "$note" || return $?
@@ -2397,7 +2440,7 @@ terminal_answer() {
         return 3
       fi
       if [[ -n $note ]]; then
-        close_gate "$role" "$dir" "$agent"
+        close_gate "$role" "$agent" "$dir"
         record_answer "$dir" "note on the $role: $note"
         take_note "$role" "$agent" "$note" || return $?
         return "$NOTE_TAKEN"
@@ -2445,7 +2488,7 @@ open_gate() {
   ASKED_AT=$SECONDS
 }
 
-# close_gate role dir agent: a note was taken. A build note ends the gate; while a plan note's
+# close_gate role agent dir: a note was taken. A build note ends the gate; while a plan note's
 # round runs, the commands say so instead of taking answers about a plan still changing.
 close_gate() {
   if [[ $1 == plan ]]; then
@@ -2453,7 +2496,7 @@ close_gate() {
   else
     rm -f "$TASK_STATE/waiting"
   fi
-  dismiss_dialog "$1" "$3" "$2"
+  dismiss_dialog "$1" "$2" "$3"
 }
 
 # show_dialog role agent dir: the approval also as a question dialog in the agent's pane, whose
@@ -2509,6 +2552,7 @@ record_answer() {
 answer_event() {
   local gate=${1%% *} kind note=""
   case $1 in
+    "the "*) return 0 ;; # an agent's own question (cmd_dialog_hook): no gate waited for it
     "note on the "*)
       gate=${1#note on the }
       gate=${gate%%:*}
@@ -2538,7 +2582,7 @@ no_terminal_hint() {
   local where="in one of the task's panes"
   [[ ! -e $2/hooks-$1.json ]] || where="in the $(role_of "$1")'s dialog, or with these in another of the task's panes"
   printf '\n' >&2
-  log "no terminal to answer from; waiting for your answer $where: !fy approve, !fy reject '<note>' or !fy abort (or factory approve <repo> $TASK_ID)"
+  log "no terminal to answer from; waiting for your answer $where: !fy approve, !fy reject '<note>' or !fy abort (or factory approve ${TASK_REPO:-<repo>} $TASK_ID)"
 }
 
 # pause_for_pane_reply: Claude Code replies to a command typed after a ! in its pane once the
@@ -2665,7 +2709,8 @@ worktrees_dir() {
 
 # worktree_of repo bead-id -> checkout path of the task's branch, empty if none
 worktree_of() {
-  git -C "$1" worktree list --porcelain | awk -v b="^refs/heads/factory/$2(-|$)" '$1 == "worktree" {p = $2} $1 == "branch" && $2 ~ b {print p}'
+  # the path whole, a space in it too; the id's dots match only dots
+  git -C "$1" worktree list --porcelain | awk -v b="^refs/heads/factory/${2//./[.]}(-|$)" '$1 == "worktree" {p = substr($0, 10)} $1 == "branch" && $2 ~ b {print p}'
 }
 
 # worktree_path repo bead-id -> where the task's checkout goes: <worktrees dir>/<repo>/factory-<id>,
@@ -2680,9 +2725,9 @@ open_workspace() {
     log "worktree create failed ($(herr_msg "$out" | tail -n1)); trying to open it"
     out=$(h worktree open --cwd "$1" --branch "$2" --label "$3" --no-focus)
   fi
-  WS=$(jq -r '.result.workspace.workspace_id' <<<"$out")
-  WT=$(jq -r '.result.worktree.path' <<<"$out")
-  BUILD_PANE=$(jq -r '.result.root_pane.pane_id' <<<"$out")
+  WS=$(jq -r '.result.workspace.workspace_id // empty' <<<"$out")
+  WT=$(jq -r '.result.worktree.path // empty' <<<"$out")
+  BUILD_PANE=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
   [[ -n $WS && -n $WT && -n $BUILD_PANE ]] || die "unexpected worktree response: $out"
 }
 
@@ -2710,8 +2755,8 @@ metric() {
 }
 
 # run_begins from: a run of the task starts, from its resume point, recorded (run) with
-# Factory's version, its commit when it runs from a checkout of its own, and the agents'
-# models and efforts. Its end is recorded once (run_end), a die's too.
+# Factory's version, its commit when it runs from a checkout of its own, the agents' models
+# and efforts, and the approval mode. Its end is recorded once (run_end), a die's too.
 run_begins() {
   local commit=""
   if [[ $(git -C "$FACTORY_HOME" rev-parse --show-toplevel 2>/dev/null) == "$FACTORY_HOME" ]]; then
@@ -2812,9 +2857,10 @@ task_context() {
     slug=$(slugify "$TASK_TITLE")
     BRANCH="factory/$TASK_ID${slug:+-$slug}"
   fi
-  PLAN_AGENT="$TASK_ID-plan"
-  BUILD_AGENT="$TASK_ID-build"
-  REVIEW_AGENT="$TASK_ID-review"
+  # Herdr's agent names hold no dot, which a child bead's id has (ab-x7k.1): a _ stands for it
+  PLAN_AGENT="${TASK_ID//./_}-plan"
+  BUILD_AGENT="${TASK_ID//./_}-build"
+  REVIEW_AGENT="${TASK_ID//./_}-review"
 }
 
 # setup_task repo arg
@@ -2865,7 +2911,7 @@ open_task_workspace() {
   # work. A conversion only the repo's own git config defines (core.autocrlf, a filter such as
   # git-crypt's) makes a checkout read so, with no change at all.
   local dirty
-  if ((FACTORY_FRESH)) || [[ -z $(recorded state) ]]; then
+  if [[ -z $(recorded state) ]]; then
     dirty=$(tree_state "$WT")
     if [[ -n $dirty ]]; then
       printf '%s\n' "$dirty" >&2
@@ -2896,8 +2942,9 @@ start_or_adopt_agents() {
   rm -f "$WT/$RUN_DIR/asking-plan" "$WT/$RUN_DIR/asking-build" "$TASK_STATE/tree-at-ask"
   close_extra_panes "$WS" "$BUILD_PANE"
   # builder left, planner over reviewer right; equal columns, the planner a little taller
-  plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.5 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
-  review_pane=$(h pane split --pane "$plan_pane" --direction down --ratio 0.6 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id')
+  plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.5 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id // empty')
+  review_pane=$(h pane split --pane "${plan_pane:?herdr split no pane}" --direction down --ratio 0.6 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id // empty')
+  : "${review_pane:?herdr split no pane}"
   h pane rename "$BUILD_PANE" build >/dev/null
   h pane rename "$plan_pane" plan >/dev/null
   h pane rename "$review_pane" review >/dev/null
@@ -2985,20 +3032,15 @@ relaunch_restored() {
 # reviews and the human approved the build), out of the run dir: the approvals are the human's,
 # and the agents write there. A rerun skips what is done; --fresh starts over.
 mark() { mkdir -p "$TASK_STATE" && printf '%s\n' "$*" >"$TASK_STATE/state"; }
-# resume_point -> written <round> | reviewed | planned | built <round> | (empty)
-resume_point() {
-  if ((FACTORY_FRESH)); then
-    rm -f "$TASK_STATE/state"
-    return 0
-  fi
-  recorded state
-}
+# resume_point -> written <round> | reviewed | planned | built <round> | (empty), nothing with
+# --fresh, which also dropped it as the workspace opened (open_task_workspace)
+resume_point() { ((FACTORY_FRESH)) || recorded state; }
 
 # stop_task repo what: a human gate ended the run; leave the workspace for them.
 stop_task() {
   run_end stopped at "$2"
   bd_note "$1" "$TASK_ID" "stopped at $2. workspace $WS, worktree $WT"
-  die "stopped at $2 for $TASK_ID; the workspace stays open, and factory run $1 $TASK_ID takes the task up again"
+  die "stopped at $2 for $TASK_ID; the workspace stays open, and factory run [flags] $1 $TASK_ID takes the task up again"
 }
 
 # planner_kept_hands_off planner-agent [tree_state before its turn]: the planner must not
@@ -3009,11 +3051,17 @@ planner_kept_hands_off() {
   new=$(changed_since "${2:-}")
   [[ -n $new ]] || return 0
   warn "the planner changed files; asking it to revert"
-  ask "$1" "You changed files in the worktree, but planning must leave the code untouched (only $RUN_DIR/ is yours). Revert these changes (git checkout -- <file>, or remove a new one), leave $RUN_DIR/ as it is, and reply DONE:
-$new"
-  [[ -n $(changed_since "${2:-}") ]] || return 0
-  die "the planner left changes in $WT; planning must not touch code"
+  ask "$1" "You changed files in the worktree, but planning must leave the code untouched (only $RUN_DIR/ is yours). Revert these changes (git checkout -- <file>, or remove a new one), leave $RUN_DIR/ as it is:
+$new
+Reply with just DONE."
+  new=$(changed_since "${2:-}")
+  [[ -n $new ]] || return 0
+  die "the planner left changes in $WT, though planning must not touch code; revert these, then rerun:"$'\n'"$new"
 }
+
+# changed_keys before after -> the first words of the lines only one of the two has,
+# space-separated: what changed between two lists of "key value" lines
+changed_keys() { LC_ALL=C comm -3 <(LC_ALL=C sort <<<"$1") <(LC_ALL=C sort <<<"$2") | awk 'NF {print $1}' | LC_ALL=C sort -u | paste -sd ' '; }
 
 # changed_since tree-state [worktree] -> the lines of tree_state that the earlier state lacks
 changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "${2:-$WT}" | LC_ALL=C sort); }
@@ -3036,7 +3084,7 @@ refs_state() {
 # planner_kept_hands_off reads, and onto the branch.
 planner_left_refs() {
   local moved
-  moved=$(LC_ALL=C comm -3 <(LC_ALL=C sort <<<"$1") <(refs_state "$WT" | LC_ALL=C sort) | awk '{print $1}' | LC_ALL=C sort -u | paste -sd ' ')
+  moved=$(changed_keys "$1" "$(refs_state "$WT")")
   [[ -n $moved ]] || return 0
   die "the planner's turn moved $moved in the repo of $WT: planning must not commit, check out or move a ref. Look at what it did, put them back, and rerun; if you moved them yourself meanwhile, rerun"
 }
@@ -3105,7 +3153,7 @@ plan_phase() {
     write_plan "$PLAN_AGENT"
     mark written 1
   fi
-  while ((round == 1 || round <= FACTORY_PLAN_ROUNDS)); do
+  while ((round <= FACTORY_PLAN_ROUNDS)); do
     plan_round "$round"
     [[ $PLAN_VERDICT == "APPROVE APPROVE" ]] && break
     round=$((round + 1))
@@ -3138,7 +3186,7 @@ build_phase() {
   VERDICT=""
   STALLED=""
   if [[ ${2:-} == resume ]]; then
-    ask "$BUILD_AGENT" "$(build_prompt) Part of it may already be implemented or committed on this branch from an earlier run; check the branch and continue from there."
+    ask "$BUILD_AGENT" "$(build_prompt resume)"
   else
     work=$(work_state)
     ask "$BUILD_AGENT" "$(build_prompt)"
@@ -3151,7 +3199,8 @@ build_phase() {
   fi
   ROUND=1
   while ((ROUND <= limit)); do
-    rm -f "$WT/$RUN_DIR/review-$ROUND.md" "$WT/$RUN_DIR/review-$ROUND-plan.md" # a cut-off round's would pass for this one's
+    # a cut-off round's reviews, or an earlier run's answer to them, would pass for this one's
+    rm -f "$WT/$RUN_DIR/review-$ROUND.md" "$WT/$RUN_DIR/review-$ROUND-plan.md" "$WT/$RUN_DIR/response-$ROUND.md"
     gate_log="$WT/$RUN_DIR/gate-$ROUND.log"
     if ! gate_branch "$gate_log"; then
       ask "$BUILD_AGENT" "$(gate_fix_prompt "$gate_log")"
@@ -3224,16 +3273,11 @@ finish_task() {
     return 2
   fi
   if ((FACTORY_PR)); then
-    raise_pr "$BUILD_AGENT"
+    pull_request "$BUILD_AGENT"
     next="review $PR_URL"
-    log "opened $PR_URL"
-    if ((FACTORY_COPILOT)); then
-      COPILOT_NOTE=""
-      copilot_loop "$BUILD_AGENT" "$PR_URL" || warn "Copilot loop ended without a clean review: $COPILOT_NOTE; see $PR_URL"
-      copilot=", $COPILOT_NOTE"
-    fi
+    copilot=${COPILOT_NOTE:+, $COPILOT_NOTE}
     if ! pushed_holds; then
-      hand_over "$repo" "$summary, pr $PR_URL; origin's $BRANCH is not $(recorded pushed), the commit Factory checked and pushed"
+      hand_over "$repo" "$summary, pr $PR_URL$copilot; origin's $BRANCH is not $(recorded pushed), the commit Factory checked and pushed"
       return 2
     fi
     # fixes for Copilot's comments that did not get through to the pull request
@@ -3261,14 +3305,18 @@ hand_over() {
   bd_push "$1"
 }
 
-# on_interrupt repo: the run was killed or Ctrl-C'd; leave a note on the bead, the state
-# lives in the worktree and the agents, and factory run with the bead id resumes.
+# on_interrupt repo: the run was killed or Ctrl-C'd; leave a note on the bead. Factory's state
+# for the task, the worktree and the agents stay, and factory run with the bead id resumes.
+# Ends with 130 even when the note fails, which tells factory queue to end too.
 on_interrupt() {
   trap - INT TERM
   run_end interrupted
   printf '\n' >&2
   warn "interrupted during $STEP; workspace ${WS:-?} stays open, continue with: factory run [flags] $1 ${TASK_ID:-<bead-id>}"
-  [[ -n ${TASK_ID:-} ]] && bd_note "$1" "$TASK_ID" "interrupted during $STEP. workspace ${WS:-?}, worktree ${WT:-?}; continue with: factory run [flags] $1 $TASK_ID" 2>/dev/null
+  if [[ -n ${TASK_ID:-} ]]; then
+    bd_note "$1" "$TASK_ID" "interrupted during $STEP. workspace ${WS:-?}, worktree ${WT:-?}; continue with: factory run [flags] $1 $TASK_ID" 2>/dev/null \
+      || warn "could not leave the note on $TASK_ID"
+  fi
   exit 130
 }
 
@@ -3277,7 +3325,7 @@ run_task() {
   local repo
   repo=$(repo_top "$1") || exit 1
   STEP=setup
-  TASK_ID="" WS="" WT="" STALLED="" # a queue runs its tasks in one shell; on_interrupt and finish_task must not see the last one's
+  TASK_ID="" WS="" WT="" STALLED="" # none from the environment: on_interrupt, finish_task read them
   trap 'on_interrupt "$repo"' INT TERM
   setup_task "$repo" "$2"
   open_task_workspace "$repo"
@@ -3353,7 +3401,18 @@ cmd_doctor() {
     printf '  MISSING  git 2.31 or later (this is %s)\n' "$(git_version)"
     ok=1
   fi
-  [[ -f $FACTORY_GUARDRAILS ]] && printf '  ok       guardrails %s\n' "$FACTORY_GUARDRAILS"
+  for t in flock gh; do
+    if command -v "$t" >/dev/null 2>&1; then printf '  ok       %s\n' "$t"; elif [[ $t == gh ]]; then
+      printf '  absent   gh (only pull requests need it: --pr, factory pr)\n'
+    else
+      printf '  MISSING  %s (factory next and queue need it; util-linux has it)\n' "$t"
+      ok=1
+    fi
+  done
+  if [[ -f $FACTORY_GUARDRAILS ]]; then printf '  ok       guardrails %s\n' "$FACTORY_GUARDRAILS"; else
+    printf '  MISSING  guardrails %s (FACTORY_GUARDRAILS names no file)\n' "$FACTORY_GUARDRAILS"
+    ok=1
+  fi
   return $ok
 }
 
@@ -3367,12 +3426,13 @@ cmd_status() {
   rows=$(h agent list | jq -r '.result.agents[] | select(.name // "" | test("-(plan|build|review)$")) |
     "\(.name)\t\(.agent_status)\t\(.workspace_id)"' | sort)
   if [[ -z $rows ]]; then
-    log "no factory agents running"
+    log "no Factory agents running"
     return 0
   fi
   printf '%-14s %-8s %-9s %-5s %s\n' TASK ROLE STATE WS LABEL
   while IFS=$'\t' read -r name status ws; do
     task=${name%-*}
+    task=${task//_/.} # a child bead's id, which task_context names its agents with a _
     role=${name##*-}
     c=""
     if ((color)); then
@@ -3500,7 +3560,7 @@ cmd_init() {
     # No bd-generated AGENTS.md/CLAUDE.md, hooks, or editor files: the prompts carry what agents need.
     # bd names the prefix after the directory, or inherits it from a .beads above (a Gas Town's
     # hq); a short one from the repo's name instead, and a --prefix among the args still wins.
-    prefix=$(repo_prefix "$(basename "$(cd "$repo" && pwd)")")
+    prefix=$(repo_prefix "$(basename "$repo")")
     (cd "$repo" && BD_NON_INTERACTIVE=1 bd init --non-interactive --skip-agents --skip-hooks ${prefix:+--prefix "$prefix"} "$@")
   fi
   local gate
@@ -3514,7 +3574,7 @@ cmd_init() {
   fi
   if [[ ! -e $repo/AGENTS.md && ! -e $repo/CLAUDE.md ]]; then
     write_agents_stub "$repo"
-    log "wrote a short AGENTS.md stub (CLAUDE.md links to it); fill in what the code cannot tell a new engineer"
+    log "wrote a short AGENTS.md stub (CLAUDE.md links to it); fill in what the code cannot tell a new engineer, then commit both: the agents read them from the task's branch"
   fi
 }
 
@@ -3552,7 +3612,10 @@ compose_task() {
   f=$(mktemp)
   if [[ -n $editor && -t 0 ]]; then
     printf '\n\n# First line: title. Then a blank line and the description (markdown is fine).\n# Lines starting with # are dropped. An empty title aborts.\n' >"$f"
-    ${editor} "$f"
+    ${editor} "$f" || {
+      rm -f "$f"
+      die "$editor exited with an error; nothing filed"
+    }
   else
     log "title on the first line, blank line, then the description; finish with Ctrl-D"
     cat >"$f"
@@ -3562,12 +3625,13 @@ compose_task() {
   TASK_TITLE=$(sed -n '/[^[:space:]]/{p;q}' <<<"$body" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [[ -n $TASK_TITLE ]] || die "empty title, nothing filed"
   # not 1,/re/d: with the title on line one, its range also takes the next non-blank line
-  TASK_DESC=$(sed -n '/[^[:space:]]/,$p' <<<"$body" | sed '1d' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' | sed '/./,$!d')
+  TASK_DESC=$(sed -n '/[^[:space:]]/,$p' <<<"$body" | sed '1d' | sed '/./,$!d')
 }
 
 # cmd_add repo ["title" [description]]: file a task; with no title, from your editor or stdin
 cmd_add() {
-  local repo=$1
+  local repo
+  repo=$(repo_top "$1") || exit 1
   shift
   need_beads "$repo"
   if (($# == 0)); then
@@ -3582,7 +3646,8 @@ cmd_add() {
 
 # cmd_sync repo: pull (when the remote has beads data), then push
 cmd_sync() {
-  local repo=$1 out
+  local repo out
+  repo=$(repo_top "$1") || exit 1
   need_beads "$repo"
   if out=$(bd -C "$repo" dolt pull 2>&1); then
     log "beads: $(tail -n1 <<<"$out")"
@@ -3594,11 +3659,12 @@ cmd_sync() {
   FACTORY_BD_PUSH=1 bd_push "$repo"
 }
 
-# task_order [color]: bd list --json on stdin -> one line per task, in the order next takes
-# them: a task after the open ones that block it (blocks or conditional-blocks, its own or a
-# parent's), else in progress first, then by priority, newest first as bd ready does.
-# Blocked, deferred and hooked tasks, which next skips, come after the rest, and so does a
-# dependency cycle. bd's waits-for gates are not followed. Colours are bd's own.
+# task_order [color]: bd list --json on stdin -> one line per task: those in progress first,
+# which next leaves to their runs, then the open ones in the order next takes them: a task after
+# the open ones that block it (blocks or conditional-blocks, its own or a parent's), else by
+# priority, newest first as bd ready does. Blocked, deferred and hooked tasks, which next skips,
+# come after the rest, and so does a dependency cycle. bd's waits-for gates are not followed,
+# nor whether a blocker's branch is merged (waits_for). Colours are bd's own.
 task_order() {
   jq -r --argjson color "${1:-0}" '
     def paint($c): if $color == 1 and $c != "" then "\u001b[\($c)m\(.)\u001b[m" else . end;
@@ -3623,9 +3689,10 @@ task_order() {
     | "\({open: "○", in_progress: "◐", blocked: "●", deferred: "❄", hooked: "◇", closed: "✓"}[.status] // "?" | paint($sc)) \(.id) \("● P\(.priority)" | paint($pc)) \(.title)"'
 }
 
-# cmd_tasks repo [bd list args...]: without args, the open tasks in the order next takes them
+# cmd_tasks repo [bd list args...]: without args, the open tasks as task_order lists them
 cmd_tasks() {
-  local repo=$1 color=0 out
+  local repo color=0 out
+  repo=$(repo_top "$1") || exit 1
   shift
   need_beads "$repo"
   if (($#)); then
@@ -3642,7 +3709,7 @@ cmd_tasks() {
 # first ready task, whatever it waits for, so Factory chooses and claims under a lock in its
 # state for the repo, one factory next at a time: two in parallel never take the same bead.
 claim_next() {
-  local repo=$1 dir base ids id why
+  local repo=$1 dir base ids id why status
   need flock
   dir=$(repo_state "$repo") || die "$repo is no git checkout"
   mkdir -p "$dir"
@@ -3652,25 +3719,42 @@ claim_next() {
       log "waiting for another factory next in $repo to claim its task"
       flock 9 || die "could not lock $dir/next.lock"
     fi
-    ids=$(bd_json "$repo" ready -n 0 | jq -r '.[].id') || die "bd could not list the ready tasks in $repo"
-    for id in $ids; do
-      why=$(waits_for "$repo" "$id" "$base")
-      if [[ -n $why ]]; then
-        log "skipping $id: it builds on $why, not merged into $base yet"
-        continue
-      fi
-      bd -C "$repo" update "$id" --claim >/dev/null || die "bd could not claim $id in $repo"
-      printf '%s' "$id"
-      break
-    done
+    # bd's commands get no fd 9, which the shell keeps: what bd leaves running a while after it
+    # exits would hold the lock on
+    {
+      ids=$(bd_json "$repo" ready -n 0 | jq -r '.[].id') || die "bd could not list the ready tasks in $repo"
+      for id in $ids; do
+        why=$(waits_for "$repo" "$id" "$base") || die "bd could not show $id in $repo, to read the tasks it builds on"
+        if [[ -n $why ]]; then
+          log "skipping $id: it builds on $why, not merged into $base yet"
+          continue
+        fi
+        if ! bd -C "$repo" update "$id" --claim >/dev/null; then
+          # bd refuses a task another bd user holds: one claimed since bd listed it, no longer
+          # open, or one assigned to them, which bd ready lists all the same
+          status=$(bd_field "$repo" "$id" 'if .status == "open" and (.assignee // "") != ""
+            then "assigned to \(.assignee)" else .status // "" end') \
+            && [[ -n $status && $status != open ]] || die "bd could not claim $id in $repo"
+          log "skipping $id: not open to a claim ($status)"
+          continue
+        fi
+        printf '%s' "$id"
+        break
+      done
+    } 9>&-
   } 9>"$dir/next.lock"
 }
 
-# cmd_next repo: claim the next ready task and run it; 3 when nothing is ready
+# cmd_next repo: claim the next ready task and run it; 3 when nothing is ready, 4 when it stops
+# before a task is claimed, as when bd fails or the gate is gone: main sets DIE_STATUS to 4 for
+# a factory next, its own checks included. factory queue ends on either, as its next would too.
 cmd_next() {
-  local repo=$1 id
+  local repo id
+  repo=$(repo_top "$1") || exit 4
   need_beads "$repo"
-  id=$(claim_next "$repo") || exit 1
+  resolve_gate "$repo" >/dev/null # without one, the task claimed would be left in progress
+  id=$(claim_next "$repo") || exit 4
+  DIE_STATUS=1 # from here on a die is a task that stopped
   [[ -n $id ]] || {
     log "nothing ready in $repo"
     return 3
@@ -3680,9 +3764,14 @@ cmd_next() {
 
 # cmd_queue repo [max]: factory next until nothing is ready, or max tasks have run. Each task
 # runs in a process of its own, as factory next does: one that stops, or needs a human, ends
-# there, and the queue goes on; an interrupt ends the queue.
+# there, and the queue goes on; an interrupt ends the queue, and so does a next that stops
+# before it claims a task, as every next after it would.
 cmd_queue() {
-  local repo=$1 max=${2:-0} n=0 rc
+  local repo max=${2:-0} n=0 rc
+  repo=$(repo_top "$1") || exit 1
+  # what stops a factory next before it claims a task would stop the first one: say so first
+  need_beads "$repo"
+  resolve_gate "$repo" >/dev/null
   while ((max == 0 || n < max)); do
     rc=0
     (
@@ -3690,6 +3779,7 @@ cmd_queue() {
       "$FACTORY_HOME/factory" next "$repo"
     ) || rc=$?
     ((rc == 3)) && break
+    ((rc != 4)) || die "factory next stopped before it claimed a task in $repo (above); queue ended after $n task(s)"
     if ((rc == 130)); then
       warn "queue interrupted after $n task(s)"
       exit 130
@@ -3792,7 +3882,7 @@ task_args() {
   fi
   # a repo's root first means the explicit form; its bead is never read as the start of a note
   if (($# >= 2)) && [[ -e $1/.git ]]; then
-    die "$2 is not a bead id Factory takes (letters and digits on either side of one hyphen)"
+    die "$2 is not a bead id Factory takes (letters and digits on either side of one hyphen, as ab-x7k or ab-x7k.1)"
   fi
   top=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
   branch=$(git -C "$top" branch --show-current)
@@ -3801,12 +3891,12 @@ task_args() {
   TARGS=("$(repo_of "$top")" "$id" "$@")
 }
 
-# cmd_dialog_hook plan|build task-id run-dir [task-state-dir]: Claude Code runs this with a hook's JSON on stdin
-# (see dialog_hooks). A question dialog opening leaves a mark naming its tool call (asking), and
-# the planner's also takes the tree, into Factory's state for the task, so that what the human
-# changes while it is open is not the planner's (planner_turn). The answer to Factory's approval
-# dialog goes to the gate as approve, reject or abort would send it; any other answer goes into
-# the task's decisions.
+# cmd_dialog_hook plan|build bead-id run-dir [task-state-dir]: Claude Code runs this with a
+# hook's JSON on stdin (see dialog_hooks). A question dialog opening leaves a mark naming its
+# tool call (asking), and the planner's also takes the tree, into Factory's state for the task,
+# so that what the human changes while it is open is not the planner's (planner_turn). The
+# answer to Factory's approval dialog goes to the gate as approve, reject or abort would send
+# it; any other answer goes into the task's decisions.
 cmd_dialog_hook() {
   local role=$1 in event dir n i header q a notes topic TASK_ID TASK_STATE # the hook's task alone
   in=$(cat)
@@ -3874,10 +3964,13 @@ gate_dialog_answer() {
   esac
 }
 
-# cmd_pr repo bead-id: open a pull request for an existing task branch
+# cmd_pr repo bead-id: check and push an existing task branch, and open its pull request, or
+# take the one open, with Copilot's rounds; then check what origin got, as finish_task does
 cmd_pr() {
-  local repo note=""
+  local repo left
   repo=$(repo_top "$1") || exit 1
+  need_beads "$repo"
+  bd_json "$repo" show "$2" >/dev/null || die "bd cannot show $2 in $repo"
   WT=$(worktree_of "$repo" "$2")
   [[ -n $WT ]] || die "no worktree for task $2 in $repo"
   bead_task "$repo" "$2"
@@ -3886,14 +3979,11 @@ cmd_pr() {
   record_base # a task from before Factory recorded one
   tree_dirty "$WT" && die "$WT has uncommitted changes; commit or stash them first"
   herdr agent get "$BUILD_AGENT" >/dev/null 2>&1 || die "no live builder agent for $2 to handle a rebase; rebase by hand, or rerun the task"
-  raise_pr "$BUILD_AGENT"
-  log "opened $PR_URL"
-  if ((FACTORY_COPILOT)); then
-    COPILOT_NOTE=""
-    copilot_loop "$BUILD_AGENT" "$PR_URL" || warn "Copilot loop ended without a clean review: $COPILOT_NOTE; see $PR_URL"
-    note=", $COPILOT_NOTE"
-  fi
-  bd_note "$repo" "$2" "pull request opened by hand: $PR_URL$note"
+  pull_request "$BUILD_AGENT"
+  pushed_holds || die "origin's $BRANCH is not $(recorded pushed), the commit Factory checked and pushed: look at $PR_URL before you merge it"
+  left=$(unpushed)
+  [[ -z $left ]] || warn "the worktree holds $left, which the pull request lacks: factory pr $repo $2 checks what is committed and pushes it"
+  bd_note "$repo" "$2" "pull request through factory pr: $PR_URL${COPILOT_NOTE:+, $COPILOT_NOTE}"
   bd_push "$repo"
   printf '%s\n' "$PR_URL"
 }
@@ -3918,16 +4008,19 @@ merged_into() {
 # branch is not merged into base (merged_into), each with its pull request, else its branch;
 # empty when there are none. Factory closes a task's bead on approval, before you merge its
 # branch, so bd has the tasks it blocks ready while their base lacks its code. A task Factory
-# never ran, or whose branch factory clean removed, leaves no branch to wait for.
+# never ran, or whose branch factory clean removed, leaves no branch to wait for. 1 when bd
+# cannot show the bead, which is no bead without blockers.
 waits_for() {
-  local repo=$1 base=$3 dep status branch url out=""
+  local repo=$1 base=$3 deps dep status branch url out=""
+  deps=$(bd_one "$repo" show "$2" | jq -r '.dependencies[]? | select((.dependency_type // .type) == "blocks") | "\(.id // .depends_on_id) \(.status // "")"') || return 1
   while read -r dep status; do
+    [[ -n $dep ]] || continue
     branch=$(branch_of "$repo" "$dep")
     [[ -n $branch ]] || continue
     merged_into "$repo" "$branch" "$base" "$status" && continue
     url=$(cd "$repo" && gh pr view "$branch" --json url -q .url 2>/dev/null) || url=""
     out+="${out:+, }$dep (${url:-$branch})"
-  done < <(bd_one "$repo" show "$2" | jq -r '.dependencies[]? | select((.dependency_type // .type) == "blocks") | "\(.id // .depends_on_id) \(.status // "")"')
+  done <<<"$deps"
   printf '%s' "$out"
 }
 
@@ -3939,9 +4032,14 @@ cmd_clean() {
   for a in "$@"; do
     case $a in
       --force) force=1 ;;
-      *) only=$a ;;
+      -*) die "unknown flag: $a (try: factory help)" ;;
+      *)
+        [[ -z $only ]] || die "usage: factory clean <repo> [bead-id] [--force]"
+        only=$a
+        ;;
     esac
   done
+  ((! force)) || [[ -n $only ]] || die "--force drops a task's work, a live run's too: name its bead (factory clean $repo <bead-id> --force)"
   base=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
   # every factory branch, with its Herdr workspace and checkout when there is one
   while IFS='|' read -r branch ws path; do
@@ -3992,34 +4090,47 @@ clean_targets() {
   done
 }
 
-# cmd_check worktree base
+# cmd_check worktree base: the gate and the guardrails on the branch checked out there, no
+# agents; a failed gate's log stays for you to read
 cmd_check() {
-  local gate task
+  local gate id gate_log
   gate=$(resolve_gate "$1")
   # in a task's worktree, the human's waiver for the task holds as in its run
-  if task=$(cd "$1" && task_args && printf '%s\n%s' "${TARGS[@]}"); then
-    TASK_STATE=$(task_state "${task%$'\n'*}" "${task##*$'\n'}")
+  if id=$(cd "$1" && task_args && printf '%s' "${TARGS[1]}"); then
+    TASK_STATE=$(task_state "$1" "$id")
   fi
-  CHECK_LOG=$(mktemp)
-  trap 'rm -f "$CHECK_LOG"' EXIT
-  run_gate "$1" "$gate" "$CHECK_LOG" || {
-    tail -n "$GATE_LOG_TAIL" "$CHECK_LOG"
+  gate_log=$(mktemp)
+  if ! run_gate "$1" "$gate" "$gate_log"; then
+    tail -n "$GATE_LOG_TAIL" "$gate_log"
     return 1
-  }
-  guard_check "$1" "$2" && log "guardrails passed"
+  fi
+  rm -f "$gate_log"
+  if ! guard_check "$1" "$2"; then
+    warn "guardrails failed"
+    return 1
+  fi
+  log "guardrails passed"
 }
 
-# load_repo_env repo: FACTORY_NAME=value lines from repo/.factory/env set the knobs the
-# environment left unset. Parsed, never sourced: values are taken verbatim, no quotes, no
-# expansion; blank lines and # comments are skipped; anything else is an error.
+# load_repo_env dir: FACTORY_NAME=value lines from the .factory/env of the checkout the dir is
+# in set the knobs the environment left unset. Parsed, never sourced: values are taken
+# verbatim, no quotes, no expansion; blank lines and # comments are skipped; anything else is
+# an error.
 load_repo_env() {
-  local file=$1/.factory/env line name applied=()
+  local top file line name applied=()
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 0
+  file=$top/.factory/env
   [[ -f $file ]] || return 0
   while IFS= read -r line || [[ -n $line ]]; do
     [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
     [[ $line =~ ^(FACTORY_[A-Z0-9_]+)=(.*)$ ]] || die "$file: expected FACTORY_NAME=value, got: $line"
     name=${BASH_REMATCH[1]}
-    [[ $name == FACTORY_HOME || $name == FACTORY_VERSION || $name == FACTORY_PID ]] && die "$file: $name is not a knob"
+    # the knobs are set by now, but for FACTORY_GATE; anything else is a typo, which the knob it
+    # meant would never see
+    if [[ $name == FACTORY_HOME || $name == FACTORY_VERSION || $name == FACTORY_PID ]] \
+      || ! [[ -v $name || $name == FACTORY_GATE ]]; then
+      die "$file: $name is not a knob (see factory help)"
+    fi
     grep -qxF "$name" <<<"$ENV_KNOBS" && continue
     printf -v "$name" '%s' "${BASH_REMATCH[2]}"
     applied+=("$name")
@@ -4039,7 +4150,7 @@ take_flags() {
       --no-copilot) FACTORY_COPILOT=0 ;;
       --auto) FACTORY_APPROVAL=auto ;;
       --fresh) FACTORY_FRESH=1 ;;
-      --*) die "unknown flag: $a" ;;
+      --*) die "unknown flag: $a (try: factory help)" ;;
       *) ARGS+=("$a") ;;
     esac
   done
@@ -4049,6 +4160,7 @@ take_flags() {
 main() {
   local cmd=${1:-help} a u
   if (($# > 0)); then shift; fi
+  [[ $cmd != next ]] || DIE_STATUS=4 # its checks below come before its claim (cmd_next)
   case $cmd in
     tasks | approve | reject | abort | stats | dialog-hook) ;; # these read no knob
     *)
@@ -4079,7 +4191,8 @@ main() {
       ;;
     queue)
       take_flags "$@"
-      ((${#ARGS[@]} >= 1)) || die "usage: factory queue [--pr] [--auto] [--no-copilot] [--fresh] <repo> [max]"
+      ((${#ARGS[@]} == 1 || ${#ARGS[@]} == 2)) && [[ ${ARGS[1]:-1} =~ ^[1-9][0-9]*$ ]] \
+        || die "usage: factory queue [--pr] [--auto] [--no-copilot] [--fresh] <repo> [max]"
       need_all "${RUN_TOOLS[@]}"
       check_knobs
       check_push "${ARGS[0]}"
@@ -4092,12 +4205,13 @@ main() {
       ;;
     tasks)
       (($# >= 1)) || die "usage: factory tasks <repo> [--all | bd list args...]"
-      need bd
+      need_all bd jq
       cmd_tasks "$@"
       ;;
     add)
-      (($# >= 1)) || die "usage: factory add <repo> [\"title\" [description]]"
+      (($# >= 1 && $# <= 3)) || die "usage: factory add <repo> [\"title\" [description]]"
       need bd
+      check_knobs
       cmd_add "$@"
       ;;
     init)
@@ -4130,7 +4244,7 @@ main() {
     pr)
       take_flags "$@"
       [[ ${#ARGS[@]} == 2 && " $* " != *" --auto "* && " $* " != *" --fresh "* ]] \
-        || die "usage: factory pr [--no-copilot] <repo> <bead-id>"
+        || die "usage: factory pr <repo> <bead-id> [--no-copilot]"
       need_all herdr gh bd jq git
       check_knobs
       cmd_pr "${ARGS[0]}" "${ARGS[1]}"
@@ -4138,11 +4252,13 @@ main() {
     clean)
       (($# >= 1)) || die "usage: factory clean <repo> [bead-id] [--force]"
       need_all herdr bd jq git
+      check_knobs
       cmd_clean "$@"
       ;;
     check)
       (($# == 2)) || die "usage: factory check <worktree> <base>"
       need git
+      check_knobs
       cmd_check "$1" "$2"
       ;;
     stats)
@@ -4150,7 +4266,10 @@ main() {
       need_all git jq
       cmd_stats "$1"
       ;;
-    status) need_all herdr jq && cmd_status ;;
+    status)
+      need_all herdr jq
+      cmd_status
+      ;;
     doctor) cmd_doctor ;;
     -h | --help | help) usage ;;
     -V | --version) printf 'factory %s\n' "$FACTORY_VERSION" ;;
@@ -4160,7 +4279,7 @@ main() {
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
   FACTORY_PID=$$
-  trap 'exit 1' USR1 # a die in a subshell, see die
+  trap 'exit "$DIE_STATUS"' USR1 # a die in a subshell, see die
   main "$@"
   exit # never read on past this: a run takes hours, and the file on disk may have changed
 fi
