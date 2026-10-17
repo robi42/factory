@@ -78,10 +78,11 @@ it checks the file exists, runs the gate itself, and inspects the diff.
 Because the state is the worktree, Beads and Factory's own state for the task (see Run
 artifacts), the orchestrator is disposable. Kill it or Ctrl-C it: the agents, worktree and
 workspace stay, the bead gets a note saying at which step it was interrupted, and `fy run`
-with the bead id resumes: it reopens the workspace, adopts the three agents still alive in
-it, and picks up after the last completed milestone: a written plan, at its next review
-round; a reviewed plan waiting for your approval; an approved plan; or an approved build,
-reusing an open pull request, and checked again first if the branch has moved on since.
+with the bead id resumes: it reopens the workspace, closing none of your own panes there,
+adopts the three agents still alive in it, and picks up after the last completed
+milestone: a written plan, at its next review round; a reviewed plan waiting for your
+approval; an approved plan; or an approved build, reusing an open pull request, and
+checked again first if the branch has moved on since.
 `--fresh` starts over. A new task starts from your checkout's branch, its base, or from
 origin's copy of it where yours is only behind, so that it has what was merged on origin
 since you last pulled. A rerun keeps the task's base, whatever branch your checkout is on

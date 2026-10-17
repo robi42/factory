@@ -3619,15 +3619,36 @@ JSON
   [ "$(cat "$TMP/herdr.log")" = "agent prompt plan /color purple" ]
 }
 
-@test "close_extra_panes: agent-less panes go, but the one to keep" {
-  herdr() {
+@test "close_extra_panes: the planner's and the reviewer's panes their agents left go, where the shell waits at its prompt; the human's panes stay" {
+  herdr() { # p5 is the human's, in a tab of their own; an agent runs in p4, an editor in p6, a builtin in p8's shell; p7 tells nothing
     case "$*" in
-      "pane list"*) printf '{"result":{"panes":[{"pane_id":"w1:p1","agent":null},{"pane_id":"w1:p2","agent":"claude"},{"pane_id":"w1:p3","agent":null}]}}' ;;
+      "pane list"*) printf '%s' '{"result":{"panes":[{"pane_id":"w1:p1","agent":null,"label":"build"},
+        {"pane_id":"w1:p2","agent":null,"label":"plan"},{"pane_id":"w1:p3","agent":null,"label":"review"},
+        {"pane_id":"w1:p4","agent":"claude","label":"plan"},{"pane_id":"w1:p5","agent":null},
+        {"pane_id":"w1:p6","agent":null,"label":"review"},{"pane_id":"w1:p7","agent":null,"label":"plan"},
+        {"pane_id":"w1:p8","agent":null,"label":"review"}]}}' ;;
+      "pane process-info --pane w1:p4" | "pane process-info --pane w1:p6") printf '{"result":{"process_info":{"foreground_process_group_id":7,"shell_pid":6}}}' ;;
+      "pane process-info --pane w1:p7") printf '{"result":{"process_info":{}}}' ;;
+      "pane process-info --pane w1:p8") printf '{"result":{"process_info":{"foreground_process_group_id":8,"shell_pid":8}}}' ;;
+      "pane process-info"*) printf '{"result":{"process_info":{"foreground_process_group_id":6,"shell_pid":6}}}' ;;
       "pane close"*) printf '%s\n' "$*" >>"$TMP/closed" ;;
     esac
   }
+  raw_tty() { [[ $1 == /proc/6/fd/0 ]]; } # p8's shell runs its builtin with the terminal cooked
   close_extra_panes w1 w1:p1
+  [ "$(paste -sd, "$TMP/closed")" = "pane close w1:p2,pane close w1:p3" ]
+  rm "$TMP/closed"
+  close_extra_panes w1 w1:p2
   [ "$(cat "$TMP/closed")" = "pane close w1:p3" ]
+}
+
+@test "raw_tty: a terminal a line editor holds raw reads so; one cooked, as while the shell runs a command, does not" {
+  stty() { [[ $* == "-F /dev/pts/9 -a" ]] && printf '%s\n' 'speed 38400 baud; rows 24; columns 80; line = 0;' "$(cat "$TMP/lflags")"; }
+  printf 'isig -icanon iexten -echo echoe echok -echonl -noflsh -xcase\n' >"$TMP/lflags"
+  raw_tty /dev/pts/9
+  printf 'isig icanon iexten echo echoe echok -echonl -noflsh -xcase\n' >"$TMP/lflags"
+  run raw_tty /dev/pts/9
+  [ "$status" -eq 1 ]
 }
 
 @test "wait_for: chunked waits print a heartbeat and return the final state" {

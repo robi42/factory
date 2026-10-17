@@ -355,13 +355,16 @@ set_color() {
   fi
 }
 
-# close_extra_panes workspace keep-pane: drop agent-less panes left by exited sessions
+# close_extra_panes workspace keep-pane: drop the panes a planner and a reviewer that quit left,
+# the ones Factory labelled so, where the shell waits at its prompt again. Any other pane in the
+# workspace is the human's, as in a tab of their own, and so is one that runs something.
 close_extra_panes() {
   local ws=$1 keep=$2 pane
   while IFS= read -r pane; do
     [[ -n $pane && $pane != "$keep" ]] || continue
+    shell_waits "$pane" || continue
     herdr pane close "$pane" >/dev/null 2>&1 || warn "could not close leftover pane $pane"
-  done < <(herdr pane list --workspace "$ws" 2>/dev/null | jq -r '.result.panes[] | select(.agent == null) | .pane_id')
+  done < <(herdr pane list --workspace "$ws" 2>/dev/null | jq -r '.result.panes[] | select(.label == "plan" or .label == "review") | .pane_id')
 }
 
 # live_agents workspace name... -> how many of the named agents are alive in that workspace
@@ -655,10 +658,26 @@ agent_quit() {
 }
 
 # quit_done name pane: the pane's shell is in front again, and Herdr lists the agent no more
-quit_done() {
-  herdr pane process-info --pane "$2" 2>/dev/null | jq -e '.result.process_info | .foreground_process_group_id == .shell_pid' >/dev/null \
-    && ! herdr agent get "$1" >/dev/null 2>&1
+quit_done() { shell_in_front "$2" && ! herdr agent get "$1" >/dev/null 2>&1; }
+
+# shell_in_front pane: the pane's shell is in front, running nothing it started
+shell_in_front() {
+  herdr pane process-info --pane "$1" 2>/dev/null \
+    | jq -e '.result.process_info | .shell_pid != null and .foreground_process_group_id == .shell_pid' >/dev/null
 }
+
+# shell_waits pane: the pane's shell is in front and waits at its prompt, where its line editor
+# holds the terminal raw. One that runs a builtin or a loop of its own is in front too, but the
+# terminal is cooked meanwhile; with ble.sh, sleep is such a builtin.
+shell_waits() {
+  local pid
+  pid=$(herdr pane process-info --pane "$1" 2>/dev/null \
+    | jq -er '.result.process_info | select(.shell_pid != null and .foreground_process_group_id == .shell_pid) | .shell_pid') || return 1
+  raw_tty "/proc/$pid/fd/0"
+}
+
+# raw_tty tty: the terminal passes keys on one by one, as a line editor sets it (stty -icanon)
+raw_tty() { [[ $(stty -F "$1" -a 2>/dev/null) =~ (^|[[:space:]])-icanon([[:space:]]|$) ]]; }
 
 # ----------------------------------------------------------------- beads ----
 # bd_json repo args...: bd's --json output for the args, read through the envelope bd 2.0 makes
