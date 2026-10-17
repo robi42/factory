@@ -5130,6 +5130,23 @@ SH
   [ "$COPILOT_NOTE" = "the builder left its fixes for Copilot's round 1 uncommitted" ]
 }
 
+@test "cmd_stats: on a terminal each outcome has its colour, a failed run's red as a stopped one's, an interrupted one's grey" {
+  local file="$TMP/events.jsonl" o
+  for o in "done" handed_over stopped failed interrupted; do
+    printf '{"t":"2026-10-15T08:00:00Z","task":"bk-%s","event":"run","version":"0.2.0"}\n' "${o:0:2}" >>"$file"
+    printf '{"t":"2026-10-15T09:00:00Z","task":"bk-%s","event":"end","outcome":"%s"}\n' "${o:0:2}" "$o" >>"$file"
+  done
+  printf '{"t":"2026-10-15T10:00:00Z","task":"bk-ru","event":"run","version":"0.2.0"}\n' >>"$file"
+  run jq -rs --argjson color 1 --argjson width 0 "$(stats_jq)" "$file"
+  [ "$status" -eq 0 ]
+  [[ $output == *"bk-do  "$'\e[38;2;170;217;76mdone '* ]]
+  [[ $output == *"bk-ha  "$'\e[38;2;255;180;84mhanded over\e[m'* ]]
+  [[ $output == *"bk-st  "$'\e[38;2;242;109;120mstopped '* ]]
+  [[ $output == *"bk-fa  "$'\e[38;2;242;109;120mfailed '* ]]
+  [[ $output == *"bk-in  "$'\e[38;2;108;118;128minterrupted\e[m'* ]]
+  [[ $output == *"bk-ru  "$'\e[38;2;89;194;255mrunning '* ]]
+}
+
 @test "factory: a Bash older than 4.4 stops it before it reads on, with the Bash it needs" {
   # BASH_VERSINFO is read-only: the check runs on a stand-in, as each Bash would fill it in
   local check
