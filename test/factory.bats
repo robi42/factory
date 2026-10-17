@@ -5367,7 +5367,7 @@ SH
   ev 08:10 bk-a1 turn ',"agent":"plan","secs":600'
   ev 08:15 bk-a1 plan_review ',"round":1,"verdicts":"REVISE APPROVE"'
   ev 08:20 bk-a1 plan_review ',"round":2,"verdicts":"APPROVE APPROVE"'
-  ev 08:30 bk-a1 answer ',"gate":"plan","answer":"note","note":"keep it in one module\nand test it","secs":300'
+  ev 08:30 bk-a1 answer ',"gate":"plan","answer":"note","note":"keep it in one module:\n\n* test it\n  2) no new flags\n-1 as a default is fine","secs":300'
   ev 08:40 bk-a1 answer ',"gate":"plan","answer":"approve","note":"","secs":60'
   ev 09:00 bk-a1 turn ',"agent":"build","secs":1800'
   ev 09:10 bk-a1 gate ',"label":1,"ok":0,"secs":400'
@@ -5395,13 +5395,20 @@ SH
   [[ $output == *"by Factory version"$'\n'"VERSION                  PLAN  BUILD  GATE  GUARD  REVISE  NOTES  AGENTS  GATING  YOU   TOKENS"$'\n'"0.1.11 (1 task, 1 done)     2      3     1      1       1      1     38m     20m  11m  5M/200k"$'\n'* ]]
   [[ $output != *"0.2.0 ("* ]] # a task still running counts in no mean
   [[ $output == *"guardrails that failed: tests 2, lines 1"* ]]
-  [[ $output == *"your notes, latest first:"$'\n'"  bk-a1      plan   2026-10-15  keep it in one module"* ]]
+  # a note on one line, its lines' list markers and blank lines left out, cut nowhere off a terminal
+  [[ $output == *"your notes, latest first:"$'\n'"  bk-a1      plan   2026-10-15  keep it in one module: · test it · no new flags · -1 as a default is fine"$'\n'* ]]
   [[ ${lines[0]}${lines[1]} != *$'\e['* ]] # no colour off a terminal
   # on one, the headers are bold and an outcome has its colour
-  painted() { jq -cR 'fromjson?' "$file" | jq -rs --argjson color 1 "$(stats_jq)"; }
+  painted() { jq -cR 'fromjson?' "$file" | jq -rs --argjson color 1 --argjson width 0 "$(stats_jq)"; }
   run painted
   [[ ${lines[0]} == $'\e[1mTASK '* ]]
   [[ ${lines[1]} == "bk-a1  "$'\e[38;2;170;217;76mdone   \e[m  0.1.11 '* ]]
+  # and a note is cut to its width, … for what is cut off, but to no fewer than 20 characters
+  fitted() { jq -cR 'fromjson?' "$file" | jq -rs --argjson color 0 --argjson width "$1" "$(stats_jq)"; }
+  run fitted 62
+  [[ $output == *$'\n'"  bk-a1      plan   2026-10-15  keep it in one module: · test…" ]]
+  run fitted 30
+  [[ $output == *$'\n'"  bk-a1      plan   2026-10-15  keep it in one modu…" ]]
   # past 20 tasks, the rows say how many earlier ones they leave out; a means label wider than
   # task, outcome and version widens the version column, and the means stay under the rows
   local i

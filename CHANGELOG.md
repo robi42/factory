@@ -62,7 +62,8 @@ your approval takes your answer where its own Factory looks for it.
   rounds, how often the gate and the guardrails failed, the reviewers' objections, your
   notes, the time the agents, the gate and you took, and the tokens the agents read and
   wrote; under the same columns, the means per finished task for each Factory version,
-  which tell whether a change helped; the guardrails that failed; and your latest notes.
+  which tell whether a change helped; the guardrails that failed; and your latest notes,
+  each on one line, cut to fit the terminal.
   Each run records what it does as it goes, a JSON line an event, in `events.jsonl` beside
   the tasks' state, which `factory clean` leaves.
 - `extras/factory-user/`: a recipe for running Factory, Herdr and the agents as a user of

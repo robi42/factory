@@ -361,8 +361,9 @@ reviewers' objections, your notes, the time the agents, the gate and you took, a
 tokens the agents read and wrote. Under the same columns come the means per finished task
 for each Factory version, each naming how many tasks it counts and how many of them were
 done, which tell whether a change to Factory, its prompts or its models helped; then the
-guardrails that failed, by check; and your latest notes. What goes wrong again and again
-shows there, to be turned into a guardrail, a check in the gate, or a memory.
+guardrails that failed, by check; and your latest notes, each on one line, cut to fit the
+terminal. What goes wrong again and again shows there, to be turned into a guardrail, a
+check in the gate, or a memory.
 
 ## The gate
 

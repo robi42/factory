@@ -3457,7 +3457,7 @@ cmd_status() {
 
 # cmd_stats repo: how the repo's tasks went, from the events their runs recorded (events_file)
 cmd_stats() {
-  local repo state file color=0
+  local repo state file color=0 width=0
   repo=$(repo_top "$1") || exit 1
   state=$(repo_state "$repo") || die "$repo: git names no git dir for it"
   file=$(events_file "$state")
@@ -3465,9 +3465,13 @@ cmd_stats() {
     log "no runs of the tasks of $repo recorded yet"
     return 0
   fi
-  [[ -t 1 ]] && color=1
+  if [[ -t 1 ]]; then
+    color=1
+    width=$(tput cols 2>/dev/null) || width=80
+    [[ $width =~ ^[0-9]+$ ]] || width=80
+  fi
   # a line a run left torn, as it died writing it, counts for nothing
-  jq -cR 'fromjson?' "$file" | jq -rs --argjson color "$color" "$(stats_jq)"
+  jq -cR 'fromjson?' "$file" | jq -rs --argjson color "$color" --argjson width "$width" "$(stats_jq)"
   log "from ${file/#"$HOME"/"~"}"
 }
 
@@ -3475,11 +3479,17 @@ cmd_stats() {
 # finished task for each Factory version, which tell whether a change to Factory, its prompts
 # or its models helped; the guardrails that failed, and your latest notes, where what goes
 # wrong again and again shows. The two tables share their columns' widths, so that a version's
-# means line up under its tasks' rows; $color 1 paints them for a terminal, in bd's colours.
+# means line up under its tasks' rows; $color 1 paints them for a terminal, in bd's colours,
+# and a $width above 0 cuts each note to it.
 stats_jq() {
   cat <<'JQ'
 def pad($n): tostring | if length < $n then . + " " * ($n - length) else . end;
 def lpad($n): tostring | if length < $n then " " * ($n - length) + . else . end;
+# oneline: a note's lines on one, · between them, without the blank ones and a list's markers
+def oneline: [splits("\n") | sub("^\\s+"; "") | sub("^([-*+]|[0-9]+[.)])\\s+"; "") | sub("\\s+$"; "")
+  | select(length > 0)] | join(" · ");
+# fit($n): at most $n characters, with … for the end it cuts off; at least 20 on a narrow terminal
+def fit($n): ([$n, 20] | max) as $n | if $width > 0 and length > $n then .[:$n - 1] + "…" else . end;
 def paint($c): if $color == 1 and $c != "" then "\u001b[\($c)m\(.)\u001b[m" else . end;
 def bold: paint("1");
 def grey: paint("38;2;108;118;128");
@@ -3552,7 +3562,8 @@ def line($w; $left; $colours): . as $r
     | "", "\("guardrails that failed:" | bold) \(map("\(.[0]) \(length)") | join(", "))"),
   ([$events[] | select(.event == "answer" and .answer == "note")] | reverse | .[:10] | select(length > 0)
     | "", ("your notes, latest first:" | bold),
-      (.[] | "  \(.task | pad(11))\(.gate | pad(7))\(.t[:10])  \(.note | tostring | split("\n") | .[0] | .[:100])"))
+      (.[] | "  \(.task | pad(11))\(.gate | pad(7))\(.t[:10])  " as $lead
+        | $lead + (.note | tostring | oneline | fit($width - ($lead | length)))))
 JQ
 }
 
