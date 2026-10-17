@@ -3613,10 +3613,60 @@ JSON
   [[ $output == *"unexpected worktree response"* ]]
 }
 
-@test "set_color: /color to the agent, without waiting" {
-  herdr() { printf '%s\n' "$*" >>"$TMP/herdr.log"; }
-  set_color plan purple
-  [ "$(cat "$TMP/herdr.log")" = "agent prompt plan /color purple" ]
+@test "set_color: /color is typed, and its Enter goes in once the prompt shows it; then the screen says the colour is set" {
+  herdr() { # the screen: the shell's until the box is up, then an empty prompt box, the typed /color in it unless unseen, after the Enter the answer unless stuck
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent get plan") printf '{"result":{"agent":{"pane_id":"w1:p2"}}}' ;;
+      "agent read plan"*)
+        if [[ ! -e $TMP/box ]]; then
+          printf '%s\n' '$ claude --name plan'
+        elif grep -q '^agent send-keys plan enter$' "$TMP/herdr.log" && [[ ! -e $TMP/stuck ]]; then
+          printf '%s\n' '❯ /color purple' '  ⎿ Session color' '    set to: purple' '──── plan ─' '❯ ' '────'
+        elif grep -q '^pane send-text' "$TMP/herdr.log" && [[ ! -e $TMP/unseen ]]; then
+          printf '%s\n' '──── plan ─' '❯ /color purple' '────'
+        else # an empty box; where the typed /color stays unseen, an earlier session's shows above it
+          [[ ! -e $TMP/unseen ]] || printf '%s\n' '❯ /color purple' '  ⎿ Session color set to: purple'
+          printf '%s\n' '──── plan ─' '❯ ' '────'
+        fi
+        ;;
+    esac
+  }
+  sleep() { :; }
+  # the session never draws its prompt box: nothing is typed, which its shell would take
+  run set_color plan purple
+  [ "$status" -eq 0 ]
+  [ "$(grep -v '^agent read' "$TMP/herdr.log" | paste -sd,)" = "agent get plan" ]
+  [[ $output == *"plan: could not set the session colour"* ]]
+  rm "$TMP/herdr.log"
+  touch "$TMP/box"
+  run set_color plan purple
+  [ "$status" -eq 0 ]
+  [ "$(grep -v '^agent read' "$TMP/herdr.log" | paste -sd,)" = "agent get plan,pane send-text w1:p2 /color purple,agent send-keys plan enter" ]
+  [[ $output != *"could not set"* ]]
+  # the typed /color never shows: no Enter goes after it, which could come in with it as a paste
+  rm "$TMP/herdr.log"
+  touch "$TMP/unseen"
+  run set_color plan purple
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^agent send-keys' "$TMP/herdr.log")" -eq 0 ]
+  [[ $output == *"plan: could not set the session colour"* ]]
+  # the Enter went in, and the screen never says the colour is set: one Enter, and no Ctrl-C
+  rm "$TMP/herdr.log" "$TMP/unseen"
+  touch "$TMP/stuck"
+  run set_color plan purple
+  [ "$(grep -c '^agent send-keys' "$TMP/herdr.log")" -eq 1 ]
+  [[ $output == *"plan: could not set the session colour"* ]]
+  # the agent is gone, as one that crashed as it started: it says so, and under the run's
+  # errexit the run goes on, to find out what became of it
+  rm "$TMP/herdr.log"
+  herdr() {
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    [[ $1 != agent || $2 != get ]]
+  }
+  set_color plan purple 2>"$TMP/err"
+  [ "$(paste -sd, "$TMP/herdr.log")" = "agent get plan" ]
+  grep -q 'plan: could not set the session colour' "$TMP/err"
 }
 
 @test "close_extra_panes: the planner's and the reviewer's panes their agents left go, where the shell waits at its prompt; the human's panes stay" {

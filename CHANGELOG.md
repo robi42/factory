@@ -249,6 +249,10 @@ your approval takes your answer where its own Factory looks for it.
   stopped with "the shell does not run commands". Its setup takes the shell to the
   worktree now, and passes only on a mark of its own, not on one an agent that quit left
   on screen.
+- A Claude agent just started could take `/color` and its Enter as one paste: the colour
+  was lost, or the command stayed in its prompt and swallowed Factory's next prompt, a
+  stall of 20 seconds. The command goes in first now, and its Enter once the prompt shows
+  it.
 - The `extras/cargo-sccache` wrapper printed a write error on a compile's stderr now and
   then, under `mise exec`, which leaves SIGPIPE ignored. It now reads every sccache on the
   PATH before it picks one, so it writes into no closed pipe.

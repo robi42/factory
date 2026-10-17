@@ -347,12 +347,33 @@ dialog_hooks() {
 }
 
 # set_color agent colour: Claude Code's /color tints the session's prompt line, which is how
-# the two Claude panes are told apart: the planner is purple, the builder cyan.
+# the two Claude panes are told apart: the planner is purple, the builder cyan. A session just
+# started can take its input in bursts, in which a command and its Enter come in as one paste:
+# the Enter turns into a newline, and the command waits in the prompt for the next one to join
+# it. So the command is typed first, and its Enter goes in once the prompt shows it.
 set_color() {
-  # no --wait: /color finishes without a lifecycle change, which --wait would report as a stall
-  if ! herdr agent prompt "$1" "/color $2" >/dev/null 2>&1; then
-    warn "$1: could not set the session colour"
+  local pane
+  if pane=$(herdr agent get "$1" 2>/dev/null | jq -er '.result.agent.pane_id') && poll 60 1 box_drawn "$1" \
+    && herdr pane send-text "$pane" "/color $2" >/dev/null 2>&1 && poll 30 1 colour_draft "$1"; then
+    keys "$1" enter
+    poll 10 1 colour_set "$1" "$2" && return 0
   fi
+  warn "$1: could not set the session colour"
+}
+
+# colour_set agent colour: the agent's screen says its session's colour is set to that one, in
+# words a narrow pane may wrap
+colour_set() {
+  local txt
+  txt=$(screen_of "$1") || return 1
+  txt=$(tr '\n' ' ' <<<"$txt" | tr -s ' ')
+  [[ $txt == *"Session color set to: $2"* ]]
+}
+
+# colour_draft agent: a /color waits in the agent's prompt box, between the last two rules
+colour_draft() {
+  screen_of "$1" | awk '/^─/ { r[++n] = NR } { l[NR] = $0 }
+    END { if (n < 2) exit 1; for (i = r[n - 1] + 1; i < r[n]; i++) if (l[i] ~ /\/color/) exit 0; exit 1 }'
 }
 
 # close_extra_panes workspace keep-pane: drop the panes a planner and a reviewer that quit left,
