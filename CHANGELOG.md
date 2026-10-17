@@ -243,6 +243,8 @@ your approval takes your answer where its own Factory looks for it.
   that ran no agent, but the builder's, so tabs of your own there went too, with what ran
   in them. It closes only the planner's and the reviewer's old panes now, where the shell
   waits at its prompt.
+- A rerun with none of a task's agents alive typed its setup, and Ctrl-C, into whatever
+  ran in the builder's pane, an editor of yours say. It stops and says so now.
 - The `extras/cargo-sccache` wrapper printed a write error on a compile's stderr now and
   then, under `mise exec`, which leaves SIGPIPE ignored. It now reads every sccache on the
   PATH before it picks one, so it writes into no closed pipe.

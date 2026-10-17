@@ -2964,6 +2964,13 @@ start_or_adopt_agents() {
     return 0
   fi
   [[ $live == 0 ]] || die "only some agents of $TASK_ID are alive in workspace $WS; quit those (/exit in their panes), then rerun to start all three again"
+  # the fresh start takes the builder's pane as it is, and types into its shell: never into what
+  # runs there instead. In front, not shell_waits: a new workspace's shell may not have its line
+  # editor up yet.
+  [[ $BUILD_PANE != "${HERDR_PANE_ID:-}" ]] \
+    || die "this run is in the builder's pane $BUILD_PANE, which a fresh start of the agents takes: rerun Factory from another pane or terminal"
+  poll 10 1 shell_in_front "$BUILD_PANE" \
+    || die "something runs in the builder's pane $BUILD_PANE, which a fresh start of the agents takes: end it, then rerun"
   # a question the old agents left open went with their sessions, whose transcripts will
   # never close it: its marks would have the fresh agents wait for an answer forever
   rm -f "$WT/$RUN_DIR/asking-plan" "$WT/$RUN_DIR/asking-build" "$TASK_STATE/tree-at-ask"

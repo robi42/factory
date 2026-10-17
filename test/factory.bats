@@ -6,7 +6,7 @@ setup() {
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 # the fixtures' git ignores this machine's config
   local git_env
   mapfile -t git_env < <(git rev-parse --local-env-vars)
-  unset "${git_env[@]}" "${!FACTORY_@}" # a hook's GIT_DIR or GIT_INDEX_FILE, and the knobs the shell exported
+  unset "${git_env[@]}" "${!FACTORY_@}" HERDR_PANE_ID # a hook's GIT_DIR or GIT_INDEX_FILE, the knobs the shell exported, a Herdr pane's id
   export FACTORY_GUARDRAILS="$BATS_TEST_DIRNAME/../guardrails.txt"
   # shellcheck source=../factory
   source "$BATS_TEST_DIRNAME/../factory"
@@ -3847,6 +3847,30 @@ JSON
   [ "$(live_agents w2 t-plan)" = 0 ]
 }
 
+@test "start_or_adopt_agents: a fresh start stops where something runs in the builder's pane, or this run does; it types nothing there" {
+  fake_task
+  PLAN_AGENT=toy-1-plan BUILD_AGENT=toy-1-build REVIEW_AGENT=toy-1-review
+  WS=w1 WT=$TMP BUILD_PANE=p1 FACTORY_HOME=$TMP/factory
+  herdr() { # an editor runs in front in the builder's pane
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent list"*) printf '{"result":{"agents":[]}}' ;;
+      "pane process-info"*) printf '{"result":{"process_info":{"foreground_process_group_id":7,"shell_pid":6}}}' ;;
+      *) printf '{"result":{}}' ;;
+    esac
+  }
+  sleep() { :; }
+  run start_or_adopt_agents "$TMP/repo"
+  [ "$status" -eq 1 ]
+  [[ $output == *"something runs in the builder's pane p1, which a fresh start of the agents takes: end it, then rerun"* ]]
+  [ "$(grep -c '^pane process-info --pane p1$' "$TMP/herdr.log")" -eq 10 ] # ten looks: a new shell may run something as it starts
+  [ "$(grep -cE '^pane (close|split|rename|run|send)' "$TMP/herdr.log")" -eq 0 ]
+  # this run is in the builder's pane: it says to rerun from another
+  HERDR_PANE_ID=p1 run start_or_adopt_agents "$TMP/repo"
+  [ "$status" -eq 1 ]
+  [[ $output == *"this run is in the builder's pane p1, which a fresh start of the agents takes: rerun Factory from another pane or terminal"* ]]
+}
+
 @test "start_or_adopt_agents: fresh agents drop the marks of questions their predecessors left open; live ones keep them" {
   fake_task
   PLAN_AGENT=toy-1-plan BUILD_AGENT=toy-1-build REVIEW_AGENT=toy-1-review
@@ -3863,6 +3887,7 @@ JSON
       "agent list"*) printf '{"result":{"agents":[]}}' ;;
       "pane list"*) printf '{"result":{"panes":[]}}' ;;
       "pane split"*) printf '{"result":{"pane":{"pane_id":"p1"}}}' ;;
+      "pane process-info"*) printf '{"result":{"process_info":{"foreground_process_group_id":6,"shell_pid":6}}}' ;;
       *) printf '{"result":{}}' ;;
     esac
   }
