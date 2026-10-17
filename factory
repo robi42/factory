@@ -2316,11 +2316,12 @@ Commit; do not push. Reply with the content of copilot-$1-response.md if you wro
 P
 }
 
-# gate_dialog_prompt role: the approval dialog the agent is to show. Its header tells the hook
-# Factory's dialog from the agent's own questions, and its labels are the hook's choices.
+# gate_dialog_prompt role [paths]: the approval dialog the agent is to show. Its header tells the
+# hook Factory's dialog from the agent's own questions, and its labels are the hook's choices;
+# the plan's waiver names in its description the paths it allows, the ones the plan names.
 gate_dialog_prompt() {
   local options='"Approve" and "Abort"'
-  [[ $1 == build ]] || options='"Approve", "Approve, allow protected paths" and "Abort"'
+  [[ $1 == build ]] || options="\"Approve\", \"Approve, allow protected paths\" (described as \"Allows the protected paths the plan names: ${2:-none}\") and \"Abort\""
   printf 'Ask the human with your AskUserQuestion tool: one question, header "fy %s", text "Approve the %s for %s, or type a note to have it revised?", options %s, in that order. Factory takes the answer from the dialog itself, so do not act on it or run anything; once it is answered or dismissed, reply with just DONE.' "$1" "$1" "$TASK_ID" "$options"
 }
 
@@ -2518,7 +2519,8 @@ show_dialog() {
     warn "$2 asks you something already; answer it, then the approval in Factory's terminal or with fy"
     return 0
   fi
-  out=$(herdr agent prompt "$2" "$(gate_dialog_prompt "$1")" 2>&1) || warn "$2: no approval dialog: $(herr_msg "$out")"
+  out=$(herdr agent prompt "$2" "$(gate_dialog_prompt "$1" "$(protected_named "$3/plan.md" | listed)")" 2>&1) \
+    || warn "$2: no approval dialog: $(herr_msg "$out")"
 }
 
 # dismiss_dialog role agent dir: once the gate has its answer, an approval dialog the agent

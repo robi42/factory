@@ -1060,9 +1060,11 @@ P
   [ "$status" -eq 0 ]
   [ ! -e "$TMP/herdr.log" ]
   printf '{}' >"$TMP/hooks-plan.json"
+  printf 'the plan\n\nProtected paths: mise.toml, .factory/gate\n' >"$TMP/plan.md"
   run human_gate plan planner "$TMP" <<<"a"
   [ "$status" -eq 0 ]
   grep -q '^agent prompt planner Ask the human with your AskUserQuestion tool: one question, header "fy plan"' "$TMP/herdr.log"
+  grep -qF '"Approve, allow protected paths" (described as "Allows the protected paths the plan names: mise.toml, .factory/gate")' "$TMP/herdr.log"
   grep -qx 'agent send-keys planner esc' "$TMP/herdr.log"
   [[ $output == *"planner: dismissed its approval dialog, answered elsewhere"* ]]
   [[ $output == *"talk to the planner, after Esc on its dialog, first if you like"* ]]
@@ -2482,7 +2484,7 @@ IN
   protected_globs() { :; }
   BRANCH=work
   [[ $(build_prompt) == *"The human approves, revises or aborts the build in a dialog Factory has you show, or by typing !fy approve, !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
-  [[ $(gate_dialog_prompt plan) == *'header "fy plan", text "Approve the plan for toy-1, or type a note to have it revised?", options "Approve", "Approve, allow protected paths" and "Abort", in that order'*"do not act on it or run anything"* ]]
+  [[ $(gate_dialog_prompt plan) == *'header "fy plan", text "Approve the plan for toy-1, or type a note to have it revised?", options "Approve", "Approve, allow protected paths" (described as "Allows the protected paths the plan names: none") and "Abort", in that order'*"do not act on it or run anything"* ]]
   [[ $(gate_dialog_prompt build) == *'header "fy build"'*'options "Approve" and "Abort", in that order'* ]]
   [[ $(plan_fix_prompt 1) == *"reply with the plan's content"* ]]
   [[ $(plan_note_prompt "split it") == *"Reply with the content of plan-changes.md"* ]]

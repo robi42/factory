@@ -28,13 +28,13 @@ your approval takes your answer where its own Factory looks for it.
 ### Added
 - The approvals ask you in a question dialog in the agent's pane, the planner's for the
   plan and the builder's for the build: Approve, Abort, for the plan also Approve, allow
-  protected paths, or a typed note to have it revised, which arrives as typed, with no
-  shell in between. Hooks that Factory gives the agent as it starts it (`--settings`)
-  hand your answer to the run, so the agent never relays it, and mark the dialog as open
-  meanwhile, so that Factory neither types into it nor takes it for the end of the
-  agent's turn. Factory's terminal prompt and the `fy` commands still answer too, `!fy`
-  typed in a pane that shows no dialog (keys typed into the dialog go to it), and Factory
-  closes the dialog when they do.
+  protected paths, which lists the ones the plan names, or a typed note to have it
+  revised, which arrives as typed, with no shell in between. Hooks that Factory gives the
+  agent as it starts it (`--settings`) hand your answer to the run, so the agent never
+  relays it, and mark the dialog as open meanwhile, so that Factory neither types into it
+  nor takes it for the end of the agent's turn. Factory's terminal prompt and the `fy`
+  commands still answer too, `!fy` typed in a pane that shows no dialog (keys typed into
+  the dialog go to it), and Factory closes the dialog when they do.
 - Every answer you give on a task, the planner's questions included, goes into Factory's
   state for the task, onto the bead as a comment, and into the pull request's description.
   A planner that starts over reads it, as `.factory/run/decisions.md`, before asking

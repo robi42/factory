@@ -193,12 +193,13 @@ second one pays for the overlap.
 
 Each approval asks you in a question dialog in the agent's pane, the planner's for the
 plan and the builder's for the build: pick Approve or Abort (for the plan also Approve,
-allow protected paths), or type a note to have it revised. The note arrives as you typed
-it, with no shell in between, and ctrl+g opens your editor for a longer one. A hook that
-Factory gives the agent when it starts takes your answer to the run, so the agent never
-relays it, and tells Factory while a dialog is open. An agent that runs without the hook,
-one an older Factory started or one Herdr restored while the run went on, shows no
-dialog: answer in Factory's terminal or with the commands below.
+allow protected paths, which lists the ones the plan names), or type a note to have it
+revised. The note arrives as you typed it, with no shell in between, and ctrl+g opens your
+editor for a longer one. A hook that Factory gives the agent when it starts takes your
+answer to the run, so the agent never relays it, and tells Factory while a dialog is open.
+An agent that runs without the hook, one an older Factory started or one Herdr restored
+while the run went on, shows no dialog: answer in Factory's terminal or with the commands
+below.
 
 The approval also takes your answer in two more places, whichever comes first, and closes
 the dialog when it does. In Factory's terminal, at its prompt. Or as a command: from any
