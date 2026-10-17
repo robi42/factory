@@ -350,10 +350,11 @@ has used. `fy clean` leaves it, and `fy stats` sums it up.
 `fy stats <repo>` shows a row for each of the latest 20 tasks: its outcome and Factory
 version, its plan and build rounds, how often the gate and the guardrails failed, the
 reviewers' objections, your notes, the time the agents, the gate and you took, and the
-tokens the agents read and wrote. Then the same as means per finished task for each
-Factory version, which tell whether a change to Factory, its prompts or its models helped;
-the guardrails that failed, by check; and your latest notes. What goes wrong again and
-again shows there, to be turned into a guardrail, a check in the gate, or a memory.
+tokens the agents read and wrote. Under the same columns come the means per finished task
+for each Factory version, each naming how many tasks it counts and how many of them were
+done, which tell whether a change to Factory, its prompts or its models helped; then the
+guardrails that failed, by check; and your latest notes. What goes wrong again and again
+shows there, to be turned into a guardrail, a check in the gate, or a memory.
 
 ## The gate
 

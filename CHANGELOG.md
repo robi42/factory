@@ -53,13 +53,13 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   `Protected paths: none` or which, so you know at approval whether to allow them. The
   planner is told which paths are protected; Factory warns at the approval when the plan
   does not say.
-- `fy stats <repo>` shows how the repo's tasks went: for each task its plan and build
+- `factory stats <repo>` shows how the repo's tasks went: for each task its plan and build
   rounds, how often the gate and the guardrails failed, the reviewers' objections, your
   notes, the time the agents, the gate and you took, and the tokens the agents read and
-  wrote; the same as means per finished task for each Factory version, which tell whether
-  a change helped; the guardrails that failed; and your latest notes. Each run records
-  what it does as it goes, a JSON line an event, in `events.jsonl` beside the tasks'
-  state, which `fy clean` leaves.
+  wrote; under the same columns, the means per finished task for each Factory version,
+  which tell whether a change helped; the guardrails that failed; and your latest notes.
+  Each run records what it does as it goes, a JSON line an event, in `events.jsonl` beside
+  the tasks' state, which `factory clean` leaves.
 - `extras/factory-user/`: a recipe for running Factory, Herdr and the agents as a user of
   their own, which holds only its clones, a GitHub token for them and the agents' logins,
   so that an `--auto` run reaches nothing else of yours.
@@ -95,6 +95,8 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   to a changed `.rs` file counts for the tests-required check.
 - Each refusal of the guardrails, and each stop, says what to do next.
 - `factory pr` refuses `--auto` and `--fresh`, which do nothing there.
+- `factory tasks`, `approve`, `reject` and `abort` read no knob, and no longer load the
+  repo's `.factory/env` or say which knobs it set.
 
 ### Removed
 - **Breaking:** `factory answer` (`!fy answer` in a pane) and the questions relay

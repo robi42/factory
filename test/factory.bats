@@ -4780,7 +4780,7 @@ SH
   [ "${lines[4]}" = '{"event":"guard","ok":0,"failed":"ungated"}' ]
 }
 
-@test "stats: a row a task, the means per finished task by version, the guardrails that failed, your notes" {
+@test "cmd_stats: a row a task, the means per finished task by version, the guardrails that failed, your notes" {
   make_repo
   run cmd_stats "$REPO"
   [[ $output == *"no runs of the tasks of $REPO recorded yet"* ]]
@@ -4814,17 +4814,32 @@ SH
   printf '{"t":"2026-10-15T10:32:00Z","task":"bk-b2","eve\n' >>"$file" # torn, as by a run that died writing it
   run cmd_stats "$REPO"
   [ "$status" -eq 0 ]
-  [ "${lines[0]}" = "TASK       OUTCOME      VERSION    PLAN  BUILD   GATE  GUARD REVISE  NOTES AGENTS GATING    YOU  TOKENS" ]
-  [ "${lines[1]}" = "bk-a1      done         0.1.11        2      3      1      1      1      1    38m    20m    11m  5M/200k" ]
-  [ "${lines[2]}" = "bk-b2      running      0.2.0         1      1      0      1      0      0    15m    30s     0s  -" ]
-  [[ $output == *"by Factory version:"$'\n'"0.1.11     1 finished   1 done        2      3      1      1      1      1    38m    20m    11m  5M/200k"$'\n'* ]]
-  [[ $output != *"0.2.0      1 finished"* ]] # a task still running counts in no mean
+  [ "${lines[0]}" = "TASK   OUTCOME  VERSION  PLAN  BUILD  GATE  GUARD  REVISE  NOTES  AGENTS  GATING  YOU   TOKENS" ]
+  [ "${lines[1]}" = "bk-a1  done     0.1.11      2      3     1      1       1      1     38m     20m  11m  5M/200k" ]
+  [ "${lines[2]}" = "bk-b2  running  0.2.0       1      1     0      1       0      0     15m     30s   0s        -" ]
+  # the means line up under the rows' numbers
+  [[ $output == *"by Factory version"$'\n'"VERSION                  PLAN  BUILD  GATE  GUARD  REVISE  NOTES  AGENTS  GATING  YOU   TOKENS"$'\n'"0.1.11 (1 task, 1 done)     2      3     1      1       1      1     38m     20m  11m  5M/200k"$'\n'* ]]
+  [[ $output != *"0.2.0 ("* ]] # a task still running counts in no mean
   [[ $output == *"guardrails that failed: tests 2, lines 1"* ]]
   [[ $output == *"your notes, latest first:"$'\n'"  bk-a1      plan   2026-10-15  keep it in one module"* ]]
-  # past 20 tasks, the rows say how many earlier ones they leave out
+  [[ ${lines[0]}${lines[1]} != *$'\e['* ]] # no colour off a terminal
+  # on one, the headers are bold and an outcome has its colour
+  painted() { jq -cR 'fromjson?' "$file" | jq -rs --argjson color 1 "$(stats_jq)"; }
+  run painted
+  [[ ${lines[0]} == $'\e[1mTASK '* ]]
+  [[ ${lines[1]} == "bk-a1  "$'\e[38;2;170;217;76mdone   \e[m  0.1.11 '* ]]
+  # past 20 tasks, the rows say how many earlier ones they leave out; a means label wider than
+  # task, outcome and version widens the version column, and the means stay under the rows
   local i
-  for i in $(seq 1 20); do ev 11:00 "bk-c$i" run ',"from":"start","version":"0.2.0"'; done
+  for i in $(seq 1 20); do
+    ev 11:00 "bk-c$i" run ',"from":"start","version":"0.2.0-rc.1"'
+    ev 11:30 "bk-c$i" end ',"outcome":"done","step":"finishing"'
+  done
   run cmd_stats "$REPO"
   [[ $output == *"(2 earlier task(s) left out here; the means count them)"* ]]
-  [[ $output != *"bk-a1      done"* ]]
+  [[ $output != *$'\n'"bk-a1 "* ]] # no row, however wide the column; the notes' lines are indented
+  [[ $output != *$'\n'"bk-b2 "* ]]
+  [ "${lines[0]}" = "TASK    OUTCOME  VERSION        PLAN  BUILD  GATE  GUARD  REVISE  NOTES  AGENTS  GATING  YOU   TOKENS" ]
+  [ "${lines[1]}" = "bk-c1   done     0.2.0-rc.1        0      0     0      0       0      0      0s      0s   0s        -" ]
+  [[ $output == *$'\n'"0.2.0-rc.1 (20 tasks, 20 done)     0      0     0      0       0      0      0s      0s   0s        -"* ]]
 }

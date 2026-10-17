@@ -3318,7 +3318,7 @@ cmd_status() {
 
 # cmd_stats repo: how the repo's tasks went, from the events their runs recorded (events_file)
 cmd_stats() {
-  local repo state file
+  local repo state file color=0
   repo=$(repo_top "$1") || exit 1
   state=$(repo_state "$repo") || die "$repo: git names no git dir for it"
   file=$(events_file "$state")
@@ -3326,26 +3326,30 @@ cmd_stats() {
     log "no runs of the tasks of $repo recorded yet"
     return 0
   fi
+  [[ -t 1 ]] && color=1
   # a line a run left torn, as it died writing it, counts for nothing
-  jq -cR 'fromjson?' "$file" | jq -rs "$(stats_jq)"
-  log "from $file"
+  jq -cR 'fromjson?' "$file" | jq -rs --argjson color "$color" "$(stats_jq)"
+  log "from ${file/#"$HOME"/"~"}"
 }
 
 # stats_jq: the jq that sums the events up: a row a task, for the latest 20; the means per
 # finished task for each Factory version, which tell whether a change to Factory, its prompts
 # or its models helped; the guardrails that failed, and your latest notes, where what goes
-# wrong again and again shows
+# wrong again and again shows. The two tables share their columns' widths, so that a version's
+# means line up under its tasks' rows; $color 1 paints them for a terminal, in bd's colours.
 stats_jq() {
   cat <<'JQ'
 def pad($n): tostring | if length < $n then . + " " * ($n - length) else . end;
 def lpad($n): tostring | if length < $n then " " * ($n - length) + . else . end;
+def paint($c): if $color == 1 and $c != "" then "\u001b[\($c)m\(.)\u001b[m" else . end;
+def bold: paint("1");
+def grey: paint("38;2;108;118;128");
 def dur: floor | if . >= 3600 then "\(. / 3600 | floor)h\(. % 3600 / 60 | floor)m"
   elif . >= 60 then "\(. / 60 | floor)m" else "\(.)s" end;
 def tok: if . >= 1e6 then "\(. / 1e5 | floor / 10)M" elif . >= 1e3 then "\(. / 1e3 | floor)k"
   else "\(floor)" end;
 def count(f): [.[] | select(f)] | length;
 def sum(f): [.[] | f] | add // 0;
-def row: "\(.[0] | pad(11))\(.[1] | pad(13))\(.[2] | pad(8))\(.[3:-1] | map(lpad(7)) | add)  \(.[-1])";
 def tokens: if .in + .out > 0 then "\(.in | tok)/\(.out | tok)" else "-" end;
 def session_max(f): [.[] | select(.event == "tokens")] | group_by(.session) | map(map(f) | max) | add // 0;
 def fold: {
@@ -3369,23 +3373,46 @@ def mean(f): map(f) | add / length | . * 10 | round / 10;
 def means: {plan: mean(.plan), build: mean(.build), gate: mean(.gate), guard: mean(.guard),
   revise: mean(.revise), notes: mean(.notes), agents: mean(.agents), gating: mean(.gating),
   you: mean(.you), in: mean(.in), out: mean(.out)};
+# widths: the widest cell of each column, across the rows given
+def widths: reduce .[] as $r ([]; . as $w
+  | [range([($w | length), ($r | length)] | max) | [$w[.] // 0, ($r[.] // "" | tostring | length)] | max]);
+# line(widths; left; colours): cells two spaces apart, the first left of them flush left and the
+# rest, numbers, flush right; a colour paints the cell of its column
+def line($w; $left; $colours): . as $r
+  | [range($r | length) as $i | $r[$i] | if $i < $left then pad($w[$i]) else lpad($w[$i]) end
+      | paint($colours[$i] // "")]
+  | join("  ");
 [to_entries[] | .value + {n: .key}] as $events
 | ($events | group_by(.task) | map(sort_by(.n) | fold) | sort_by(.first)) as $tasks
-| (["TASK", "OUTCOME", "VERSION", "PLAN", "BUILD", "GATE", "GUARD", "REVISE", "NOTES", "AGENTS",
-    "GATING", "YOU", "TOKENS"] | row),
-  ($tasks[-20:][] | [.task, .outcome, .version] + cells | row),
-  (($tasks | length) - 20 | select(. > 0) | "(\(.) earlier task(s) left out here; the means count them)"),
-  "PLAN, BUILD: rounds; GATE, GUARD: failures; REVISE: the reviewers' objections; NOTES: yours;",
-  "AGENTS, GATING, YOU: the time they took; TOKENS: what the agents read/wrote",
-  ($tasks | map(select(.outcome | IN("done", "handed_over", "stopped"))) | select(length > 0)
-    | "", "means per finished task (done, handed over or stopped), by Factory version:",
-      (group_by(.version) | sort_by(map(.first) | min)[]
-        | [.[0].version, "\(length) finished", "\(count(.outcome == "done")) done"] + (means | cells) | row)),
+| ["TASK", "OUTCOME", "VERSION", "PLAN", "BUILD", "GATE", "GUARD", "REVISE", "NOTES", "AGENTS", "GATING",
+    "YOU", "TOKENS"] as $head
+| [$tasks[-20:][] | [.task, (.outcome | gsub("_"; " ")), .version] + cells] as $rows
+| [$tasks | map(select(.outcome | IN("done", "handed_over", "stopped")))
+    | group_by(.version) | sort_by(map(.first) | min)[]
+    | ["\(.[0].version) (\(length) task\(if length > 1 then "s" else "" end), \(count(.outcome == "done")) done)"]
+      + (means | cells)] as $means
+# the means' rows line up under the tasks' numbers, their label as wide as task, outcome and version
+| ([$head[3:]] + ($rows | map(.[3:])) + ($means | map(.[1:])) | widths) as $nw
+| ([$head[:3]] + ($rows | map(.[:3])) | widths) as $tw
+| ([$means[][0] | length] | max // 0) as $label
+| ($tw | .[2] += ([$label - add - 4, 0] | max)) as $tw
+| ($tw | add + 4) as $lead
+| ($head | (.[:3] | line($tw; 3; [])) + "  " + (.[3:] | line($nw; 0; [])) | bold),
+  ($rows[] | (.[:3] | line($tw; 3; [null, {done: "38;2;170;217;76", "handed over": "38;2;255;180;84",
+      stopped: "38;2;242;109;120", running: "38;2;89;194;255"}[.[1]]])) + "  " + (.[3:] | line($nw; 0; []))),
+  (($tasks | length) - 20 | select(. > 0) | "(\(.) earlier task(s) left out here; the means count them)" | grey),
+  ($means | select(length > 0)
+    | "", ("means per finished task (done, handed over or stopped), by Factory version" | bold),
+      (("VERSION" | pad($lead)) + "  " + ($head[3:] | line($nw; 0; [])) | bold),
+      (.[] | (.[0] | pad($lead)) + "  " + (.[1:] | line($nw; 0; [])))),
+  "",
+  ("PLAN, BUILD: rounds · GATE, GUARD: failures · REVISE: the reviewers' objections · NOTES: yours" | grey),
+  ("AGENTS, GATING, YOU: the time they took · TOKENS: what the agents read/wrote" | grey),
   ([$events[] | select(.event == "guard" and .ok == 0) | .failed | tostring | splits(" ")]
     | group_by(.) | sort_by(length) | reverse | select(length > 0)
-    | "", "guardrails that failed: \(map("\(.[0]) \(length)") | join(", "))"),
+    | "", "\("guardrails that failed:" | bold) \(map("\(.[0]) \(length)") | join(", "))"),
   ([$events[] | select(.event == "answer" and .answer == "note")] | reverse | .[:10] | select(length > 0)
-    | "", "your notes, latest first:",
+    | "", ("your notes, latest first:" | bold),
       (.[] | "  \(.task | pad(11))\(.gate | pad(7))\(.t[:10])  \(.note | tostring | split("\n") | .[0] | .[:100])"))
 JQ
 }
@@ -3949,12 +3976,17 @@ take_flags() {
 main() {
   local cmd=${1:-help} a u
   if (($# > 0)); then shift; fi
-  for a in "$@"; do # the first non-flag argument usually names the repo (task_args finds it in a worktree)
-    if [[ $a != --* ]]; then
-      load_repo_env "$a"
-      break
-    fi
-  done
+  case $cmd in
+    tasks | approve | reject | abort | stats | dialog-hook) ;; # these read no knob
+    *)
+      for a in "$@"; do # the first non-flag argument usually names the repo (task_args finds it in a worktree)
+        if [[ $a != --* ]]; then
+          load_repo_env "$a"
+          break
+        fi
+      done
+      ;;
+  esac
   case $cmd in
     run)
       take_flags "$@"
