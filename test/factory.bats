@@ -3847,6 +3847,30 @@ JSON
   [ "$(live_agents w2 t-plan)" = 0 ]
 }
 
+@test "prime_shell: the setup runs in the worktree, and only its own mark counts, not one an agent that quit left on screen" {
+  WT="$TMP/a wt"
+  sleep() { :; }
+  herdr() { # the screen keeps the marks earlier setups left; a setup the shell runs ($TMP/runs) adds its own
+    case "$1 $2" in
+      "pane run")
+        printf '%s\n' "$4" >>"$TMP/ran"
+        [[ ! -e $TMP/runs ]] || sed -nE "s/.*printf 'factory-ready-%s\\\\n' ([0-9]+)$/factory-ready-\1/p" <<<"$4" >>"$TMP/screen"
+        ;;
+      "pane wait-output") grep -qF -- "$4" "$TMP/screen" ;;
+    esac
+  }
+  printf 'factory-ready\n' >"$TMP/screen" # an older Factory's mark
+  touch "$TMP/runs"
+  prime_shell p1
+  [ "$(wc -l <"$TMP/ran")" -eq 1 ]
+  [[ $(cat "$TMP/ran") == "cd $TMP/a\\ wt && . .factory/run/env.sh && clear && printf 'factory-ready-%s\\n' "* ]]
+  rm "$TMP/runs" "$TMP/ran" # the shell swallows the setup: the marks on screen, its own last one too, do not pass
+  run prime_shell p1
+  [ "$status" -eq 1 ]
+  [[ $output == *"pane p1: the shell does not run commands"* ]]
+  [ "$(wc -l <"$TMP/ran")" -eq 3 ]
+}
+
 @test "start_or_adopt_agents: a fresh start stops where something runs in the builder's pane, or this run does; it types nothing there" {
   fake_task
   PLAN_AGENT=toy-1-plan BUILD_AGENT=toy-1-build REVIEW_AGENT=toy-1-review

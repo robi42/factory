@@ -375,14 +375,17 @@ live_agents() {
     '[.result.agents[] | select(.workspace_id == $ws and ((.name // "") as $n | $names | index($n)))] | length'
 }
 
-# prime_shell pane: run the env setup in the pane and make sure it actually ran. A fresh
+# prime_shell pane: run the env setup in the pane, in the task's worktree, where a human may have
+# left the shell of an agent's pane elsewhere, and make sure it actually ran: its mark is new
+# each time, as an agent that quit leaves the screen of its start, the last mark on it. A fresh
 # shell's line editor (ble.sh) sometimes swallows the Enter and sits in multiline mode;
 # Ctrl-C gives a clean prompt again, then the command is retried.
 prime_shell() {
-  local pane=$1 i
+  local pane=$1 i mark
   for i in 1 2 3; do
-    h pane run "$pane" ". $RUN_DIR/env.sh && clear && printf 'factory-%s\\n' ready" >/dev/null
-    herdr pane wait-output --match factory-ready --source visible --timeout 8000 "$pane" >/dev/null 2>&1 && return 0
+    mark=$RANDOM$RANDOM
+    h pane run "$pane" "cd $(printf '%q' "$WT") && . $RUN_DIR/env.sh && clear && printf 'factory-ready-%s\\n' $mark" >/dev/null
+    herdr pane wait-output --match "factory-ready-$mark" --source visible --timeout 8000 "$pane" >/dev/null 2>&1 && return 0
     warn "pane $pane did not run its setup command; clearing the input line and retrying"
     pane_keys "$pane" c-c
     sleep 1
