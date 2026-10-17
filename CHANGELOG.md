@@ -99,7 +99,8 @@ your approval takes your answer where its own Factory looks for it.
 - The agents' prompts tell them how you approve only where Factory asks you, not under
   `--auto`, where those commands refuse.
 - Factory needs Bash 4.4 or newer, as the README now says, where it said Bash 4: an older
-  Bash takes an empty list for an unset variable, which stops Factory.
+  Bash takes an empty list for an unset variable. On one, Factory stops at its start and
+  says which Bash it needs.
 
 ### Removed
 - **Breaking:** `factory answer` (`!fy answer` in a pane) and the questions relay

@@ -3,6 +3,12 @@
 # Claude Code plans (Fable) and builds (Opus), Codex reviews (GPT), Beads remembers.
 set -euo pipefail
 unset CDPATH # a cd to a relative dir would print it into the $(...) around it
+# The least Bash Factory runs on, checked before Bash reads on: an older one takes an empty
+# array for an unset variable (set -u), and one before 4.2 cannot read the script at all.
+if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4))); then
+  printf '\033[31m[factory] error:\033[0m Factory needs Bash 4.4 or newer; this is Bash %s\n' "$BASH_VERSION" >&2
+  exit 1
+fi
 
 FACTORY_HOME=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 FACTORY_VERSION=0.1.11

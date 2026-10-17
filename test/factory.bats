@@ -5130,6 +5130,24 @@ SH
   [ "$COPILOT_NOTE" = "the builder left its fixes for Copilot's round 1 uncommitted" ]
 }
 
+@test "factory: a Bash older than 4.4 stops it before it reads on, with the Bash it needs" {
+  # BASH_VERSINFO is read-only: the check runs on a stand-in, as each Bash would fill it in
+  local check
+  check=$(sed -n '/^if ((BASH_VERSINFO/,/^fi$/p' "$BATS_TEST_DIRNAME/../factory")
+  [[ $check == *"exit 1"* ]]
+  check=${check//BASH_VERSINFO/v}
+  check=${check//BASH_VERSION/version}
+  run bash -c "v=(4 3 48) version=4.3.48; $check; echo read on"
+  [ "$status" -eq 1 ]
+  [[ $output == *"Factory needs Bash 4.4 or newer; this is Bash 4.3.48" ]]
+  run bash -c "v=(3 2 57) version=3.2.57; $check; echo read on"
+  [ "$status" -eq 1 ]
+  run bash -c "v=(4 4 23) version=4.4.23; $check; echo read on"
+  [ "$output" = "read on" ]
+  run bash -c "v=(5 0 0) version=5.0.0; $check; echo read on"
+  [ "$output" = "read on" ]
+}
+
 @test "main: help, a command's usage and arguments, and an unknown command" {
   run main help
   [ "$status" -eq 0 ]
