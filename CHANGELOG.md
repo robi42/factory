@@ -139,6 +139,21 @@ a run that waits at a gate takes your answer where its own Factory looks for it.
   came next while bk-9tt's pull request, with the viewer bk-cxs builds on, was open.
   Such a task now waits for the merge: `factory next` skips it, naming the pull request,
   and takes the next ready task, and `factory run` stops on it before claiming its bead.
+- A line in `.factory/protected` that excludes a path, `:(exclude).factory` say, took all
+  of `.factory/` out of the protected-paths check, the change to that very line included,
+  and with it the gate and the guardrails' own rules. Factory now checks its own
+  `.factory/` apart from the repo's lines.
+- A rules file the guardrails could not read, as `FACTORY_GUARDRAILS` naming no file,
+  passed every line the branch added; it fails the check now.
+- The forbidden patterns missed `|| true`, `|| :` and `|| exit 0` before a `;`, a `)` or
+  a quote, Rust's crate-wide `#![allow(...)]` and its `#[expect(...)]`,
+  `#[ignore = "reason"]`, and Go's `t.Skipf` and `t.SkipNow`; they catch them now. A `||`
+  after a `(`, a comma inside a `(` not yet closed, or an `=` with a space before it opens
+  a closure, as in `.returning(|| true)`, `f(1, || true)` and `let f = || true`, and
+  passes.
+- The tests-required check counted a deleted test file, or one moved unchanged, as a test
+  changed, and a deleted code file, or one moved unchanged, as a change of code. None of
+  them counts now: a branch that only deletes or moves files needs no test.
 - A run no longer dies when an agent starts on its prompt later than Herdr's five seconds,
   as Codex did on a long plan review ("still working after startup"): Factory sees the
   turn begin and waits it out, instead of dying or sending the prompt twice.

@@ -43,8 +43,8 @@ syntax:
 
 guard:
     @echo ""
-    @if grep -nE -f <(grep -vE '^\s*(#|$)' guardrails.txt) {{ scripts }} justfile test/*.bats; then \
-        printf "\033[31m✗ guard: our own source matches a forbidden pattern\033[0m\n" >&2; exit 1; fi
+    @rc=0; grep -nE -f <(grep -vE '^\s*(#|$)' guardrails.txt) {{ scripts }} justfile test/*.bats || rc=$?; \
+        if ((rc != 1)); then printf "\033[31m✗ guard: our own source matches a forbidden pattern, or grep failed (%s)\033[0m\n" "$rc" >&2; exit 1; fi
     @printf "\033[32m✓ guard\033[0m\n"
 
 spell:

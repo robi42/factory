@@ -358,11 +358,14 @@ context_of() {
   [[ $output == *"file committed in Factory's run dir: .factory/run/plan.md"* ]] # which is no place for one
 }
 
-@test "guard: forbidden patterns on added lines fail, except under .factory" {
+@test "guard: forbidden patterns on added lines fail, except under .factory; a || before a :: path, or one that opens a closure, swallows no failure" {
   make_repo
   # Build the bad strings at runtime so this file passes its own guard check.
   local pipe='||' marker=skip
-  printf 'run_thing %s true\n' "$pipe" >"$REPO/run.sh"
+  printf 'run_thing %s true\nprobe %s :; next\nlast %s true)\nmake install DESTDIR= %s true\n' "$pipe" "$pipe" "$pipe" "$pipe" >"$REPO/run.sh"
+  printf 'ls | paste -sd, %s true\ndiff <(sort a) <(sort b) | paste -sd, %s true\n' "$pipe" "$pipe" >>"$REPO/run.sh"
+  printf 'let n = v.ok_or_else(%s ::serde::de::Error::custom)?;\nif (fd < 0 %s ::fcntl(fd, F_GETFL) == -1) {}\n' "$pipe" "$pipe" >"$REPO/paths.rs"
+  printf 'm.expect_ready().returning(%s true);\nlet always = %s true;\nf(1, %s true);\n' "$pipe" "$pipe" "$pipe" >>"$REPO/paths.rs"
   printf 'import pytest\n@pytest.mark.%s\ndef test_x(): pass\n' "$marker" >"$REPO/test_x.py"
   mkdir -p "$REPO/.factory/run"
   printf 'x %s true\n' "$pipe" >"$REPO/.factory/run/log.txt"
@@ -370,8 +373,14 @@ context_of() {
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"run.sh: run_thing"* ]]
+  [[ $output == *"run.sh: probe $pipe :; next"* ]]
+  [[ $output == *"run.sh: last $pipe true)"* ]]
+  [[ $output == *"run.sh: make install DESTDIR= $pipe true"* ]] # an argument's =, no closure's
+  [[ $output == *"run.sh: ls | paste -sd, $pipe true"* ]]       # an argument's comma, no call's
+  [[ $output == *"run.sh: diff <(sort a) <(sort b) | paste -sd, $pipe true"* ]]
   [[ $output == *"test_x.py: @pytest.mark.$marker"* ]]
   [[ $output != *"log.txt: "* ]]
+  [[ $output != *"paths.rs: "* ]]
   [[ $output == *"forbidden pattern"* ]]
 }
 
@@ -383,6 +392,9 @@ context_of() {
     "$hash" "$hash" "$hash" "$hash" >"$REPO/tool.py"
   printf '%s shellcheck disable=SC2086\necho hi\n' "$hash" >"$REPO/tool.sh"
   printf '%s[allow(dead_code)]\nfn unused() {}\n%s[ignore]\nfn later() {}\n' "$hash" "$hash" >"$REPO/lib.rs"
+  printf '%s![allow(unused)]\n%s[expect(dead_code)]\nfn old() {}\n%s[ignore = "slow"]\nfn slow() {}\n' "$hash" "$hash" "$hash" >"$REPO/more.rs"
+  local skip=Skip
+  printf 'func TestX(t *testing.T) { t.%sf("later") }\nfunc TestY(t *testing.T) { t.%sNow() }\n' "$skip" "$skip" >"$REPO/x_test.go"
   commit_all suppressed
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
@@ -393,6 +405,11 @@ context_of() {
   [[ $output == *"tool.sh: $hash shellcheck disable=SC2086"* ]]
   [[ $output == *"lib.rs: ${hash}[allow(dead_code)]"* ]]
   [[ $output == *"lib.rs: ${hash}[ignore]"* ]]
+  [[ $output == *"more.rs: ${hash}![allow(unused)]"* ]]
+  [[ $output == *"more.rs: ${hash}[expect(dead_code)]"* ]]
+  [[ $output == *"more.rs: ${hash}[ignore = \"slow\"]"* ]]
+  [[ $output == *"x_test.go: func TestX(t *testing.T) { t.${skip}f("* ]]
+  [[ $output == *"x_test.go: func TestY(t *testing.T) { t.${skip}Now("* ]]
 }
 
 @test "guardrails.txt: no line that reads as a pattern is commented out" {
@@ -1480,7 +1497,7 @@ IN
   [[ $output == *"uncommitted changes in the worktree"* ]]
 }
 
-@test "guard: a renamed file's lines count only where it changed, a copy's all; a pattern grep cannot read fails the check" {
+@test "guard: a renamed file's lines count only where it changed, a copy's all; a pattern grep cannot read fails the check, which names its line" {
   make_repo
   printf 'relaxed\n' >"$TMP/rules"
   FACTORY_GUARDRAILS=$TMP/rules
@@ -1497,18 +1514,21 @@ IN
   git -C "$REPO" mv pkg/mod.py pkg/core.py
   commit_all "move and change"
   guard_check "$REPO" main
-  git -C "$REPO" config diff.renames copies # git reads a copy as one
+  git -C "$REPO" config diff.renames copies # git would read a copy as one; Factory, as added
   cp "$REPO/pkg/core.py" "$REPO/pkg/copy.py"
+  printf 'z = 3\n' >>"$REPO/pkg/copy.py" # core.py stays the closer match for the rename
   commit_all "copy it"
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"pkg/copy.py: x = 1  # relaxed"* ]]
   [[ $output != *"pkg/core.py: x = 1"* ]]
   git -C "$REPO" reset -q --hard HEAD~1
-  printf '[unclosed\nrelaxed\n' >"$TMP/rules"
+  printf '# a comment, ( and all\n\n[unclosed\nrelaxed\nfoo(' >"$TMP/rules" # no newline at its end
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
-  [[ $output == *"forbidden patterns unreadable: "*"(fix that line of $TMP/rules)"* ]]
+  [[ $output == *"forbidden patterns unreadable in $TMP/rules:"$'\n'"  line 3: [unclosed ("* ]]
+  [[ $output == *$'\n'"  line 5: foo( ("* ]]
+  [[ $output != *"grep: "* ]] # grep's own words, which name a temporary file, for each file
 }
 
 @test "guard: files git converts on checkout as the committed .gitattributes or your own git config say pass: eol=crlf, a global core.autocrlf, a global filter as Git LFS's" {
@@ -1740,6 +1760,162 @@ IN
   [[ $output == *"git reads the work tree at $(cd "$TMP/decoy" && pwd -P), not $TMP/wt-9"* ]]
 }
 
+@test "guard: a deleted test file is no test changed, nor a deleted code file a change of code, and a file moved unchanged neither; a rules file the guardrails cannot read fails them" {
+  make_repo
+  printf 'def test_x(): pass\n' >"$REPO/test_x.py"
+  commit_all "a test"
+  merge_work
+  git -C "$REPO" rm -q test_x.py
+  printf 'x = 1\n' >"$REPO/app.py"
+  commit_all "code, and the test gone"
+  FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"source files changed but no test files did"* ]]
+  FACTORY_REQUIRE_TESTS=0 FACTORY_GUARDRAILS=$TMP/nowhere.txt run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"forbidden patterns unread: $TMP/nowhere.txt cannot be read"* ]]
+  # a branch that only deletes files needs no test
+  git -C "$REPO" reset -q --hard main
+  git -C "$REPO" rm -q run.sh
+  commit_all "code gone"
+  FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+  # nor one that only moves them, whatever the repo's diff.renames says; a test moved is no
+  # test changed either
+  git -C "$REPO" reset -q --hard main
+  git -C "$REPO" config diff.renames false
+  mkdir "$REPO/src"
+  git -C "$REPO" mv run.sh src/run.sh
+  commit_all "code moved"
+  FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+  printf 'x = 1\n' >"$REPO/app.py"
+  git -C "$REPO" mv test_x.py test_y.py
+  commit_all "code, and the test only moved"
+  FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"source files changed but no test files did"* ]]
+  # a Rust file moved and changed counts only the lines it changed, not the tests it held
+  git -C "$REPO" reset -q --hard main
+  printf 'pub fn f() -> u8 { 1 }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn f_is_1() { assert_eq!(super::f(), 1); }\n}\n' >"$REPO/lib.rs"
+  commit_all "lib, tested"
+  merge_work
+  git -C "$REPO" mv lib.rs core.rs
+  printf 'pub fn g() -> u8 { 2 }\n' >>"$REPO/core.rs"
+  commit_all "lib moved, g untested"
+  FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"source files changed but no test files did"* ]]
+  # a file moved with its lines in another order, which git calls R100 too, is a change of code
+  git -C "$REPO" reset -q --hard main
+  printf 'rm -rf out\nmkdir out\n' >"$REPO/build.sh"
+  commit_all "build"
+  merge_work
+  git -C "$REPO" mv build.sh make.sh
+  printf 'mkdir out\nrm -rf out\n' >"$REPO/make.sh"
+  commit_all "build moved, its lines swapped"
+  [[ $(git -C "$REPO" diff -M --name-status main...HEAD) == R100* ]]
+  FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"source files changed but no test files did"* ]]
+}
+
+@test "guard: a line of .factory/protected that excludes a path cannot take .factory/ out of the checks" {
+  make_repo
+  printf ':(exclude).factory\n' >"$REPO/.factory/protected"
+  printf '#!/bin/sh\nexit 0 # checks nothing now\n' >"$REPO/.factory/gate"
+  commit_all "exclude .factory, and weaken the gate"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/protected"* ]]
+  [[ $output == *"protected path changed: .factory/gate"* ]]
+  # the line on the base: an ignored file under .factory/ is still at a protected path
+  printf '/.factory/local/\n' >"$REPO/.gitignore"
+  commit_all "ignore .factory/local"
+  merge_work
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  mkdir -p "$REPO/.factory/local"
+  printf 'exit 0\n' >"$REPO/.factory/local/gate.sh"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"ignored file at a protected path: .factory/local/gate.sh"* ]]
+}
+
+@test "guard: a file only staged in the worktree's index is no tracked one to the ignored-file check" {
+  make_repo
+  printf '.cargo/config*\n' >"$REPO/.factory/protected"
+  printf '/.cargo/\n' >"$REPO/.gitignore"
+  commit_all "protect cargo's config, ignore .cargo"
+  merge_work
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  mkdir -p "$REPO/.cargo"
+  printf '[build]\nrustflags = ["--cap-lints=allow"]\n' >"$REPO/.cargo/config.toml"
+  git -C "$REPO" add -f .cargo/config.toml # staged, never committed
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"ignored file at a protected path: .cargo/config.toml"* ]]
+}
+
+@test "guard: a symlink's target is read as the name it is: a leading colon is no magic, a ? no wildcard; a tracked file is in view, ignored or not" {
+  make_repo
+  mkdir -p "$REPO/src" "$REPO/:hidden" "$REPO/s?c" "$REPO/hidden"
+  printf 'x\n' >"$REPO/src/main.py"
+  printf 'hidden/\n/s\\?c/\n' >"$REPO/.gitignore"
+  printf 'k\n' >"$REPO/hidden/keep.txt"
+  git -C "$REPO" add -f hidden/keep.txt # tracked, though hidden/ is ignored
+  commit_all "track src, ignore hidden/ and s?c/"
+  merge_work
+  printf 'y\n' >"$REPO/:hidden/real.sh" # tracked, beside an ignored hidden/
+  printf 'z\n' >"$REPO/s?c/main.py"     # ignored, though src/main.py is tracked
+  ln -s ':hidden/real.sh' "$REPO/shown.sh"
+  ln -s 's?c/main.py' "$REPO/hid.py"
+  ln -s hidden/keep.txt "$REPO/kept.sh"
+  commit_all links
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"symlink to a place git does not show: hid.py -> s?c/main.py"* ]]
+  [[ $output != *"shown.sh"* ]]
+  [[ $output != *"kept.sh"* ]]
+}
+
+@test "guard: a submodule's files are no place git shows: a symlink into one, or to its top, fails, waiver or not; its own .gitignore is its own" {
+  make_repo
+  git init -q "$TMP/lib"
+  printf '.*\n' >"$TMP/lib/.gitignore" # ignores itself, which is the submodule's business
+  git -C "$TMP/lib" add -f .gitignore
+  git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q -m lib
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" lib
+  commit_all "add lib"
+  merge_work
+  printf 'echo hello\n' >"$REPO/run.sh"
+  commit_all change
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
+  # a file the submodule's own git dir, which an agent can write, hides from every diff
+  mkdir -p "$REPO/lib/secret"
+  printf 'import pytest\n' >"$REPO/lib/secret/conftest.py"
+  printf 'secret/\n' >>"$(git -C "$REPO/lib" rev-parse --git-path info/exclude)"
+  [ -z "$(git -C "$REPO" status --porcelain --ignore-submodules=none)" ]
+  ln -s lib/secret/conftest.py "$REPO/conftest.py"
+  commit_all "link into lib"
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"symlink to a place git does not show: conftest.py -> lib/secret/conftest.py"* ]]
+  # nor its top, which the waiver for a symlink to a directory would let through, though the
+  # repo holds lib's commit, which HEAD:lib names
+  git -C "$REPO" reset -q --hard HEAD~1
+  git -C "$REPO" fetch -q "$TMP/lib"
+  git -C "$REPO" cat-file -e HEAD:lib
+  ln -s lib "$REPO/vendored"
+  commit_all "link to lib"
+  waive vendored
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"symlink to a place git does not show: vendored -> lib"* ]]
+}
+
 @test "guard: an ignored file at a protected path fails, whether the repo or the user ignores it" {
   make_repo
   printf ':(glob)**/.mise*.toml\n.cargo/config*\n' >"$REPO/.factory/protected"
@@ -1762,6 +1938,38 @@ IN
   GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
+  # an excludes file the repo's own config names, which an agent can write, changes nothing
+  git -C "$REPO" config core.excludesFile /dev/null
+  GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
+}
+
+@test "guard: the repo's core.ignoreCase, by which a negation in another case would undo an ignore, changes nothing the ignore checks read" {
+  make_repo
+  printf '.mise.local.toml\n:(exclude).factory\n' >"$REPO/.factory/protected"
+  mkdir "$REPO/tests"
+  printf 'def test(): pass\n' >"$REPO/tests/test_a.py"
+  commit_all "protect mise's local config, tests"
+  merge_work
+  ln -s hidden/conf.toml "$REPO/conf.toml"
+  commit_all "link to a config"
+  printf '.mise.local.toml\n!.MISE.LOCAL.TOML\n/.factory/local/\n!/.FACTORY/LOCAL/\n/hidden/\n!/HIDDEN/\n' >"$TMP/ignore"
+  printf '[core]\n\texcludesFile = %s\n' "$TMP/ignore" >"$TMP/gitconfig"
+  printf '[env]\n' >"$REPO/.mise.local.toml"
+  mkdir -p "$REPO/.factory/local" "$REPO/hidden"
+  printf 'exit 0\n' >"$REPO/.factory/local/gate.sh"
+  printf '[build]\n' >"$REPO/hidden/conf.toml"
+  printf '*\n!.GITIGNORE\n' >"$REPO/tests/.gitignore"
+  printf 'import pytest\n' >"$REPO/tests/conftest.py"
+  git -C "$REPO" config core.ignoreCase true
+  [ -z "$(GIT_CONFIG_GLOBAL=$TMP/gitconfig fresh_status "$REPO")" ]
+  GIT_CONFIG_GLOBAL=$TMP/gitconfig run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
+  [[ $output == *"ignored file at a protected path: .factory/local/gate.sh"* ]]
+  [[ $output == *"untracked .gitignore that ignores itself: tests/.gitignore"* ]]
+  [[ $output == *"symlink to a place git does not show: conf.toml -> hidden/conf.toml"* ]]
 }
 
 @test "guard: the human's own .factory/env may lie ignored in the main checkout, not in a task's worktree" {
@@ -2582,6 +2790,23 @@ IN
   [ "$(work_state)" = "$before" ]
   git -C "$REPO" commit -qam more
   [ "$(work_state)" != "$before" ]
+  # an ignored file at a protected path, which git status shows not, removed
+  on_work_branch
+  printf '.cargo/config*\n' >"$REPO/.factory/protected"
+  printf '/.cargo/\n' >"$REPO/.gitignore"
+  git -C "$REPO" add -A
+  git -C "$REPO" commit -qm protect
+  mkdir -p "$REPO/.cargo"
+  printf '[build]\n' >"$REPO/.cargo/config.toml"
+  before=$(work_state)
+  rm "$REPO/.cargo/config.toml"
+  [ "$(work_state)" != "$before" ]
+  # a pattern grep cannot read is named in the same words each time, as a turn leaves it
+  printf 'ok\nfoo(\n' >"$TMP/rules"
+  FACTORY_GUARDRAILS=$TMP/rules
+  before=$(work_state)
+  [[ $before == *"line 2: foo("* ]]
+  [ "$(work_state)" = "$before" ]
 }
 
 @test "finish_task: a build that stalled hands over saying why" {
@@ -4534,8 +4759,8 @@ SH
   [ "$output" = "    # Plan" ]
 }
 
-@test "die inside a command substitution stops the main shell, not just the subshell" {
-  run bash -c 'source "$1"; FACTORY_PID=$$; trap "exit 7" USR1; x=$(die boom) || true; echo continued' _ "$BATS_TEST_DIRNAME/../factory"
+@test "die: inside a command substitution, it stops the main shell, not just the subshell" {
+  run bash -c 'source "$1"; FACTORY_PID=$$; trap "exit 7" USR1; x=$(die boom) || x=failed; echo continued' _ "$BATS_TEST_DIRNAME/../factory"
   [ "$status" -eq 7 ]
   [[ $output == *"error:"*"boom"* ]]
   [[ $output != *continued* ]]

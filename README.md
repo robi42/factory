@@ -432,6 +432,8 @@ and the guardrails, Factory also checks that git in the worktree reads the task 
 git dir, through a worktree the repo lists: the worktree's `.git` file, which an agent can
 rewrite, could name another clone, whose refs and history every check would read instead.
 
+Each check's name, as `fy stats` and a hand-over give it, follows it in parentheses.
+
 - No added lines matching `guardrails.txt`: suppressions such as `noqa`, `type: ignore`,
   `eslint-disable`, `shellcheck disable`; skipped tests; `|| true`. Adapted from
   [AI Guardrails](https://github.com/florianbuetow/ai-guardrails). A repo can ship its own
@@ -442,16 +444,23 @@ rewrite, could name another clone, whose refs and history every check would read
   protected instead, so a change there needs your waiver. A renamed file's lines count
   only where it changed. A binary file, such as an image, has none, and a submodule one,
   `+Subproject commit` and the id of the commit it points at. A pattern grep cannot read
-  fails the guardrails, rather than matching nothing.
+  fails the guardrails, rather than matching nothing, and so does a rules file it cannot
+  read (`lines`).
 - No NUL byte added to a file that is not binary data: git and grep would take the file for
   binary and skip its lines. Binary data is a file named as an image, a PDF, a font, an
   archive, audio or video, whose bytes agree: they hold control bytes besides the NUL and
   are not UTF-8. This fails closed: UTF-16 text, a binary type not on that list, such as
   an SQLite database, and a binary format whose bytes are all ASCII, such as a tar of text
-  files, have to be committed by hand.
+  files, have to be committed by hand (`lines`).
 - A change to code files must also touch a test file (`FACTORY_REQUIRE_TESTS=0` to relax).
   In Rust, whose unit tests live in the file they test, a `#[test]` or an assertion added
-  to the changed file will do.
+  to the changed file will do. A deleted test file is no test changed, nor a deleted code
+  file a change of code, and a file moved unchanged is neither: a branch that only
+  deletes or moves files needs no test (`tests`).
+- A diff git can read: the branch's against its base, which every other check reads, so
+  that none of them reads nothing and passes. A line in `.git/shallow`, which an agent can
+  write, cuts the branch off from its base, and an object gone from the repository fails
+  the diff of a file (`readable`).
 - No committed build artifacts, no uncommitted changes (in `.factory/` too, all but
   `.factory/run/` and, in the main checkout, your own `.factory/env`), at least one commit.
   Git compares the worktree with the branch through an index of Factory's own, so neither
@@ -467,7 +476,9 @@ rewrite, could name another clone, whose refs and history every check would read
   that starts on a checkout that reads as changed stops before any agent works. Untracked
   files count whatever hides them: an untracked `.gitignore` that ignores itself in a
   directory the commit tracks files in, a line added to `info/exclude` since the task
-  started, or a `core.excludesFile` set in the repo's config.
+  started, or a `core.excludesFile` set in the repo's config (`artifacts`, `clean`,
+  `commits`; a worktree git reads as another checkout, `top`; such a `.gitignore` or
+  `info/exclude` line, `ignored`).
 - Protected paths untouched: all of `.factory/`, the gate, the rules, `.factory/env` and
   any other file a repo keeps there, but Factory's own `.factory/run/`; and every glob
   listed in `.factory/protected`, which git reads as a pathspec; a line git cannot read
@@ -475,22 +486,27 @@ rewrite, could name another clone, whose refs and history every check would read
   gets a one-task waiver from you at plan approval (`p`, the dialog's Approve, allow
   protected paths, or `fy approve <repo> <bead-id> --allow-protected`) for the ones the
   plan's `Protected paths:` line names, and no others, which Factory keeps in its own
-  state, where the agents do not write; the pull request body lists them. An
-  `allow-protected` file in the run dir, where the waiver used to be, waives nothing and
-  fails the guardrails: only an agent would put one there; so does an answer or a resume
-  point there (see Run artifacts).
+  state, where the agents do not write; the pull request body lists them. Factory's own
+  `.factory/` is checked apart from the repo's lines, so a line there that excludes a path
+  cannot take it out (`protected`).
 - No ignored file at a protected path, waiver or not: git leaves it out of the branch and
   its diff, but the gate reads it, as mise reads an ignored `.mise.local.toml` in a repo
   that protects mise's configs. Factory's own `.factory/run/` is exempt, and so is your
   own `.factory/env` in the repo's main checkout, where `fy check` may run but no agent
-  works.
+  works. Tracked is what the branch's HEAD holds: a file only staged in the worktree's
+  index is not, and what ignores a file is the worktree's patterns and your own excludes
+  file, not one the repo's config names, matched with case whatever `core.ignoreCase`
+  says (`ignored`).
 - No symlink added, renamed or pointed elsewhere that leads out of the worktree, into
-  `.git` or into an ignored place, waiver or not: the gate would read through it what no
-  diff shows. A symlink to a directory gives the files under it paths that no protected
-  glob names, so it needs the waiver, as a path the plan names.
+  `.git`, into a submodule or into an ignored place, waiver or not: the gate would read
+  through it what no diff shows. A symlink to a directory gives the files under it paths
+  that no protected glob names, so it needs the waiver, as a path the plan names
+  (`symlinks`).
 - No submodule added or pointed at another commit, waiver or not: the gate would read its
-  files, which no diff shows. Leave such a change for after the merge.
-- No file committed in Factory's own `.factory/run/`, which no other check reads.
+  files, which no diff shows. Leave such a change for after the merge (`submodules`).
+- Nothing of Factory's own `.factory/run/` on the branch, which no other check reads, and
+  no file there by a name Factory once kept there (see Run artifacts), which only an
+  agent would put there (`run_dir`).
 - The planner must leave the code untouched; what one of its turns changes is sent back once.
   A planner turn that commits, or moves HEAD, the task's branch, Factory's refs for the task
   or a replace ref, stops the run; the refs that you, fetches and other tasks move
