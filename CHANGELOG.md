@@ -104,6 +104,13 @@ that waits for your approval takes your answer where its own Factory looks for i
   (`questions.md`, `answers.md` and the questions prompt in Factory's terminal) are gone;
   `factory answer` now fails as an unknown command. The planner asks in its own question
   dialog instead.
+- Four knobs nobody set are fixed values now: Factory looks for your answer every 5
+  seconds (`FACTORY_POLL_SECONDS`), fails a turn that has stalled after an hour
+  (`FACTORY_TURN_TIMEOUT_MS`), waits 15 minutes for each Copilot review
+  (`FACTORY_COPILOT_WAIT_S`), and reads its forbidden patterns from the `guardrails.txt`
+  beside the script (`FACTORY_GUARDRAILS`) where the repo has no `.factory/guardrails.txt`.
+  An exported `FACTORY_GUARDRAILS` is now ignored, as are the other three, and a
+  `.factory/env` that sets one of the four stops the command: it names no knob.
 
 ### Fixed
 - A build whose plan you approved with protected paths allowed was still told to change
@@ -142,20 +149,19 @@ that waits for your approval takes your answer where its own Factory looks for i
   and takes the next ready task, and `factory run` stops on it before claiming its bead.
 - A task that started on a checkout git reads as changed failed every check after hours of
   work; it now stops before any agent works.
-- `FACTORY_APPROVAL=Ask` skipped both of your approvals, `FACTORY_PR=true` died halfway
-  through a run, and `FACTORY_POLL_SECONDS=0` had the approvals read your terminal as
-  closed. The knobs are now checked before a bead is claimed, by `factory pr`, `add`,
-  `clean` and `check` too: an approval mode other than `ask` or `auto`, a flag other than
-  0 or 1, or a count or wait that is no number above 0 stops the command with the knob's
-  name, and so does a name in `.factory/env` that is no knob. `.factory/env` is read from
-  the top of the checkout, wherever in it a command points.
+- `FACTORY_APPROVAL=Ask` skipped both of your approvals, and `FACTORY_PR=true` died
+  halfway through a run. The knobs are now checked before a bead is claimed, by
+  `factory pr`, `add`, `clean` and `check` too: an approval mode other than `ask` or
+  `auto`, a flag other than 0 or 1, or a count that is no number above 0 stops the command
+  with the knob's name, and so does a name in `.factory/env` that is no knob.
+  `.factory/env` is read from the top of the checkout, wherever in it a command points.
 - A line in `.factory/protected` that excludes a path, `:(exclude).factory` say, took all
   of `.factory/` out of the protected-paths check, the change to that very line included,
   and with it the gate and the guardrails' own rules. Factory now checks its own
   `.factory/` apart from the repo's lines.
-- A rules file the guardrails could not read, as `FACTORY_GUARDRAILS` naming no file,
-  passed every line the branch added; it fails the check now, and `factory doctor` reports
-  it.
+- A rules file the guardrails could not read, as a copy of the script with no
+  `guardrails.txt` beside it, passed every line the branch added; it fails the check now,
+  and `factory doctor` reports it.
 - The forbidden patterns missed `|| true`, `|| :` and `|| exit 0` before a `;`, a `)` or
   a quote, Rust's crate-wide `#![allow(...)]` and its `#[expect(...)]`,
   `#[ignore = "reason"]`, and Go's `t.Skipf` and `t.SkipNow`; they catch them now. A `||`

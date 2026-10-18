@@ -7,7 +7,6 @@ setup() {
   local git_env
   mapfile -t git_env < <(git rev-parse --local-env-vars)
   unset "${git_env[@]}" "${!FACTORY_@}" HERDR_PANE_ID # a hook's GIT_DIR or GIT_INDEX_FILE, the knobs the shell exported, a Herdr pane's id
-  export FACTORY_GUARDRAILS="$BATS_TEST_DIRNAME/../guardrails.txt"
   # shellcheck source=../factory
   source "$BATS_TEST_DIRNAME/../factory"
   FACTORY_REQUIRE_TESTS=0 # the fixtures below change code without tests on purpose
@@ -296,7 +295,7 @@ context_of() {
 @test "check_knobs: the defaults pass, ultra only for the reviewer; a typo in an effort, the approval, a flag or a count dies" {
   run check_knobs
   [ "$status" -eq 0 ]
-  FACTORY_PLAN_EFFORT=max FACTORY_BUILD_EFFORT=low FACTORY_REVIEW_EFFORT=ultra FACTORY_APPROVAL=auto FACTORY_POLL_SECONDS=0.5 run check_knobs
+  FACTORY_PLAN_EFFORT=max FACTORY_BUILD_EFFORT=low FACTORY_REVIEW_EFFORT=ultra FACTORY_APPROVAL=auto run check_knobs
   [ "$status" -eq 0 ]
   FACTORY_BUILD_EFFORT=ultra run check_knobs
   [ "$status" -eq 1 ]
@@ -313,11 +312,6 @@ context_of() {
   FACTORY_ROUNDS=0 run check_knobs
   [ "$status" -eq 1 ]
   [[ $output == *"FACTORY_ROUNDS=0: a whole number above 0"* ]]
-  FACTORY_POLL_SECONDS=0 run check_knobs # read -t 0 would take the terminal for closed
-  [ "$status" -eq 1 ]
-  [[ $output == *"FACTORY_POLL_SECONDS=0: a number of seconds above 0"* ]]
-  FACTORY_POLL_SECONDS=0.0 run check_knobs
-  [ "$status" -eq 1 ]
 }
 
 @test "check_push: a run that opens a pull request first checks that origin takes a push without a prompt, and pushes nothing" {
@@ -464,7 +458,7 @@ context_of() {
 @test "guardrails.txt: no line that reads as a pattern is commented out" {
   # The loader drops every line whose first non-blank is a hash, so a comment is a hash
   # and a space, and a pattern never starts with one: [#] stands for a literal hash.
-  run -1 grep -nE '^[[:space:]]*#[^[:space:]]' "$FACTORY_GUARDRAILS"
+  run -1 grep -nE '^[[:space:]]*#[^[:space:]]' "$GUARDRAILS"
 }
 
 @test "guard: removing a forbidden line is fine" {
@@ -1056,7 +1050,7 @@ P
       *) printf '{"result":{}}' ;;
     esac
   }
-  FACTORY_POLL_SECONDS=0.1
+  POLL_SECONDS=0.1
   hint_marked
   (
     hint_seen
@@ -1072,7 +1066,7 @@ P
 
 @test "plan approval: files from factory approve, reject and abort, no terminal" {
   plan_ready
-  FACTORY_POLL_SECONDS=0.1
+  POLL_SECONDS=0.1
   ask() { # the note's turn: the gate is closed meanwhile, and an approval sent anyway is dropped
     printf 'asked %s: %s\n' "$1" "$2"
     printf 'gate in the round: %s\n' "$(gate_waiting "$TASK_STATE" || printf closed)"
@@ -1469,7 +1463,7 @@ IN
 @test "guard: a renamed file's lines count only where it changed, a copy's all; a pattern grep cannot read fails the check, which names its line" {
   make_repo
   printf 'relaxed\n' >"$TMP/rules"
-  FACTORY_GUARDRAILS=$TMP/rules
+  GUARDRAILS=$TMP/rules
   printf 'x = 1  # relaxed\n' >"$REPO/mod.py"
   printf 'SQLite\0\1\377 rows' >"$REPO/data.sqlite"
   commit_all "a module with a suppression, a fixture"
@@ -1696,7 +1690,7 @@ IN
   FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"source files changed but no test files did"* ]]
-  FACTORY_REQUIRE_TESTS=0 FACTORY_GUARDRAILS=$TMP/nowhere.txt run guard_check "$REPO" main
+  FACTORY_REQUIRE_TESTS=0 GUARDRAILS=$TMP/nowhere.txt run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"forbidden patterns unread: $TMP/nowhere.txt cannot be read"* ]]
   # a branch that only deletes files needs no test
@@ -2171,7 +2165,7 @@ IN
   fake_task
   on_work_branch
   FACTORY_APPROVAL=ask
-  FACTORY_POLL_SECONDS=0.1
+  POLL_SECONDS=0.1
   waive # the plan's approval waived the check for the build
   run human_gate build builder "$TMP" <<<"a"
   [ "$status" -eq 0 ]
@@ -2594,7 +2588,7 @@ IN
   [ "$(work_state)" != "$before" ]
   # a pattern grep cannot read is named in the same words each time, as a turn leaves it
   printf 'ok\nfoo(\n' >"$TMP/rules"
-  FACTORY_GUARDRAILS=$TMP/rules
+  GUARDRAILS=$TMP/rules
   before=$(work_state)
   [[ $before == *"line 2: foo("* ]]
   [ "$(work_state)" = "$before" ]
@@ -3125,7 +3119,7 @@ JSON
 @test "ask: an open question dialog is never typed into, nor taken for the end of a turn" {
   fake_task
   PLAN_AGENT=planner
-  FACTORY_POLL_SECONDS=0
+  POLL_SECONDS=0
   : >"$TMP/reads"
   herdr() { # a dialog on the screen for the first two looks; Herdr reads the agent as idle
     printf '%s\n' "$*" >>"$TMP/herdr.log"
@@ -4323,9 +4317,9 @@ EOF
 @test "cmd_doctor: a guardrails file that is not there is MISSING, as flock would be" {
   herdr() { return 1; } # this machine's server stays out of it,
   bash() { return 0; }  # and so do its login profile and its bd
-  FACTORY_GUARDRAILS=$TMP/nowhere.txt run cmd_doctor
+  GUARDRAILS=$TMP/nowhere.txt run cmd_doctor
   [ "$status" -eq 1 ]
-  [[ $output == *"MISSING  guardrails $TMP/nowhere.txt (FACTORY_GUARDRAILS names no file)"* ]]
+  [[ $output == *"MISSING  guardrails $TMP/nowhere.txt (not beside the script: link the script from its checkout"* ]]
   [[ $output == *"ok       flock"* ]]
 }
 

@@ -24,19 +24,22 @@ ENV_KNOBS=$(compgen -A variable FACTORY_)
 : "${FACTORY_REVIEW_EFFORT:=xhigh}"
 : "${FACTORY_PLAN_ROUNDS:=2}"
 : "${FACTORY_ROUNDS:=3}"
-: "${FACTORY_TURN_TIMEOUT_MS:=3600000}"
 : "${FACTORY_CLAUDE_PERMISSIONS:=auto}"
-: "${FACTORY_GUARDRAILS:=$FACTORY_HOME/guardrails.txt}"
 : "${FACTORY_REQUIRE_TESTS:=1}"
 : "${FACTORY_APPROVAL:=ask}"
-: "${FACTORY_POLL_SECONDS:=5}"
 : "${FACTORY_PR:=0}"
 : "${FACTORY_COPILOT:=1}"
 : "${FACTORY_COPILOT_ROUNDS:=3}"
-: "${FACTORY_COPILOT_WAIT_S:=900}"
 : "${FACTORY_BD_PUSH:=1}"
 : "${FACTORY_FRESH:=0}"
 COPILOT_BOT='copilot-pull-request-reviewer[bot]'
+COPILOT_WAIT_S=900 # for each Copilot review
+# an hour: a turn stalled by then fails, one still working or waiting for your input toasts you
+# and goes on
+TURN_TIMEOUT_MS=3600000
+POLL_SECONDS=5 # between looks for your answer at a gate, and at an open question
+# the forbidden patterns; a repo's own .factory/guardrails.txt replaces them
+GUARDRAILS=$FACTORY_HOME/guardrails.txt
 RUN_DIR=.factory/run
 # lines of a failed gate's log to show: a failure's own lines, past the build's noise
 GATE_LOG_TAIL=40
@@ -101,17 +104,13 @@ usage() {
   row "FACTORY_PLAN_ROUNDS=$FACTORY_PLAN_ROUNDS" 'plan review rounds before the build; a note of yours gets one more'
   row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up; a note of yours at the last gets one more'
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
-  row "FACTORY_TURN_TIMEOUT_MS=$FACTORY_TURN_TIMEOUT_MS" 'a stalled turn fails after this; one working or waiting for your input toasts you and goes on'
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
   row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" '1: code changes must touch a test file (in Rust, a test in the file will do)'
   row "FACTORY_APPROVAL=$FACTORY_APPROVAL" 'ask: you approve each plan and build; auto (--auto): skip'
-  row "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS" 'seconds between checks for the approve, reject and abort files, and on an open question'
   row "FACTORY_PR=$FACTORY_PR" '1: push the approved branch and open a pull request (--pr)'
   row "FACTORY_COPILOT=$FACTORY_COPILOT" '1: request a Copilot review on the PR and act on its comments (0: --no-copilot)'
   row "FACTORY_COPILOT_ROUNDS=$FACTORY_COPILOT_ROUNDS" 'Copilot review rounds before giving up'
-  row "FACTORY_COPILOT_WAIT_S=$FACTORY_COPILOT_WAIT_S" 'seconds to wait for each Copilot review'
   row "FACTORY_BD_PUSH=$FACTORY_BD_PUSH" '1: push the Beads database to its sync remote after tasks, adds, PRs and cleans'
-  row "FACTORY_GUARDRAILS=$FACTORY_GUARDRAILS" 'forbidden-pattern list; a repo'"'"'s .factory/guardrails.txt replaces it'
   row "FACTORY_FRESH=$FACTORY_FRESH" '1: start the task over instead of resuming (--fresh)'
 }
 
@@ -134,11 +133,9 @@ check_knobs() {
   for k in FACTORY_REQUIRE_TESTS FACTORY_PR FACTORY_COPILOT FACTORY_BD_PUSH FACTORY_FRESH; do
     [[ ${!k} =~ ^[01]$ ]] || die "$k=${!k}: 0 or 1"
   done
-  for k in FACTORY_PLAN_ROUNDS FACTORY_ROUNDS FACTORY_COPILOT_ROUNDS FACTORY_COPILOT_WAIT_S FACTORY_TURN_TIMEOUT_MS; do
+  for k in FACTORY_PLAN_ROUNDS FACTORY_ROUNDS FACTORY_COPILOT_ROUNDS; do
     [[ ${!k} =~ ^[1-9][0-9]*$ ]] || die "$k=${!k}: a whole number above 0"
   done
-  [[ $FACTORY_POLL_SECONDS =~ ^[0-9]+(\.[0-9]+)?$ && $FACTORY_POLL_SECONDS =~ [1-9] ]] \
-    || die "FACTORY_POLL_SECONDS=$FACTORY_POLL_SECONDS: a number of seconds above 0"
 }
 
 # check_push repo: a run with FACTORY_PR=1 ends by pushing its branch, maybe hours later with
@@ -310,7 +307,7 @@ settle_dialogs() {
     idle | done) return 0 ;;
     blocked)
       attention "$name" "is blocked on a dialog Factory could not clear; answer it in its pane"
-      wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" >/dev/null
+      wait_for "$name" "$TURN_TIMEOUT_MS" idle "done" >/dev/null
       settle_dialogs "$name" quiet # a known dialog may follow the answered one
       return 0
       ;;
@@ -465,7 +462,7 @@ take_turn() {
   # pane: herdr's wait does not track turns and could match that turn's end instead. When the
   # state cannot be read, h has said why; exit also ends a $(...) caller, where errexit is off.
   status=$(agent_status "$name") || exit 1
-  [[ $status != working ]] || wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked >/dev/null
+  [[ $status != working ]] || wait_for "$name" "$TURN_TIMEOUT_MS" idle "done" blocked >/dev/null
   while :; do
     await_answer "$name" # typed into a question dialog, the prompt's Enter would answer it
     seq=$(agent_seq "$name") || exit 1
@@ -508,7 +505,7 @@ seq_moved() { [[ $(agent_seq "$1") != "$2" ]]; } # name seq: Herdr counts a stat
 # block goes to the human, and a question waits for its answer
 turn_ends() {
   local status
-  status=$(wait_for "$1" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked)
+  status=$(wait_for "$1" "$TURN_TIMEOUT_MS" idle "done" blocked)
   [[ $status != blocked ]] || unblock "$1"
   await_answer "$1"
 }
@@ -581,10 +578,10 @@ await_answer() {
     else
       attention "$name" "is waiting for your input"
       t0=$SECONDS
-      while asking "$name"; do sleep "$FACTORY_POLL_SECONDS"; done
+      while asking "$name"; do sleep "$POLL_SECONDS"; done
       metric question agent "${name##*-}" secs $((SECONDS - t0))
     fi
-    status=$(wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked)
+    status=$(wait_for "$name" "$TURN_TIMEOUT_MS" idle "done" blocked)
     [[ $status != blocked ]] || unblock "$name"
   done
 }
@@ -599,8 +596,8 @@ unblock() {
   while [[ $status == blocked ]]; do
     attention "$name" "is waiting for your input"
     # once answered, its turn goes on to its end, or it asks again
-    wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" working idle "done" >/dev/null
-    status=$(wait_for "$name" "$FACTORY_TURN_TIMEOUT_MS" idle "done" blocked)
+    wait_for "$name" "$TURN_TIMEOUT_MS" working idle "done" >/dev/null
+    status=$(wait_for "$name" "$TURN_TIMEOUT_MS" idle "done" blocked)
   done
 }
 
@@ -889,7 +886,7 @@ G
 
 # guardrails_file worktree -> the repo's own .factory/guardrails.txt if present, else Factory's
 guardrails_file() {
-  if [[ -f $1/.factory/guardrails.txt ]]; then printf '%s' "$1/.factory/guardrails.txt"; else printf '%s' "$FACTORY_GUARDRAILS"; fi
+  if [[ -f $1/.factory/guardrails.txt ]]; then printf '%s' "$1/.factory/guardrails.txt"; else printf '%s' "$GUARDRAILS"; fi
 }
 
 # factory_globs -> Factory's own protected pathspecs, one a line: all of .factory/ but its run dir
@@ -1750,9 +1747,9 @@ copilot_reviewed() {
   [[ ${n:-0} -gt 0 ]]
 }
 
-# copilot_wait pr-number sha: wait until Copilot reviewed the commit, FACTORY_COPILOT_WAIT_S at
+# copilot_wait pr-number sha: wait until Copilot reviewed the commit, COPILOT_WAIT_S at
 # most; its review takes minutes, so every 30 s is often enough
-copilot_wait() { poll $((FACTORY_COPILOT_WAIT_S / 30 + 1)) 30 copilot_reviewed "$1" "$2"; }
+copilot_wait() { poll $((COPILOT_WAIT_S / 30 + 1)) 30 copilot_reviewed "$1" "$2"; }
 
 # copilot_comments_of sha: the REST comments JSON on stdin as "path:line: body" lines, for Copilot's
 # comments made on that commit. GitHub moves commit_id along with the head while a commented
@@ -1854,7 +1851,7 @@ copilot_loop() {
     }
     log "Copilot review requested for ${sha:0:7} (round $round)"
     copilot_wait "$n" "$sha" || {
-      COPILOT_NOTE="no Copilot review within $((FACTORY_COPILOT_WAIT_S / 60)) min"
+      COPILOT_NOTE="no Copilot review within $((COPILOT_WAIT_S / 60)) min"
       return 1
     }
     if ! reviews=$(copilot_reviews "$n") || ! verdict=$(copilot_verdict_of "$sha" <<<"$reviews") \
@@ -2176,7 +2173,7 @@ await_human() {
         rc=0
         terminal_answer "$role" "$agent" "$dir" || rc=$?
       elif ((rc == NO_ANSWER)); then
-        sleep "$FACTORY_POLL_SECONDS"
+        sleep "$POLL_SECONDS"
       fi
       case $rc in
         "$NO_ANSWER") ;;
@@ -2233,10 +2230,10 @@ file_answer() {
   return "$NO_ANSWER"
 }
 
-# terminal_answer plan|build agent dir: a key typed in this terminal within FACTORY_POLL_SECONDS
+# terminal_answer plan|build agent dir: a key typed in this terminal within POLL_SECONDS
 terminal_answer() {
   local role=$1 agent=$2 dir=$3 answer note rc=0
-  read -r -t "$FACTORY_POLL_SECONDS" answer || rc=$?
+  read -r -t "$POLL_SECONDS" answer || rc=$?
   ((rc <= 128)) || return "$NO_ANSWER" # timed out
   ((rc == 0)) || return "$NO_TERMINAL"
   case $answer in
@@ -3226,8 +3223,8 @@ cmd_doctor() {
       ok=1
     fi
   done
-  if [[ -f $FACTORY_GUARDRAILS ]]; then printf '  ok       guardrails %s\n' "$FACTORY_GUARDRAILS"; else
-    printf '  MISSING  guardrails %s (FACTORY_GUARDRAILS names no file)\n' "$FACTORY_GUARDRAILS"
+  if [[ -f $GUARDRAILS ]]; then printf '  ok       guardrails %s\n' "$GUARDRAILS"; else
+    printf '  MISSING  guardrails %s (not beside the script: link the script from its checkout, as the README'"'"'s Install does, rather than copy it)\n' "$GUARDRAILS"
     ok=1
   fi
   return $ok

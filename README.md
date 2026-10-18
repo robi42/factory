@@ -97,8 +97,8 @@ Known startup dialogs (trust prompts, Codex's hook review and transcript overlay
 cleared from the screen automatically, and a pane whose shell swallowed the startup command
 gets a Ctrl-C and a retry; a block it does not recognise becomes a toast, and long waits
 print a heartbeat every five minutes so a thirty-minute gate is visibly a wait, not a hang.
-An agent still working, or waiting for your answer, when `FACTORY_TURN_TIMEOUT_MS` runs out
-gets you a toast and more time; only a turn that has stalled by then fails the run.
+An agent still working, or waiting for your answer, after an hour gets you a toast and more
+time; only a turn that has stalled by then fails the run.
 
 ## Requirements
 
@@ -535,17 +535,13 @@ holds only the credentials a run needs, as `extras/factory-user/` sets up.
 | `FACTORY_PLAN_ROUNDS` | `2` plan review rounds (always at least one); a note of yours gets one more |
 | `FACTORY_ROUNDS` | `3` build / review rounds; a note of yours at the last gets one more |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
-| `FACTORY_TURN_TIMEOUT_MS` | `3600000` (1 h); a stalled turn fails then, one working or waiting for your answer toasts you and goes on |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
 | `FACTORY_REQUIRE_TESTS` | `1`: code changes must also touch a test file |
 | `FACTORY_APPROVAL` | `ask`; `auto` skips the plan and build approvals (`--auto`) |
-| `FACTORY_POLL_SECONDS` | `5` seconds between checks for the approve, reject and abort files, and on an open question |
 | `FACTORY_PR` | `0`; `1` opens a pull request (`--pr`) |
 | `FACTORY_COPILOT` | `1`; `0` skips the Copilot review loop (`--no-copilot`) |
 | `FACTORY_COPILOT_ROUNDS` | `3` Copilot review rounds |
-| `FACTORY_COPILOT_WAIT_S` | `900` (15 min) per Copilot review |
 | `FACTORY_BD_PUSH` | `1`: push the Beads database to its sync remote after tasks, adds, PRs and cleans |
-| `FACTORY_GUARDRAILS` | `guardrails.txt` next to the script |
 | `FACTORY_FRESH` | `0`; `1` starts over instead of resuming (`--fresh`) |
 
 `fy help` prints the current values, and `fy help <repo>` those with the repo's
