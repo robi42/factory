@@ -440,18 +440,12 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
   `.factory/guardrails.txt`, which replaces Factory's list for that repo and is protected
   like the gate; copy the default and edit it. A pattern sees each added line with diff's
   `+` in front, so `^\+` anchors it at the line's start. Every added line of a text file
-  outside `.factory/` is read, whatever the git config and attributes say; `.factory/` is
-  protected instead, so a change there needs your waiver. A renamed file's lines count
-  only where it changed. A binary file, such as an image, has none, and a submodule one,
+  outside `.factory/` is read; `.factory/` is protected instead, so a change there needs
+  your waiver. A renamed file's lines count only where it changed. A file git takes for
+  binary, such as an image, has none, and a submodule one,
   `+Subproject commit` and the id of the commit it points at. A pattern grep cannot read
   fails the guardrails, rather than matching nothing, and so does a rules file it cannot
   read (`lines`).
-- No NUL byte added to a file that is not binary data: git and grep would take the file for
-  binary and skip its lines. Binary data is a file named as an image, a PDF, a font, an
-  archive, audio or video, whose bytes agree: they hold control bytes besides the NUL and
-  are not UTF-8. This fails closed: UTF-16 text, a binary type not on that list, such as
-  an SQLite database, and a binary format whose bytes are all ASCII, such as a tar of text
-  files, have to be committed by hand (`lines`).
 - A change to code files must also touch a test file (`FACTORY_REQUIRE_TESTS=0` to relax).
   In Rust, whose unit tests live in the file they test, a `#[test]` or an assertion added
   to the changed file will do. A deleted test file is no test changed, nor a deleted code
@@ -513,7 +507,8 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
 The guardrails keep an agent honest, not contained: its shell runs as you, so an agent
 set on it could still write Factory's state for the task or the repo's git config, which
 tells Factory's fetch and push where origin is, put commits on your `main` for the branch
-to take in unchecked, change what lies outside the worktree,
+to take in unchecked, write a text file git takes for binary, whose lines no check reads,
+change what lies outside the worktree,
 such as a `.cargo/config.toml` in a directory above it, or what git status does not show,
 such as a file in an ignored `node_modules` or one in a submodule's directory, or run
 `fy approve` by a path the agents' settings do not name. The pull request's diff

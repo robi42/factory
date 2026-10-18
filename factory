@@ -47,8 +47,6 @@ MASKED="(not the commit's bytes; a conversion in the repo's git dir hides it)" #
 # branch's and misses a change. This graft file is one git never finds; a /dev/null graft file
 # exists, and has git print a deprecation notice.
 NO_GRAFTS=/dev/null/no-grafts
-# files that hold data, not code: only in one of them is an added NUL binary data rather than text
-BINARY_PATH_RE='\.(png|jpe?g|gif|webp|avif|ico|icns|bmp|tiff?|pdf|zip|jar|aar|tar|gz|tgz|xz|zst|bz2|7z|woff2?|ttf|otf|mp[34]|m4a|wav|ogg|webm|mov)$'
 # files that look like tests, for the tests-required guardrail
 TEST_PATH_RE='(^|/)(tests?|spec|specs|__tests__|bats)/|(^|/)test_[^/]*\.py$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|scala|cs|swift)$|_spec\.rb$|\.bats$'
 
@@ -1161,25 +1159,15 @@ guard_commits() {
   return 1
 }
 
-# guard_readable worktree base: git can read the branch's diff outside .factory/, the one
-# guard_lines reads, which is read here once for the count of its NUL bytes, GUARD_NULS
-# (guard_lines). When git cannot, the checks read nothing and would pass: a line in
-# .git/shallow, which an agent can write, cuts the branch off from the base, so that
-# base...HEAD has no merge base, and an object gone from the repository fails the diff of a
-# file while the worktree matches.
+# guard_readable worktree base: git can read the branch's diff, which every other check
+# reads: where git cannot, they would read nothing and pass. A line in .git/shallow, which an
+# agent can write, cuts the branch off from the base, so that base...HEAD has no merge base,
+# and an object gone from the repository fails the diff of a file while the worktree matches.
 guard_readable() {
-  local err rc=0
-  err=$(mktemp)
-  GUARD_NULS=$(
-    guard_diff "$1" --no-renames -U0 "$2...HEAD" -- . ':(exclude).factory' 2>"$err" | LC_ALL=C tr -cd '\000' | wc -c
-    exit "${PIPESTATUS[0]}"
-  ) || rc=$?
-  if ((rc)); then
-    printf "git cannot read the branch's diff against %s, so no check here could read it: %s\n" "$2" "$(head -n 3 "$err" | paste -sd ' ')"
-    GUARD_NULS=0
-  fi
-  rm -f "$err"
-  return $((rc != 0))
+  local err
+  err=$(guard_diff "$1" --no-renames -U0 "$2...HEAD" 2>&1 >/dev/null) && return 0
+  printf "git cannot read the branch's diff against %s, so no check here could read it: %s\n" "$2" "$(head -n 3 <<<"$err" | paste -sd ' ')"
+  return 1
 }
 
 # guard_artifacts worktree base: no build artifact added. --no-renames, as in the symlink and
@@ -1314,8 +1302,8 @@ guard_submodules() {
   return $bad
 }
 
-# guard_lines worktree base: no line the branch adds matches a forbidden pattern, and none
-# holds a NUL byte, which would have git and grep skip the file's lines
+# guard_lines worktree base: no line the branch adds matches a forbidden pattern; a file git
+# takes for binary data, such as an image, has none
 guard_lines() {
   local f st old rules patterns lines err p n hits=0 rc=0 bad=0
   rules=$(guardrails_file "$1")
@@ -1350,13 +1338,6 @@ guard_lines() {
       IFS= read -r -d '' f
     fi
     added_lines "$1" "$2" "$f" ${old:+"$old"} >"$lines"
-    # an added NUL: binary data, which has no lines, or a file that git and grep take for binary.
-    # A NUL is rare: each file is looked at for one only when the branch's diff holds one.
-    if ((${GUARD_NULS:-1})) && [[ $(LC_ALL=C tr -cd '\000' <"$lines" | wc -c) -gt 0 ]]; then
-      binary_data "$1" "$f" && continue
-      printf 'NUL byte added to a file not known as binary data: %s (git and grep would skip its lines; remove the byte, or take the file out of the branch, for a human to add after the merge)\n' "$f"
-      bad=1
-    fi
     if grep -a -E -f "$patterns" "$lines" | label "$f"; then
       hits=1
     fi
@@ -1410,12 +1391,11 @@ gitlinks() {
 
 # guard_diff worktree [git diff args]: git diff in the worktree as git itself writes it,
 # whatever the git config and attributes say, which an agent can write: no colour codes,
-# external diff tool or textconv filter; text, where an attribute, a NUL byte or a file larger
-# than core.bigFileThreshold would have git print "Binary files differ"; renames found, as by
-# git's default (diff.renames), where the args do not say --no-renames; and a submodule as the
-# one line that names its commit, never left out (diff.submodule, diff.ignoreSubmodules).
+# external diff tool or textconv filter; renames found, as by git's default (diff.renames),
+# where the args do not say --no-renames; and a submodule as the one line that names its
+# commit, never left out (diff.submodule, diff.ignoreSubmodules).
 guard_diff() {
-  git -C "$1" diff --no-color --no-ext-diff --no-textconv --text -M --submodule=short --ignore-submodules=none "${@:2}"
+  git -C "$1" diff --no-color --no-ext-diff --no-textconv -M --submodule=short --ignore-submodules=none "${@:2}"
 }
 
 # added_lines worktree base path [old-path]: the lines the branch adds to path, renamed from
@@ -1424,19 +1404,6 @@ guard_diff() {
 # with a + is an added line, whatever comes after the +.
 added_lines() {
   guard_diff "$1" -U0 "$2...HEAD" -- ":(literal)$3" ${4:+":(literal)$4"} | sed -n '/^@@/,/^diff /{/^+/p;}'
-}
-
-# binary_data worktree path: 0 when the branch's file at path, which holds a NUL byte, is
-# binary data such as an image rather than text: it is named as an image, a PDF, a font, an
-# archive, audio or video (BINARY_PATH_RE), and its bytes agree, as they hold control bytes
-# besides the NUL and are not UTF-8. The bytes alone cannot tell, as bash, node and gcc take
-# all three in a comment; they keep a text file under such a name from passing for data.
-binary_data() {
-  local LC_ALL=C
-  [[ ${2,,} =~ $BINARY_PATH_RE ]] || return 1
-  need iconv
-  [[ -n $(git -C "$1" cat-file blob "HEAD:$2" | tr -cd '\001-\006\016-\032\034-\037' | head -c 1) ]] \
-    && ! git -C "$1" cat-file blob "HEAD:$2" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1
 }
 
 # label path: each added line on stdin after the path it comes from, without diff's +

@@ -7,8 +7,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 Upgrading from 0.1.x: `factory answer` is gone; the planner asks its questions in a dialog
 in its pane. The guardrails stop more than before: a change to any file under `.factory/`
-but `.factory/run/` needs your waiver at plan approval; a NUL byte added to any file but
-an image, a PDF, a font, an archive, audio or video fails the branch; and a submodule
+but `.factory/run/` needs your waiver at plan approval; and a submodule
 added or moved, a symlink to a place git does not show, or an ignored file at a protected
 path fails it whatever you waive. A typo in a knob's value, or in a knob's name in
 `.factory/env`, now stops the command instead of being read as something else or ignored.
@@ -338,15 +337,10 @@ that waits for your approval takes your answer where its own Factory looks for i
   every forbidden pattern: the branch passed whatever it added. Such a line now fails the
   guardrails, which name the file and the line.
 - A renamed file read as added in full, so moving a module that already held a
-  suppression, or a committed SQLite fixture, failed the branch. A renamed file counts
-  only the lines it changed; a copy's lines count in full.
-- A NUL byte hid a text file's lines from the guardrails, though rustc compiles a Rust
-  source with one in a comment: git shows a file with a NUL in its first 8000 bytes as
-  binary, and grep stops printing lines at one further on. A `binary` or `-diff`
-  attribute hid them the same way. A NUL byte added to a file now fails the branch, unless
-  the file is named as an image, a PDF, a font, an archive, audio or video and its bytes
-  agree, as an image's do; only such a file counts as binary, with no lines to check, and
-  every other file's lines are checked all the same.
+  suppression failed the branch. A renamed file counts only the lines it changed; a copy's
+  lines count in full.
+- A NUL byte past a text file's first 8000 bytes, which git still shows as text, hid the
+  file's lines from the guardrails, as grep stops printing lines at one; they are read now.
 - A committed build artifact slipped past the build-artifact check when git read it as a
   rename of a deleted file of like content. A rename no longer hides one.
 - An agent could approve its own plan or build, abort it, hand the planner a note as
