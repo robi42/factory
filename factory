@@ -1104,7 +1104,7 @@ listed() {
 # other. Prints violations, and sets GUARD_FAILED to the checks that found them. Git lists the
 # paths NUL-terminated (-z), as it stores them: a name it would quote, such as one with a
 # non-ASCII character, would match no check, and :(literal) keeps a name from being read as
-# a pathspec; where git takes no pathspec magic, ./ before it does.
+# a pathspec.
 guard_check() {
   local wt=$1 base=$2 bad=0 check dir
   # every check reads base...HEAD or HEAD, through the true graph, in the helpers too; and what
@@ -1270,19 +1270,26 @@ guard_ignored() {
   return $bad
 }
 
-# guard_symlinks worktree base: a symlink the branch adds leads the gate where git's paths do
-# not. Out of the worktree, into .git or an ignored place, it reads what no diff shows, waiver
-# or not; to a directory, it gives the files there paths that no protected glob names, so it
-# passes only where the human allowed it, as a path the plan names. A symlink the branch
-# renames counts as one it adds (--no-renames).
+# guard_symlinks worktree base: a symlink the branch adds, renames (--no-renames) or points
+# elsewhere must lead to a place the branch holds. HEAD:path names what is there: a file
+# (blob), a directory (tree; HEAD: with no path names the top), a submodule's commit, or
+# nothing, as out of the worktree, in .git or at an untracked path. Anywhere but at a file or
+# a directory, the gate would read what no diff shows, waiver or not; to a directory, it gives
+# the files there paths that no protected glob names, so it passes only as a path the plan
+# names and the human allowed.
 guard_symlinks() {
-  local f bad=0
+  local f p kind bad=0
   while IFS= read -r -d '' f; do
     [[ -L $1/$f ]] || continue
-    if ! in_view "$1" "$(realpath -m --relative-to="$1" "$1/$f")"; then
-      printf 'symlink to a place git does not show: %s -> %s (the gate would read what no diff shows; point it at a tracked file, or remove it)\n' "$f" "$(readlink "$1/$f")"
+    kind=none
+    if p=$(realpath -m --relative-to="$1" "$1/$f"); then
+      [[ $p != . ]] || p="" # the top
+      kind=$(git -C "$1" cat-file -t "HEAD:$p" 2>/dev/null) || kind=none
+    fi
+    if [[ $kind != blob && $kind != tree ]]; then
+      printf 'symlink to a place the branch does not hold: %s -> %s (the gate would read what no diff shows; point it at a tracked file, or remove it)\n' "$f" "$(readlink "$1/$f")"
       bad=1
-    elif [[ -d $1/$f ]] && ! allowed "$f"; then
+    elif [[ $kind == tree ]] && ! allowed "$f"; then
       printf "symlink to a directory: %s -> %s (the paths under it escape the protected globs; remove it, or have the plan name it and the human allow protected paths at its approval)\n" "$f" "$(readlink "$1/$f")"
       bad=1
     fi
@@ -1356,27 +1363,6 @@ info_exclude() {
   local common
   common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir) || return 1
   printf '%s/info/exclude' "$common"
-}
-
-# in_view worktree path: 0 when git shows path, relative to the worktree: inside it, outside
-# .git and the branch's submodules, whose files no diff shows, and in the branch or not
-# ignored. git check-ignore says 1 for a path not ignored, 0 for an ignored one, and 128 for
-# one it cannot tell. Without the index, and with ./ before it, it reads the path as the name
-# it is: as a pathspec, a leading : would be magic, and a ? or * would match a tracked name.
-# Without the index it knows no submodule either, so the path and each directory it is in are
-# looked up in the branch first: git ls-tree does not descend into a submodule (mode 160000),
-# and cat-file would find a submodule's own commit if the repo holds it.
-in_view() {
-  local rc=0 d=$2
-  [[ $2 != .. && $2 != ../* && $2 != .git && $2 != .git/* ]] || return 1
-  while [[ $d != . ]]; do # the path, then each directory it is in; . is the top
-    [[ $(git -C "$1" ls-tree HEAD -- ":(literal)$d") != 160000\ * ]] || return 1
-    [[ $d == */* ]] || break
-    d=${d%/*}
-  done
-  git -C "$1" cat-file -e "HEAD:$2" 2>/dev/null && return 0
-  git -C "$1" -c core.ignoreCase=false -c core.excludesFile="$(user_excludes)" check-ignore -q --no-index -- "./$2" 2>/dev/null || rc=$?
-  ((rc == 1))
 }
 
 # gitlinks worktree base: the paths, NUL-terminated, at which the branch adds a submodule or

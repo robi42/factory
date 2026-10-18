@@ -491,11 +491,11 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
   index is not, and what ignores a file is the worktree's patterns and your own excludes
   file, not one the repo's config names, matched with case whatever `core.ignoreCase`
   says (`ignored`).
-- No symlink added, renamed or pointed elsewhere that leads out of the worktree, into
-  `.git`, into a submodule or into an ignored place, waiver or not: the gate would read
-  through it what no diff shows. A symlink to a directory gives the files under it paths
-  that no protected glob names, so it needs the waiver, as a path the plan names
-  (`symlinks`).
+- No symlink added, renamed or pointed elsewhere to a place the branch does not hold,
+  waiver or not: out of the worktree, into `.git` or a submodule, to an untracked file or
+  to nothing, the gate would read through it what no diff shows. A symlink to a directory
+  gives the files under it paths that no protected glob names, so it needs the waiver, as
+  a path the plan names (`symlinks`).
 - No submodule added or pointed at another commit, waiver or not: the gate would read its
   files, which no diff shows. Leave such a change for after the merge (`submodules`).
 - Nothing of Factory's own `.factory/run/` on the branch, which no other check reads

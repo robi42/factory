@@ -1824,33 +1824,12 @@ IN
   [[ $output == *"ignored file at a protected path: .cargo/config.toml"* ]]
 }
 
-@test "guard: a symlink's target is read as the name it is: a leading colon is no magic, a ? no wildcard; a tracked file is in view, ignored or not" {
-  make_repo
-  mkdir -p "$REPO/src" "$REPO/:hidden" "$REPO/s?c" "$REPO/hidden"
-  printf 'x\n' >"$REPO/src/main.py"
-  printf 'hidden/\n/s\\?c/\n' >"$REPO/.gitignore"
-  printf 'k\n' >"$REPO/hidden/keep.txt"
-  git -C "$REPO" add -f hidden/keep.txt # tracked, though hidden/ is ignored
-  commit_all "track src, ignore hidden/ and s?c/"
-  merge_work
-  printf 'y\n' >"$REPO/:hidden/real.sh" # tracked, beside an ignored hidden/
-  printf 'z\n' >"$REPO/s?c/main.py"     # ignored, though src/main.py is tracked
-  ln -s ':hidden/real.sh' "$REPO/shown.sh"
-  ln -s 's?c/main.py' "$REPO/hid.py"
-  ln -s hidden/keep.txt "$REPO/kept.sh"
-  commit_all links
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"symlink to a place git does not show: hid.py -> s?c/main.py"* ]]
-  [[ $output != *"shown.sh"* ]]
-  [[ $output != *"kept.sh"* ]]
-}
-
-@test "guard: a submodule's files are no place git shows: a symlink into one, or to its top, fails, waiver or not; its own .gitignore is its own" {
+@test "guard: a symlink into a submodule, or to its top, fails, waiver or not; its own .gitignore is its own" {
   make_repo
   git init -q "$TMP/lib"
   printf '.*\n' >"$TMP/lib/.gitignore" # ignores itself, which is the submodule's business
-  git -C "$TMP/lib" add -f .gitignore
+  printf 'import pytest\n' >"$TMP/lib/conftest.py"
+  git -C "$TMP/lib" add -f .gitignore conftest.py
   git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q -m lib
   git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" lib
   commit_all "add lib"
@@ -1859,27 +1838,18 @@ IN
   commit_all change
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
-  # a file the submodule's own git dir, which an agent can write, hides from every diff
-  mkdir -p "$REPO/lib/secret"
-  printf 'import pytest\n' >"$REPO/lib/secret/conftest.py"
-  printf 'secret/\n' >>"$(git -C "$REPO/lib" rev-parse --git-path info/exclude)"
-  [ -z "$(git -C "$REPO" status --porcelain --ignore-submodules=none)" ]
-  ln -s lib/secret/conftest.py "$REPO/conftest.py"
-  commit_all "link into lib"
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"symlink to a place git does not show: conftest.py -> lib/secret/conftest.py"* ]]
-  # nor its top, which the waiver for a symlink to a directory would let through, though the
-  # repo holds lib's commit, which HEAD:lib names
-  git -C "$REPO" reset -q --hard HEAD~1
+  ln -s lib/conftest.py "$REPO/conftest.py" # lib's file, which no diff of the branch shows
+  # and one to its top, which the waiver for a symlink to a directory would let through,
+  # though the repo holds lib's commit, which HEAD:lib names
   git -C "$REPO" fetch -q "$TMP/lib"
   git -C "$REPO" cat-file -e HEAD:lib
   ln -s lib "$REPO/vendored"
-  commit_all "link to lib"
+  commit_all links
   waive vendored
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
-  [[ $output == *"symlink to a place git does not show: vendored -> lib"* ]]
+  [[ $output == *"symlink to a place the branch does not hold: conftest.py -> lib/conftest.py"* ]]
+  [[ $output == *"symlink to a place the branch does not hold: vendored -> lib"* ]]
 }
 
 @test "guard: an ignored file at a protected path fails, whether the repo or the user ignores it" {
@@ -1918,14 +1888,11 @@ IN
   printf 'def test(): pass\n' >"$REPO/tests/test_a.py"
   commit_all "protect mise's local config, tests"
   merge_work
-  ln -s hidden/conf.toml "$REPO/conf.toml"
-  commit_all "link to a config"
-  printf '.mise.local.toml\n!.MISE.LOCAL.TOML\n/.factory/local/\n!/.FACTORY/LOCAL/\n/hidden/\n!/HIDDEN/\n' >"$TMP/ignore"
+  printf '.mise.local.toml\n!.MISE.LOCAL.TOML\n/.factory/local/\n!/.FACTORY/LOCAL/\n' >"$TMP/ignore"
   printf '[core]\n\texcludesFile = %s\n' "$TMP/ignore" >"$TMP/gitconfig"
   printf '[env]\n' >"$REPO/.mise.local.toml"
-  mkdir -p "$REPO/.factory/local" "$REPO/hidden"
+  mkdir -p "$REPO/.factory/local"
   printf 'exit 0\n' >"$REPO/.factory/local/gate.sh"
-  printf '[build]\n' >"$REPO/hidden/conf.toml"
   printf '*\n!.GITIGNORE\n' >"$REPO/tests/.gitignore"
   printf 'import pytest\n' >"$REPO/tests/conftest.py"
   git -C "$REPO" config core.ignoreCase true
@@ -1935,7 +1902,6 @@ IN
   [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
   [[ $output == *"ignored file at a protected path: .factory/local/gate.sh"* ]]
   [[ $output == *"untracked .gitignore that ignores itself: tests/.gitignore"* ]]
-  [[ $output == *"symlink to a place git does not show: conf.toml -> hidden/conf.toml"* ]]
 }
 
 @test "guard: the human's own .factory/env may lie ignored in the main checkout, not in a task's worktree" {
@@ -1958,10 +1924,13 @@ IN
   [[ $output == *"ignored file at a protected path: .factory/env"* ]]
 }
 
-@test "guard: a symlink into an ignored place, into .git or out of the worktree fails, waiver or not" {
+@test "guard: a symlink to a place the branch does not hold, or to nothing, fails, waiver or not; one to a file it holds passes, ignored or not" {
   make_repo
   local pipe='||'
   printf '/target/\n' >"$REPO/.gitignore"
+  mkdir -p "$REPO/target"
+  printf 'k\n' >"$REPO/target/keep.txt"
+  git -C "$REPO" add -f target/keep.txt # tracked, though target/ is ignored
   commit_all "ignore target"
   merge_work
   mkdir -p "$REPO/target/cfg"
@@ -1971,36 +1940,42 @@ IN
   ln -s target/cfg "$REPO/.cargo" # cargo reads .cargo/config.toml through it
   ln -s ../outside.sh "$REPO/out.sh"
   ln -s .git/hooks "$REPO/hooks"
+  ln -s build/tool "$REPO/run-tool" # what a build would put there
+  ln -s target/keep.txt "$REPO/kept.txt"
   commit_all links
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
-  [[ $output == *"symlink to a place git does not show: tool.sh -> target/real.sh"* ]]
-  [[ $output == *"symlink to a place git does not show: .cargo -> target/cfg"* ]]
-  [[ $output == *"symlink to a place git does not show: out.sh -> ../outside.sh"* ]]
-  [[ $output == *"symlink to a place git does not show: hooks -> .git/hooks"* ]]
+  [[ $output == *"symlink to a place the branch does not hold: tool.sh -> target/real.sh"* ]]
+  [[ $output == *"symlink to a place the branch does not hold: .cargo -> target/cfg"* ]]
+  [[ $output == *"symlink to a place the branch does not hold: out.sh -> ../outside.sh"* ]]
+  [[ $output == *"symlink to a place the branch does not hold: hooks -> .git/hooks"* ]]
+  [[ $output == *"symlink to a place the branch does not hold: run-tool -> build/tool"* ]]
+  [[ $output != *"kept.txt"* ]]
   waive # the waiver is for what the branch's diff shows
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
-  [[ $output == *"symlink to a place git does not show: tool.sh"* ]]
+  [[ $output == *"symlink to a place the branch does not hold: tool.sh"* ]]
 }
 
-@test "guard: a symlink to a directory fails unless the human allowed it with the plan; one to a file passes" {
+@test "guard: a symlink to a directory, the worktree's top among them, fails unless the human allowed it with the plan; one to a file passes" {
   make_repo
-  mkdir -p "$REPO/conf"
+  mkdir -p "$REPO/conf" "$REPO/docs"
   printf '[build]\nrustflags = ["--cap-lints=allow"]\n' >"$REPO/conf/config.toml"
   ln -s conf "$REPO/.cargo" # .cargo/config.toml, which a glob may protect, is conf/config.toml
+  ln -s .. "$REPO/docs/root"
   printf 'notes\n' >"$REPO/AGENTS.md"
   ln -s AGENTS.md "$REPO/CLAUDE.md"
   commit_all links
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"symlink to a directory: .cargo -> conf"* ]]
+  [[ $output == *"symlink to a directory: docs/root -> .."* ]]
   [[ $output != *"CLAUDE.md"* ]]
   waive conf # what it points at, not the link
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"symlink to a directory: .cargo -> conf"* ]]
-  waive .cargo
+  waive .cargo docs/root
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
 }
@@ -2015,7 +1990,7 @@ IN
   commit_all "rename the link"
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
-  [[ $output == *"symlink to a place git does not show: tool.sh -> target/release/app"* ]]
+  [[ $output == *"symlink to a place the branch does not hold: tool.sh -> target/release/app"* ]]
 }
 
 @test "guard: a submodule the branch adds or points at another commit fails, waiver or not; one it removes passes" {

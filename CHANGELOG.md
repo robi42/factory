@@ -7,8 +7,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 Upgrading from 0.1.x: `factory answer` is gone; the planner asks its questions in a dialog
 in its pane. The guardrails stop more than before: a change to any file under `.factory/`
-but `.factory/run/` needs your waiver at plan approval; and a submodule
-added or moved, a symlink to a place git does not show, or an ignored file at a protected
+but `.factory/run/` needs your waiver at plan approval; and a submodule added or moved,
+a symlink to a place the branch does not hold, or an ignored file at a protected
 path fails it whatever you waive. A typo in a knob's value, or in a knob's name in
 `.factory/env`, now stops the command instead of being read as something else or ignored.
 A repo whose own git config converts files, such as a local `core.autocrlf` or git-crypt's
@@ -374,8 +374,8 @@ that waits for your approval takes your answer where its own Factory looks for i
   such as `target/`, into `.git`, into a submodule or out of the worktree showed its
   content in no diff: `.cargo -> target/cfg` made an ignored file Cargo's config. One to a
   directory gave the files under it paths that no protected glob names. The guardrails now
-  refuse a symlink the branch adds, renames or points elsewhere that leads to such a
-  place, waiver or not, and one to a directory unless you waived the protected paths.
+  refuse a symlink the branch adds, renames or points elsewhere to a place the branch does
+  not hold, waiver or not, and one to a directory unless you waived the protected paths.
 - A submodule the branch added, or pointed at another commit, brought in files that the
   gate read and no diff showed, and git config an agent can write (`diff.submodule`,
   `diff.ignoreSubmodules`) could hide even its one `+Subproject commit` line. The
