@@ -47,10 +47,6 @@ MASKED="(not the commit's bytes; a conversion in the repo's git dir hides it)" #
 # branch's and misses a change. This graft file is one git never finds; a /dev/null graft file
 # exists, and has git print a deprecation notice.
 NO_GRAFTS=/dev/null/no-grafts
-# The keys of git config that steer a fetch from origin or a push to it: origin's URLs and the
-# programs it runs, URL rewrites, the ssh command, proxies and the rest of http, credentials,
-# the protocols allowed. Lowercase, as git config --get-regexp matches them.
-TRANSPORT_KEYS='^(remote\.origin\.(url|pushurl|proxy|proxyauthmethod|receivepack|uploadpack|vcs)|url\..*\.(insteadof|pushinsteadof)|http\..*|credential\..*|core\.(sshcommand|gitproxy|askpass)|ssh\.variant|protocol\..*)$'
 # files that hold data, not code: only in one of them is an added NUL binary data rather than text
 BINARY_PATH_RE='\.(png|jpe?g|gif|webp|avif|ico|icns|bmp|tiff?|pdf|zip|jar|aar|tar|gz|tgz|xz|zst|bz2|7z|woff2?|ttf|otf|mp[34]|m4a|wav|ogg|webm|mov)$'
 # files that look like tests, for the tests-required guardrail
@@ -1572,8 +1568,7 @@ recorded_base_branch() {
 # (rebase_onto_base), or as the branch took in newer commits of it (took_in). The ref itself
 # is no base: an agent can move main or origin/main (git update-ref), your main with it, so
 # that its commits drop out of every diff read against the ref. What the gate and the
-# guardrails passed on was measured from the base before, so a base taken anew voids it. The
-# repo's transport config is recorded with the first base (record_transport).
+# guardrails passed on was measured from the base before, so a base taken anew voids it.
 record_base() {
   local ref sha
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
@@ -1585,7 +1580,6 @@ record_base() {
     printf '%s %s\n' "$sha" "$ref" >"$TASK_STATE/base"
     rm -f "$TASK_STATE/gated" "$TASK_STATE/guarded"
   fi
-  record_transport
 }
 
 # start_from_origin: a task taken up anew starts from origin's copy of its base where yours is
@@ -1597,7 +1591,6 @@ start_from_origin() {
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   [[ ! -s $TASK_STATE/base ]] || return 0                     # a task under way keeps its base
   git -C "$WT" remote get-url origin >/dev/null 2>&1 || return 0
-  record_transport
   if ! tip=$(fetch_base); then
     warn "could not fetch origin's $BASE; $TASK_ID starts from yours"
     return 0
@@ -1612,32 +1605,6 @@ start_from_origin() {
   log "$TASK_ID starts from origin's $BASE, $n commit(s) past yours"
 }
 
-# transport_record -> where Factory keeps the repo's transport config (record_transport): in its
-# state for the repo, beside its tasks', since what one task's agents change there the next
-# task would find
-transport_record() { printf '%s/transport' "${TASK_STATE%/*}"; }
-
-# transport_config -> TRANSPORT_KEYS as git in the task's worktree reads them from the repo's
-# own config and what that includes, a "key value" line each: the agents can write it. Your
-# global and system config are yours, and left out.
-transport_config() {
-  local out rc=0
-  out=$(git -C "$WT" config --show-scope --get-regexp "$TRANSPORT_KEYS") || rc=$?
-  ((rc == 0 || rc == 1)) || return 1 # 1: none of them is set
-  sed -n 's/^\(local\|worktree\)\t//p' <<<"$out"
-}
-
-# record_transport: the repo's transport config (transport_config) as Factory first finds it,
-# before an agent works there, for every task in the repo from then on (transport_record)
-record_transport() {
-  local file config
-  file=$(transport_record)
-  [[ ! -e $file ]] || return 0
-  config=$(transport_config) || die "could not read the git config of $WT"
-  mkdir -p "${file%/*}"
-  printf '%s\n' "$config" >"$file"
-}
-
 # task_base -> the recorded base commit, while its ref still holds it. A ref that no longer does
 # was moved by another hand than Factory's, as when your main is rewritten: that fails loudly.
 task_base() {
@@ -1649,32 +1616,14 @@ task_base() {
   printf '%s' "$sha"
 }
 
-# origin_url -> origin's URL, while the repo's transport config is the one Factory recorded
-# (record_transport): an agent that repointed origin, or the ssh command, a proxy or a URL
-# rewrite that reaches it, would have Factory rebase onto, or push to, a repository of its own.
-# Dies naming the keys that changed (their values may be secrets); 1 when there is no origin.
-origin_url() {
-  local file was now changed
-  file=$(transport_record)
-  [[ -e $file ]] || die "Factory has no record of the git config $WT reaches origin with; rerun, or factory pr, to record it"
-  was=$(<"$file")
-  now=$(transport_config) || die "could not read the git config of $WT"
-  if [[ $now != "$was" ]]; then
-    changed=$(changed_keys "$was" "$now")
-    die "the git config $WT reaches origin with is not the one Factory recorded: $changed changed. Something other than Factory changed it, maybe an agent: refusing to fetch from or push to origin. Look at git config --show-scope --list there; if it was you, remove $file for the next run to record it anew"
-  fi
-  git -C "$WT" remote get-url origin 2>/dev/null
-}
-
-# fetch_base -> origin's tip of the base branch, fetched by its full name from origin's URL
-# (origin_url), never through the remote's fetch config, into upstream_ref, a ref of Factory's
-# own; origin's tracking ref gets it too, for a gate that diffs against it. Neither is followed
-# where an agent made it a symbolic ref (--no-deref), which would move the ref it names, your
-# main say. The commit is the one the fetch wrote to FETCH_HEAD, whatever the config says.
+# fetch_base -> origin's tip of the base branch, fetched from origin by its full name into
+# upstream_ref, a ref of Factory's own; origin's tracking ref gets it too, for a gate that
+# diffs against it. Neither is followed where an agent made it a symbolic ref (--no-deref),
+# which would move the ref it names, your main say. The commit is the one the fetch wrote to
+# FETCH_HEAD, whatever the remote's fetch config says.
 fetch_base() {
-  local url tip
-  url=$(origin_url) || return 1
-  GIT_TERMINAL_PROMPT=0 git -C "$WT" fetch -q --no-tags --write-fetch-head "$url" "refs/heads/$BASE" || return 1
+  local tip
+  GIT_TERMINAL_PROMPT=0 git -C "$WT" fetch -q --no-tags --write-fetch-head origin "refs/heads/$BASE" || return 1
   tip=$(git -C "$WT" rev-parse --verify -q 'FETCH_HEAD^{commit}') || return 1
   git -C "$WT" update-ref --no-deref -m "factory: origin's $BASE" "$(upstream_ref)" "$tip" || return 1
   git -C "$WT" update-ref --no-deref -m "factory: fetched origin's $BASE" "refs/remotes/origin/$BASE" "$tip" \
@@ -1770,7 +1719,6 @@ push_gated() {
   local checked
   checked=$(recorded guarded)
   guarded || die "$BRANCH is at $HEAD_SHA, but the gate and the guardrails passed on ${checked:-none}: refusing to push what they have not passed; rerun, or factory pr, to check it"
-  origin_url >/dev/null || die "$WT has no origin to push $BRANCH to"
   git -C "$WT" push "$@" origin "$checked:refs/heads/$BRANCH" || return 1
   printf '%s\n' "$checked" >"$TASK_STATE/pushed"
 }
@@ -1924,9 +1872,8 @@ pull_request() {
 # pushed_holds: 0 when origin's copy of the branch is the commit Factory pushed; one an agent
 # pushed there itself would be in the pull request unchecked
 pushed_holds() {
-  local url theirs=""
-  url=$(origin_url) || return 1
-  theirs=$(GIT_TERMINAL_PROMPT=0 git -C "$WT" ls-remote "$url" "refs/heads/$BRANCH" | cut -f1) || theirs=""
+  local theirs=""
+  theirs=$(GIT_TERMINAL_PROMPT=0 git -C "$WT" ls-remote origin "refs/heads/$BRANCH" | cut -f1) || theirs=""
   [[ -n $theirs && $theirs == "$(recorded pushed)" ]]
 }
 

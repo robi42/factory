@@ -276,7 +276,7 @@ claiming its bead.
 <img align="right" width="50%" src="assets/screenshot-copilot.png" alt="The builder's pane during a Copilot round: Factory's prompt hands over the comments and asks for reasons instead of changes where the builder disagrees; the builder reruns clippy, finds both claims wrong, records the answer in a code comment so it is not raised again, and reports done">
 
 With `--pr` (or `FACTORY_PR=1`) an approved branch is first rebased onto origin's base
-branch, fetched by its full name from origin's URL, the builder
+branch, fetched from origin by its full name, the builder
 resolving any conflicts and the gate and guardrails running again if the rebase changed
 anything, then pushed and a pull request opened with `gh`: the task as
 summary, the checks as a list, the plan folded away. By default Factory then requests a
@@ -289,14 +289,9 @@ Fixes that do not reach the pull request, left uncommitted when the signer was l
 failing the gate, hand the task over instead of closing it; `fy pr` checks and pushes
 them once they are committed. `--no-copilot` (or `FACTORY_COPILOT=0`) turns it off.
 
-Factory never rebases onto a local ref, nor fetches through the remote's fetch config. The
-first time it runs in a repo, before any agent works there, it records how the repo's own
-git config reaches origin: origin's URLs, URL rewrites, the ssh command, proxies, http and
-credential settings. A run that finds any of them changed since stops before it fetches or
-pushes, and names them: an agent could have Factory fetch from, or push to, a server of
-its own. Your global git config, with what it includes, is yours, and applies as it does
-to git. A run also stops when the fetched base does not hold the commit the branch was
-measured from, such as a commit on your base branch that you have not pushed.
+Factory never rebases onto a local ref, only onto the base its own fetch brought, whatever
+the remote's fetch config says. A run stops when that base does not hold the commit the
+branch was measured from, such as a commit on your base branch that you have not pushed.
 
 A run with `--pr` checks at its start, before it claims a bead, that origin takes a push
 without a prompt: a dry-run push, which sends nothing, has the remote check git's credentials and
@@ -344,13 +339,12 @@ measured from and the base branch it was read from, which a rerun keeps; `gated`
 of the repo's `info/exclude`. Origin's base branch, as Factory fetched
 it, is the ref `refs/factory/<bead-id>/upstream/<base>`, and origin's tracking ref gets it
 too, for a gate that diffs against it. `fy clean` removes them with the task. Beside the
-tasks' state, in `<repo>-<hash>/`, `transport` holds the repo's git config for reaching
-origin, as Factory first found it; remove it after you change that config yourself.
-`next.lock` is what `fy next` holds while it chooses and claims a task, and `events.jsonl`
-keeps what the runs of the repo's tasks did, a JSON line an event: each run's start and
-end, the agents' turns, the gate's runs, the guardrails' checks, the reviewers' verdicts
-and your answers, with the time each took, and at an orderly end the tokens each agent's
-session has used. `fy clean` leaves it, and `fy stats` sums it up.
+tasks' state, in `<repo>-<hash>/`, `next.lock` is what `fy next` holds while it chooses
+and claims a task, and `events.jsonl` keeps what the runs of the repo's tasks did, a JSON
+line an event: each run's start and end, the agents' turns, the gate's runs, the
+guardrails' checks, the reviewers' verdicts and your answers, with the time each took, and
+at an orderly end the tokens each agent's session has used. `fy clean` leaves it, and
+`fy stats` sums it up.
 
 ### Stats
 
@@ -520,10 +514,11 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
   meanwhile decide nothing for the task.
 
 The guardrails keep an agent honest, not contained: its shell runs as you, so an agent
-set on it could still write Factory's state for the task, change what lies outside the
-worktree, such as a `.cargo/config.toml` in a directory above it, or what git status does
-not show, such as a file in an ignored `node_modules` or one in a submodule's directory,
-or run `fy approve` by a path the agents' settings do not name. The pull request's diff
+set on it could still write Factory's state for the task or the repo's git config, which
+tells Factory's fetch and push where origin is, change what lies outside the worktree,
+such as a `.cargo/config.toml` in a directory above it, or what git status does not show,
+such as a file in an ignored `node_modules` or one in a submodule's directory, or run
+`fy approve` by a path the agents' settings do not name. The pull request's diff
 is what a person reads before merging. Not supported: a sparse checkout, whose missing
 files read as deleted; a worktree on a filesystem without executable bits, where every
 executable file reads as changed; a filter only the repo's own git config defines, such

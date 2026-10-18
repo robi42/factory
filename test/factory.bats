@@ -4720,12 +4720,11 @@ EOF
   [[ $output != *".factory/gate"* ]]
 }
 
-@test "rebase_onto_base: origin's base as fetched from origin's URL, whatever the tracking ref or the remote's fetch config say; the tracking ref gets it, not the ref a symbolic one names" {
+@test "rebase_onto_base: origin's base as fetched from origin, whatever the tracking ref or the remote's fetch config say; the tracking ref gets it, not the ref a symbolic one names" {
   make_repo
   add_origin
   on_work_branch
   GATE=true
-  [ "$(cat "$TMP/transport")" = "remote.origin.url $TMP/origin.git" ]
   # an agent's commit off main, the tracking ref made a symbolic ref to it, the remote's fetch changed
   git -C "$REPO" checkout -q -b evil main
   printf 'x\n' >"$REPO/evil.txt"
@@ -4745,64 +4744,29 @@ EOF
   run git -C "$REPO" symbolic-ref -q refs/remotes/origin/main
   [ "$status" -eq 1 ]
   [ "$(git -C "$REPO" rev-parse evil)" = "$evil" ]
-  # a rewrite of origin's URL in the repo's config is refused
-  git -C "$REPO" config "url.$TMP/elsewhere.insteadOf" "$TMP/origin.git"
-  run rebase_onto_base builder
-  [ "$status" -eq 1 ]
-  [[ $output == *"the git config $REPO reaches origin with is not the one Factory recorded: url.$TMP/elsewhere.insteadof changed"*"could not fetch main from origin"* ]]
 }
 
-@test "rebase_onto_base: through the repo's git config as Factory first found it, and your own, which may include an ssh command for it; refused once an agent changed the repo's" {
+@test "rebase_onto_base: fetches from origin as the repo's git config names it now, through your own config, which may include an ssh command for the repo" {
   make_repo
-  git clone -q --bare "$REPO" "$TMP/origin.git"
-  # origin is reached over ssh, with an ssh command your global config includes for the repos
+  add_origin
+  on_work_branch
+  printf 'mine\n' >"$REPO/mine.txt"
+  commit_all work
+  GATE=true
+  # you switch origin to ssh, with an ssh command your global config includes for the repos
   # under $TMP: a stand-in that serves the repository it is asked for
-  mkdir -p "$TMP/bin" "$TMP/evil"
+  mkdir -p "$TMP/bin"
   cat >"$TMP/bin/ssh" <<'SH'
 #!/bin/sh
 for a; do last=$a; done
 exec sh -c "$last"
 SH
+  chmod +x "$TMP/bin/ssh"
   printf '[core]\n\tsshCommand = %s\n' "$TMP/bin/ssh" >"$TMP/work.gitconfig"
   printf '[includeIf "gitdir:%s/"]\n\tpath = %s\n' "$TMP" "$TMP/work.gitconfig" >"$TMP/gitconfig"
-  # an agent's commit on main, in a repository of its own, and an ssh of its own that serves it
-  git clone -q -b main "$REPO" "$TMP/evil-work"
-  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/evil-work/.factory/gate"
-  git -C "$TMP/evil-work" -c user.name=t -c user.email=t@example.invalid commit -qam "an agent's"
-  git clone -q --bare "$TMP/evil-work" "$TMP/evil.git"
-  printf '#!/bin/sh\nexec git-upload-pack %q\n' "$TMP/evil.git" >"$TMP/evil/ssh"
-  chmod +x "$TMP/bin/ssh" "$TMP/evil/ssh"
-  local url="ssh://origin.invalid$TMP/origin.git"
-  git -C "$REPO" remote add origin "$url"
-  on_work_branch
-  printf 'mine\n' >"$REPO/mine.txt"
-  commit_all work
-  GATE=true
-  # the repo's git config, which an agent can write, names its ssh: refused before the branch moves
-  git -C "$REPO" config core.sshCommand "$TMP/evil/ssh"
-  run rebase_onto_base builder
-  [ "$status" -eq 1 ]
-  [[ $output == *"the git config $REPO reaches origin with is not the one Factory recorded: core.sshcommand changed"* ]]
-  [ "$(git -C "$REPO" rev-parse work^)" = "$(git -C "$REPO" rev-parse main)" ]
-  # as Factory found it, through your ssh
-  git -C "$REPO" config --unset core.sshCommand
+  git -C "$REPO" remote set-url origin "ssh://origin.invalid$TMP/origin.git"
   GIT_CONFIG_GLOBAL=$TMP/gitconfig rebase_onto_base builder
   [ "$(git -C "$REPO" rev-parse refs/factory/toy-1/upstream/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
-  # origin repointed, whatever the push URL says
-  git -C "$REPO" config remote.origin.pushurl "$url"
-  git -C "$REPO" config remote.origin.url "$TMP/evil.git"
-  run rebase_onto_base builder
-  [ "$status" -eq 1 ]
-  [[ $output == *"recorded: remote.origin.pushurl remote.origin.url changed"* ]]
-  # a push URL of its own: no push goes out
-  git -C "$REPO" config remote.origin.url "$url"
-  git -C "$REPO" config remote.origin.pushurl "$TMP/evil.git"
-  printf '%s\n' "$(git -C "$REPO" rev-parse work)" >"$TASK_STATE/guarded" # the gate and the guardrails passed on it
-  run push_gated -q
-  [ "$status" -eq 1 ]
-  [[ $output == *"recorded: remote.origin.pushurl changed"* ]]
-  run git -C "$TMP/evil.git" rev-parse -q --verify refs/heads/work
-  [ "$status" -eq 1 ]
 }
 
 @test "rebase_onto_base: refused when origin's base does not hold the commit the branch is measured from, as when an agent moved main before the task started" {
@@ -4848,23 +4812,6 @@ SH
   [ "$status" -eq 1 ]
   [[ $output == *"protected path changed: .factory/gate"* ]]
   [[ $output != *"took in"* ]]
-}
-
-@test "origin_url: the repo's git config as Factory first recorded it holds for every task there; an origin added since is refused until you remove the record" {
-  make_repo
-  as_task toy-1
-  on_work_branch # no origin yet, and so recorded
-  git -C "$REPO" remote add origin "$TMP/origin.git"
-  run origin_url
-  [ "$status" -eq 1 ]
-  [[ $output == *"not the one Factory recorded: remote.origin.url changed"*"remove ${TASK_STATE%/*}/transport for the next run"* ]]
-  as_task toy-2 # another task in the repo reads the same record
-  record_base
-  run origin_url
-  [ "$status" -eq 1 ]
-  rm "${TASK_STATE%/*}/transport"
-  record_base
-  [ "$(origin_url)" = "$TMP/origin.git" ]
 }
 
 @test "record_base: a base taken anew voids what the gate and the guardrails passed on" {

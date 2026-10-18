@@ -264,20 +264,15 @@ that waits for your approval takes your answer where its own Factory looks for i
   tell; the guardrails, the reviewers' prompts and the build's approval read the branch
   from that commit. A base ref that no longer holds it stops the run loudly, as your
   `main` may have been rewritten. `factory clean` removes this state with the task.
-- The rebase before a pull request fetched the base through origin's config and fell back
-  to your local branch when the fetch failed, both of which an agent can steer to a commit
-  of its own: by the remote's URL or refspec, by its tracking ref, or by the repo's git
-  config, which reaches a server of the agent's with origin's URL unchanged
-  (`core.sshCommand`, a proxy). Factory now records the repo's own git config for reaching
-  origin (origin's URLs, URL rewrites, the ssh command, proxies, http and credential
-  settings) the first time it runs there, and a fetch or a push stops when any of it has
-  changed since, naming the keys; your global config applies as it does to git. It fetches
-  the base by its full name from origin's URL into
-  `refs/factory/<bead-id>/upstream/<base>`, a ref nothing else writes, and into origin's
-  tracking ref, without following either where it is a symbolic ref, rebases onto that,
-  and stops when it cannot fetch. It also stops when the base it fetched does not hold the
-  commit the branch was measured from, such as one an agent put on your `main` before the
-  task started, or one you have not pushed: the pull request would carry it unchecked.
+- The rebase before a pull request went onto origin's tracking ref, as the remote's fetch
+  config fills it, and fell back to your local branch when the fetch failed, both of which
+  an agent can steer to a commit of its own. Factory now fetches the base by its full name
+  from origin into `refs/factory/<bead-id>/upstream/<base>`, a ref nothing else writes,
+  and into origin's tracking ref, without following either where it is a symbolic ref,
+  rebases onto that, and stops when it cannot fetch. It also stops when the base it
+  fetched does not hold the commit the branch was measured from, such as one an agent put
+  on your `main` before the task started, or one you have not pushed: the pull request
+  would carry it unchecked.
 - The gate and the guardrails checked the commit checked out in the worktree, but Factory
   pushed the branch by name: a worktree left on another commit had them pass that commit
   while the push sent the branch's, and a commit made after the gate went out unchecked.
