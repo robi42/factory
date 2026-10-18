@@ -345,10 +345,7 @@ that waits for your approval takes your answer where its own Factory looks for i
   run dir for the planner over whatever is there, and a file committed in the run dir
   fails the guardrails. `factory check` in a task's worktree honours the task's waiver.
 - A planner's commit passed the check that planning leaves the code untouched, which read
-  only uncommitted changes. A planner turn that commits, or moves HEAD, the task's branch
-  or a replace ref, now stops the run, and says which. The repo's other refs, which you,
-  fetches and other tasks move meanwhile (your main, tags, a stash), decide nothing for
-  the task.
+  only uncommitted changes. A planner turn that commits or checks out now stops the run.
 - A line of `.factory/protected` that git cannot read as a pathspec, such as `:(bogus)x`,
   made git fail in both checks of protected paths, which then read no path and passed;
   only git's own error reached the terminal. The guardrails now fail and say which line.

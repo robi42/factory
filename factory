@@ -2919,49 +2919,29 @@ Reply with just DONE."
   die "the planner left changes in $WT, though planning must not touch code; revert these, then rerun:"$'\n'"$new"
 }
 
-# changed_keys before after -> the first words of the lines only one of the two has,
-# space-separated: what changed between two lists of "key value" lines
-changed_keys() { LC_ALL=C comm -3 <(LC_ALL=C sort <<<"$1") <(LC_ALL=C sort <<<"$2") | awk 'NF {print $1}' | LC_ALL=C sort -u | paste -sd ' '; }
-
 # changed_since tree-state [worktree] -> the lines of tree_state that the earlier state lacks
 changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "${2:-$WT}" | LC_ALL=C sort); }
 
-# refs_state worktree -> where its HEAD points, and the refs Factory reads the task by, a line
-# each, which a planner's turn must leave as they were: the task's branch and the replace refs,
-# which rewrite what a commit is or descends from. The repo's other refs decide nothing for
-# the task once its base is recorded, and others move them meanwhile: your main, the tags and
-# tracking refs a fetch brings, a stash, other tasks' branches.
-refs_state() {
-  local head
-  head=$(git -C "$1" symbolic-ref -q HEAD) || head=detached
-  printf 'HEAD %s %s\n' "$(git -C "$1" rev-parse -q --verify HEAD || printf none)" "$head"
-  git -C "$1" for-each-ref --format='%(refname) %(objectname)' "refs/heads/$BRANCH" refs/replace/
-}
-
-# planner_left_refs refs-state: refuse a planner turn that moved HEAD or a ref refs_state takes
-# since it was taken. A commit carries the planner's change out of the tree that
-# planner_kept_hands_off reads, and onto the branch.
-planner_left_refs() {
-  local moved
-  moved=$(changed_keys "$1" "$(refs_state "$WT")")
-  [[ -n $moved ]] || return 0
-  die "the planner's turn moved $moved in the repo of $WT: planning must not commit, check out or move a ref. Look at what it did, put them back, and rerun; if you moved them yourself meanwhile, rerun"
-}
+# head_of worktree -> the commit checked out there and the branch it is on, which a planner's
+# turn must leave as they were: a commit carries its change out of the tree that
+# planner_kept_hands_off reads, and onto the branch
+head_of() { printf '%s %s' "$(git -C "$1" rev-parse -q --verify HEAD || printf none)" "$(git -C "$1" symbolic-ref -q HEAD || printf detached)"; }
 
 # planner_turn planner-agent prompt: one turn of the planner, then the checks that it left the
-# code and the refs alone. What changed before the turn is not the planner's, nor what the
+# code and HEAD alone. What changed before the turn is not the planner's, nor what the
 # human changed while one of its question dialogs was open: the dialog's hook records that in
 # tree-at-answer, in Factory's state for the task.
 planner_turn() {
-  local before refs
+  local before head
   rm -f "${TASK_STATE:?}/tree-at-answer" # tree-at-ask stays: a question still open keeps its snapshot
   show_decisions "$WT/$RUN_DIR"
   before=$(tree_state "$WT")
-  refs=$(refs_state "$WT")
+  head=$(head_of "$WT")
   ask "$1" "$2"
   [[ ! -s $TASK_STATE/tree-at-answer ]] || before+=$'\n'$(<"$TASK_STATE/tree-at-answer")
   planner_kept_hands_off "$1" "$before"
-  planner_left_refs "$refs"
+  [[ $(head_of "$WT") == "$head" ]] \
+    || die "the planner's turn committed or checked out in $WT, from $head to $(head_of "$WT"): planning must not. Look at what it did, put HEAD back, and rerun"
 }
 
 # write_plan planner-agent: ask for a plan; the planner asks the human its questions in its own

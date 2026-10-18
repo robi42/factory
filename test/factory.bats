@@ -3042,7 +3042,7 @@ JSON
   [ -e "$REPO/fixture.csv" ]
 }
 
-@test "planner_turn: a planner that commits, moves HEAD or a replace ref is refused; the refs others move may move meanwhile" {
+@test "planner_turn: a planner that commits or checks out is refused; the refs others move may move meanwhile" {
   make_repo
   add_origin
   task_opened
@@ -3052,17 +3052,12 @@ JSON
   }
   run planner_turn planner "plan it"
   [ "$status" -eq 1 ]
-  [[ $output == *"the planner's turn moved HEAD refs/heads/factory/toy-9 in the repo of $TMP/wt-9"* ]]
+  [[ $output == *"the planner's turn committed or checked out in $TMP/wt-9"* ]]
   git -C "$TMP/wt-9" reset -q --hard HEAD~1
-  ask() { git -C "$TMP/wt-9" replace --graft HEAD "$(git -C "$TMP/wt-9" commit-tree -m x 'HEAD^{tree}')"; }
-  run planner_turn planner "plan it"
-  [ "$status" -eq 1 ]
-  [[ $output == *"moved refs/replace/$(git -C "$TMP/wt-9" rev-parse HEAD) in"* ]]
-  git -C "$REPO" replace -d "$(git -C "$TMP/wt-9" rev-parse HEAD)" >/dev/null
   ask() { git -C "$TMP/wt-9" checkout -q --detach; }
   run planner_turn planner "plan it"
   [ "$status" -eq 1 ]
-  [[ $output == *"moved HEAD in"* ]]
+  [[ $output == *" refs/heads/factory/toy-9 to "*" detached:"* ]]
   git -C "$TMP/wt-9" checkout -q factory/toy-9
   # meanwhile another task's builder commits, a fetch brings origin's tracking refs and a tag,
   # you commit on main, and a stash is made in your checkout
@@ -3076,6 +3071,7 @@ JSON
     git -C "$REPO" stash -q
   }
   planner_turn planner "plan it"
+  git -C "$REPO" rev-parse -q --verify refs/remotes/origin/main >/dev/null
   git -C "$REPO" rev-parse -q --verify refs/tags/v1.0 >/dev/null
   git -C "$REPO" rev-parse -q --verify refs/stash >/dev/null
 }

@@ -489,8 +489,7 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
 - Nothing of Factory's own `.factory/run/` on the branch, which no other check reads
   (`run_dir`).
 - The planner must leave the code untouched; what one of its turns changes is sent back once.
-  A planner turn that commits, or moves HEAD, the task's branch or a replace ref, stops the
-  run; the refs that you, fetches and other tasks move meanwhile decide nothing for the task.
+  A planner turn that commits or checks out stops the run.
 
 The guardrails keep an agent honest, not contained: its shell runs as you, so an agent
 set on it could still write Factory's state for the task or the repo's git config, which
