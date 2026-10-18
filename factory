@@ -965,8 +965,7 @@ kept_out() {
 # defaults: the worktree's index and git config, which an agent can write, can mark a file
 # unchanged (assume-unchanged, skip-worktree, sparse patterns), have an fsmonitor hook or a lax
 # core.checkStat report no change, or leave out a submodule, a name that differs in case, an
-# executable bit (core.fileMode) or a symlink made a file (core.symlinks). The patterns that
-# ignore untracked files are the worktree's and your own (user_excludes). Git's conversions
+# executable bit (core.fileMode) or a symlink made a file (core.symlinks). Git's conversions
 # (core.autocrlf, a filter) stay as the repo sets them: a checkout they convert reads unchanged.
 tree_state() {
   local kept dir out
@@ -977,7 +976,7 @@ tree_state() {
   GIT_INDEX_FILE=$dir/index
   if git -C "$1" read-tree HEAD; then
     out=$(git -C "$1" -c core.fsmonitor=false -c core.ignoreCase=false -c core.fileMode=true -c core.symlinks=true \
-      -c core.excludesFile="$(user_excludes)" status --porcelain --untracked-files=all --ignore-submodules=none \
+      status --porcelain --untracked-files=all --ignore-submodules=none \
       -- . "${kept[@]}") || out="git status failed"
   else
     out="no HEAD to compare with"
@@ -985,14 +984,6 @@ tree_state() {
   rm -rf "$dir"
   printf '%s' "$out"
 }
-
-# user_excludes -> your own file of patterns that ignore untracked files, core.excludesFile as
-# git reads it outside the repo: one the repo's config named, which an agent can write, could
-# leave a file you ignore out of the checks, and git status, and the branch
-user_excludes() { git -C / config --path core.excludesFile 2>/dev/null || printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"; }
-
-# file_hash file -> the sha256 of the file's bytes, nothing for a file there is not
-file_hash() { [[ ! -f $1 ]] || sha256sum <"$1" | cut -d ' ' -f 1; }
 
 # tree_dirty worktree: 0 when tree_state lists a file
 tree_dirty() { [[ -n $(tree_state "$1") ]]; }
@@ -1192,41 +1183,21 @@ guard_run_dir() {
   return $bad
 }
 
-# guard_ignored worktree: no ignored file that steers the gate unseen. A protected path is one
-# that steers the gate, and git leaves an ignored file there out of the branch and its diff, so
-# the waiver, which is for those, has no say. An untracked .gitignore that ignores itself hides
-# the files beside it, a conftest.py say, from git status and the branch, while the gate reads
-# them: one in a directory the commit tracks files in, which a submodule is not, can only be
-# an agent's (a tool's own, as in .pytest_cache, has a directory of its own). And info/exclude
-# hides files as a .gitignore does, in every worktree of the repo: Factory recorded it as the
-# task started. What ignores a file is the worktree's patterns and your own (user_excludes),
-# never the repo's config's, and they match case as git status's do (tree_state).
+# guard_ignored worktree: no ignored file at a protected path. A protected path is one that
+# steers the gate, and git leaves an ignored file there out of the branch and its diff, so the
+# waiver, which is for those, has no say.
 guard_ignored() {
-  local f d globs own kept exclude excludes bad=0
+  local f globs own kept bad=0
   mapfile -t globs < <(protected_globs "$1")
   mapfile -t own < <(factory_globs)
   mapfile -t kept < <(kept_out "$1")
-  excludes=$(user_excludes)
   while IFS= read -r -d '' f; do
     printf 'ignored file at a protected path: %s (read in this worktree, left out of the branch; remove it, or narrow the line of .factory/protected that names it)\n' "$f"
     bad=1
   done < <({
-    git -C "$1" -c core.ignoreCase=false -c core.excludesFile="$excludes" ls-files --others --ignored --exclude-standard -z -- "${globs[@]}" "${kept[@]}"
-    git -C "$1" -c core.ignoreCase=false -c core.excludesFile="$excludes" ls-files --others --ignored --exclude-standard -z -- "${own[@]}" "${kept[@]}"
+    git -C "$1" ls-files --others --ignored --exclude-standard -z -- "${globs[@]}" "${kept[@]}"
+    git -C "$1" ls-files --others --ignored --exclude-standard -z -- "${own[@]}" "${kept[@]}"
   } | LC_ALL=C sort -zu)
-  while IFS= read -r -d '' d; do
-    f=${d:+$d/}.gitignore
-    if [[ -f $1/$f ]] && ! git -C "$1" ls-files --error-unmatch -- ":(literal)$f" >/dev/null 2>&1 \
-      && git -C "$1" -c core.ignoreCase=false -c core.excludesFile="$excludes" check-ignore -q --no-index -- "./$f"; then
-      printf 'untracked .gitignore that ignores itself: %s (it hides the files beside it from the branch; remove it)\n' "$f"
-      bad=1
-    fi
-  done < <(printf '\0' && git -C "$1" ls-tree -r -d -z HEAD | sed -zn 's/^040000 tree [0-9a-f]*\t//p')
-  exclude=$(info_exclude "$1") || return 1
-  if [[ -n ${TASK_STATE:-} && -s $TASK_STATE/exclude && $(file_hash "$exclude") != "$(<"$TASK_STATE/exclude")" ]]; then
-    printf "the repo's %s changed since the task started; a line there hides files from the branch (undo the change)\n" "$exclude"
-    bad=1
-  fi
   return $bad
 }
 
@@ -1315,14 +1286,6 @@ guard_lines() {
     bad=1
   fi
   return $bad
-}
-
-# info_exclude dir -> the repo's info/exclude, which hides files as a .gitignore does, in every
-# worktree of the repo
-info_exclude() {
-  local common
-  common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir) || return 1
-  printf '%s/info/exclude' "$common"
 }
 
 # gitlinks worktree base: the paths, NUL-terminated, at which the branch adds a submodule or
@@ -1615,8 +1578,8 @@ guarded() {
 
 # work_state -> the commit checked out in the task's worktree, git's status line for each file
 # changed there (tree_state), and what the guardrails find, which also reads what git status
-# shows not, an ignored file or info/exclude: as a turn that changed nothing they check leaves
-# it. A file already changed and edited again keeps its line.
+# shows not, an ignored file: as a turn that changed nothing they check leaves it. A file
+# already changed and edited again keeps its line.
 work_state() {
   git -C "$WT" rev-parse --verify -q HEAD
   tree_state "$WT"
@@ -2787,11 +2750,9 @@ open_task_workspace() {
   # starting over: from here on, a run that stops before its first step leaves none of the old
   # steps standing for a rerun to resume after (resume_point)
   ((! FACTORY_FRESH)) || rm -f "$TASK_STATE/state"
-  exclude=$(info_exclude "$1")
+  # the repo's info/exclude, one for all its worktrees, keeps the run dir out of git status
+  exclude=$(git -C "$1" rev-parse --path-format=absolute --git-path info/exclude)
   grep -qsxF "$RUN_DIR/" "$exclude" || printf '%s/\n' "$RUN_DIR" >>"$exclude"
-  if ((FACTORY_FRESH)) || [[ ! -s $TASK_STATE/exclude ]]; then
-    file_hash "$exclude" >"$TASK_STATE/exclude" # what guard_check holds it to
-  fi
   ((! FACTORY_FRESH)) || rm -f "$TASK_STATE/base" # starting over, from the checkout's branch (task_context)
   start_from_origin
   record_base

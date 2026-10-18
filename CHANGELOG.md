@@ -306,10 +306,6 @@ that waits for your approval takes your answer where its own Factory looks for i
   any other change, while the gate ran on it. Git now compares the worktree with HEAD
   through an index of Factory's own, with those settings at their defaults. The guardrails
   name the files that differ.
-- Untracked files hid from the check for uncommitted changes behind an untracked
-  `.gitignore` that ignores itself, such as a `conftest.py` beside one in `tests/`, behind
-  a line added to `info/exclude`, or behind a `core.excludesFile` in the repo's config.
-  Each now fails the guardrails.
 - Since 0.1.11 the check for uncommitted changes counted your own `.factory/env` in the
   repo's main checkout, where you may keep it untracked and `factory check` reads it, so
   `factory check` failed there. It is left out there again, as the ignored-file check

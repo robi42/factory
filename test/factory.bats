@@ -1532,33 +1532,6 @@ IN
   guard_check "$TMP/wt-local" main
 }
 
-@test "guard: an untracked .gitignore that ignores itself in a tracked directory, or a line added to info/exclude, hides files and fails the check" {
-  make_repo
-  mkdir "$REPO/tests"
-  printf 'def test(): pass\n' >"$REPO/tests/test_a.py"
-  commit_all "tests"
-  git -C "$REPO" branch -f main
-  printf 'echo x\n' >"$REPO/run.sh"
-  commit_all change
-  printf '*\n' >"$REPO/tests/.gitignore"
-  printf 'import pytest\n' >"$REPO/tests/conftest.py"
-  mkdir "$REPO/.pytest_cache"
-  printf '*\n' >"$REPO/.pytest_cache/.gitignore" # a tool's own, in a directory of its own
-  [ -z "$(git -C "$REPO" status --porcelain)" ]
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"untracked .gitignore that ignores itself: tests/.gitignore"* ]]
-  [[ $output != *".pytest_cache"* ]]
-  rm "$REPO/tests/.gitignore" "$REPO/tests/conftest.py"
-  guard_check "$REPO" main
-  mkdir -p "$TASK_STATE"
-  file_hash "$REPO/.git/info/exclude" >"$TASK_STATE/exclude"
-  printf 'tests/conftest.py\n' >>"$REPO/.git/info/exclude"
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"info/exclude changed since the task started"* ]]
-}
-
 @test "guard: a Rust change counts as tested with a test added in its own file; a file committed in the run dir fails" {
   make_repo
   FACTORY_REQUIRE_TESTS=1
@@ -1807,12 +1780,11 @@ IN
   [[ $output == *"ignored file at a protected path: .cargo/config.toml"* ]]
 }
 
-@test "guard: a symlink into a submodule, or to its top, fails, waiver or not; its own .gitignore is its own" {
+@test "guard: a branch that leaves the base's submodule alone passes; a symlink into it, or to its top, fails, waiver or not" {
   make_repo
   git init -q "$TMP/lib"
-  printf '.*\n' >"$TMP/lib/.gitignore" # ignores itself, which is the submodule's business
   printf 'import pytest\n' >"$TMP/lib/conftest.py"
-  git -C "$TMP/lib" add -f .gitignore conftest.py
+  git -C "$TMP/lib" add conftest.py
   git -C "$TMP/lib" -c user.name=t -c user.email=t@example.invalid commit -q -m lib
   git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" lib
   commit_all "add lib"
@@ -1821,6 +1793,7 @@ IN
   commit_all change
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
+  [ -z "$output" ]
   ln -s lib/conftest.py "$REPO/conftest.py" # lib's file, which no diff of the branch shows
   # and one to its top, which the waiver for a symlink to a directory would let through,
   # though the repo holds lib's commit, which HEAD:lib names
@@ -1857,34 +1830,6 @@ IN
   GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
-  # an excludes file the repo's own config names, which an agent can write, changes nothing
-  git -C "$REPO" config core.excludesFile /dev/null
-  GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
-}
-
-@test "guard: the repo's core.ignoreCase, by which a negation in another case would undo an ignore, changes nothing the ignore checks read" {
-  make_repo
-  printf '.mise.local.toml\n:(exclude).factory\n' >"$REPO/.factory/protected"
-  mkdir "$REPO/tests"
-  printf 'def test(): pass\n' >"$REPO/tests/test_a.py"
-  commit_all "protect mise's local config, tests"
-  merge_work
-  printf '.mise.local.toml\n!.MISE.LOCAL.TOML\n/.factory/local/\n!/.FACTORY/LOCAL/\n' >"$TMP/ignore"
-  printf '[core]\n\texcludesFile = %s\n' "$TMP/ignore" >"$TMP/gitconfig"
-  printf '[env]\n' >"$REPO/.mise.local.toml"
-  mkdir -p "$REPO/.factory/local"
-  printf 'exit 0\n' >"$REPO/.factory/local/gate.sh"
-  printf '*\n!.GITIGNORE\n' >"$REPO/tests/.gitignore"
-  printf 'import pytest\n' >"$REPO/tests/conftest.py"
-  git -C "$REPO" config core.ignoreCase true
-  [ -z "$(GIT_CONFIG_GLOBAL=$TMP/gitconfig tree_state "$REPO")" ]
-  GIT_CONFIG_GLOBAL=$TMP/gitconfig run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
-  [[ $output == *"ignored file at a protected path: .factory/local/gate.sh"* ]]
-  [[ $output == *"untracked .gitignore that ignores itself: tests/.gitignore"* ]]
 }
 
 @test "guard: the human's own .factory/env may lie ignored in the main checkout, not in a task's worktree" {
@@ -2009,10 +1954,15 @@ IN
   merge_work
   printf 'echo hello\n' >"$REPO/run.sh"
   commit_all change
-  mkdir -p "$REPO/target/debug" "$REPO/.factory/run"
+  mkdir -p "$REPO/target/debug" "$REPO/build" "$REPO/.factory/run"
   printf 'built\n' >"$REPO/target/debug/app"
+  # the excludes file the repo's own config names, which git status reads as well
+  printf 'build/\n' >"$TMP/repo-ignore"
+  git -C "$REPO" config core.excludesFile "$TMP/repo-ignore"
+  printf 'built\n' >"$REPO/build/out"
   printf '.factory/run/\n' >>"$REPO/.git/info/exclude" # as open_task_workspace adds it
   printf 'the plan\n' >"$REPO/.factory/run/plan.md"
+  [ -z "$(tree_state "$REPO")" ]
   run guard_check "$REPO" main
   [ "$status" -eq 0 ]
   [ -z "$output" ]

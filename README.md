@@ -335,8 +335,7 @@ dialog was open; `decisions.md`, your answers;
 `base`, the commit the branch is
 measured from and the base branch it was read from, which a rerun keeps; `gated` and
 `guarded`, the commits the gate and then the guardrails last passed on from that base, and
-`pushed`, the one Factory last pushed; `exclude`, a hash
-of the repo's `info/exclude`. `fy clean` removes them with the task. Beside the
+`pushed`, the one Factory last pushed. `fy clean` removes them with the task. Beside the
 tasks' state, in `<repo>-<hash>/`, `next.lock` is what `fy next` holds while it chooses
 and claims a task, and `events.jsonl` keeps what the runs of the repo's tasks did, a JSON
 line an event: each run's start and end, the agents' turns, the gate's runs, the
@@ -463,12 +462,8 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
   (`core.worktree`) fails. Git's conversions (`core.autocrlf`, a `text`, `eol` or `filter`
   attribute) are the exception: git compares each file through them, wherever they are
   set, so a checkout they convert, as Git LFS or git-crypt does, reads unchanged. A task
-  that starts on a checkout that reads as changed stops before any agent works. Untracked
-  files count whatever hides them: an untracked `.gitignore` that ignores itself in a
-  directory the commit tracks files in, a line added to `info/exclude` since the task
-  started, or a `core.excludesFile` set in the repo's config (`artifacts`, `clean`,
-  `commits`; a worktree git reads as another checkout, `top`; such a `.gitignore` or
-  `info/exclude` line, `ignored`).
+  that starts on a checkout that reads as changed stops before any agent works
+  (`artifacts`, `clean`, `commits`; a worktree git reads as another checkout, `top`).
 - Protected paths untouched: all of `.factory/`, the gate, the rules, `.factory/env` and
   any other file a repo keeps there, but Factory's own `.factory/run/`; and every glob
   listed in `.factory/protected`, which git reads as a pathspec; a line git cannot read
@@ -484,9 +479,7 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
   that protects mise's configs. Factory's own `.factory/run/` is exempt, and so is your
   own `.factory/env` in the repo's main checkout, where `fy check` may run but no agent
   works. Tracked is what the branch's HEAD holds: a file only staged in the worktree's
-  index is not, and what ignores a file is the worktree's patterns and your own excludes
-  file, not one the repo's config names, matched with case whatever `core.ignoreCase`
-  says (`ignored`).
+  index is not (`ignored`).
 - No symlink added, renamed or pointed elsewhere to a place the branch does not hold,
   waiver or not: out of the worktree, into `.git` or a submodule, to an untracked file or
   to nothing, the gate would read through it what no diff shows. A symlink to a directory
