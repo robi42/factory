@@ -1251,7 +1251,7 @@ guard_lines() {
 }
 
 # guard_diff worktree [git diff args]: git diff in the worktree as git itself writes it,
-# whatever the git config and attributes say, which an agent can write: no colour codes,
+# whatever the git config and attributes say, your own global one too: no colour codes,
 # external diff tool or textconv filter; renames found, as by git's default (diff.renames),
 # where the args do not say --no-renames; and a submodule as the one line that names its
 # commit, never left out (diff.submodule, diff.ignoreSubmodules).

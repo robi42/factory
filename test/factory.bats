@@ -554,26 +554,26 @@ context_of() {
   [[ $output == *"src/lib.rs:     allow(dead_code)"* ]]
 }
 
-@test "guard: the repo's git config, which an agent can write, does not change the diff it reads" {
+@test "guard: a diff tool, colours or a textconv filter in your own git config do not change the diff it reads" {
   make_repo
   # Build the bad strings at runtime so this file passes its own guard check.
   local pipe='||' setting
   printf 'run_thing %s true\n' "$pipe" >"$REPO/run.sh"
   printf '*.sh diff=hide\n' >"$REPO/.gitattributes"
   commit_all bad
-  for setting in color.diff=always diff.external=true diff.hide.textconv=true; do
-    git -C "$REPO" config "${setting%%=*}" "${setting#*=}"
-    run guard_check "$REPO" main
+  for setting in color.ui=always diff.external=true diff.hide.textconv=true; do
+    git config --file "$TMP/gitconfig" "${setting%%=*}" "${setting#*=}"
+    GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
     printf 'with %s:\n%s\n' "$setting" "$output"
     [ "$status" -eq 1 ]
     [[ $output == *"run.sh: run_thing $pipe true"* ]]
-    git -C "$REPO" config --unset "${setting%%=*}"
+    git config --file "$TMP/gitconfig" --unset "${setting%%=*}"
   done
 }
 
-@test "guard: Factory's list refuses a submodule the branch adds or points at another commit, whatever the git config, waiver or not; one it removes passes" {
+@test "guard: Factory's list refuses a submodule the branch adds or points at another commit, whatever your own git config, waiver or not; one it removes passes" {
   make_repo
-  # vendor/ is protected: the git config hides the submodule from neither check
+  # vendor/ is protected: your own git config hides the submodule from neither check
   printf 'vendor\n' >"$REPO/.factory/protected"
   commit_all "protect vendor"
   merge_work
@@ -581,13 +581,13 @@ context_of() {
   commit_all "add lib"
   local setting
   for setting in diff.submodule=log diff.submodule=diff diff.ignoreSubmodules=all; do
-    git -C "$REPO" config "${setting%%=*}" "${setting#*=}"
-    run guard_check "$REPO" main
+    git config --file "$TMP/gitconfig" "${setting%%=*}" "${setting#*=}"
+    GIT_CONFIG_GLOBAL="$TMP/gitconfig" run guard_check "$REPO" main
     printf 'with %s:\n%s\n' "$setting" "$output"
     [ "$status" -eq 1 ]
     [[ $output == *"vendor/lib: Subproject commit "* ]]
     [[ $output == *"protected path changed: vendor/lib"* ]]
-    git -C "$REPO" config --unset "${setting%%=*}"
+    git config --file "$TMP/gitconfig" --unset "${setting%%=*}"
   done
   # the human's submodule, in the base, which the branch points at another commit: the
   # waiver is for the protected path, not for the line
