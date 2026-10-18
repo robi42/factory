@@ -460,13 +460,9 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
   Git compares the worktree with the branch through an index of Factory's own, so neither
   the worktree's index nor its git config can hide a change, as `assume-unchanged` or an
   fsmonitor hook could, and a worktree whose config points git at another checkout
-  (`core.worktree`) fails. Factory also compares each tracked file's bytes, which the gate
-  reads, with the commit's: git's conversions (`core.autocrlf`, a `text`, `eol` or `filter`
-  attribute) could show git the commit's bytes for others. A file whose bytes differ is
-  converted again as git would store it, in a git dir of Factory's own that holds none of
-  the repo's settings, so the committed `.gitattributes` and your own git config still
-  convert it: `eol=crlf`, Git LFS and a global `core.autocrlf` pass, while a conversion set
-  in the repo's git config or `info/attributes` fails, with a message saying so. A task
+  (`core.worktree`) fails. Git's conversions (`core.autocrlf`, a `text`, `eol` or `filter`
+  attribute) are the exception: git compares each file through them, wherever they are
+  set, so a checkout they convert, as Git LFS or git-crypt does, reads unchanged. A task
   that starts on a checkout that reads as changed stops before any agent works. Untracked
   files count whatever hides them: an untracked `.gitignore` that ignores itself in a
   directory the commit tracks files in, a line added to `info/exclude` since the task
@@ -514,8 +510,7 @@ such as a file in an ignored `node_modules` or one in a submodule's directory, o
 `fy approve` by a path the agents' settings do not name. The pull request's diff
 is what a person reads before merging. Not supported: a sparse checkout, whose missing
 files read as deleted; a worktree on a filesystem without executable bits, where every
-executable file reads as changed; a filter only the repo's own git config defines, such
-as git-crypt's.
+executable file reads as changed.
 
 ## Sandboxing
 

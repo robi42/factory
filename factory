@@ -40,7 +40,6 @@ COPILOT_BOT='copilot-pull-request-reviewer[bot]'
 RUN_DIR=.factory/run
 # lines of a failed gate's log to show: a failure's own lines, past the build's noise
 GATE_LOG_TAIL=40
-MASKED="(not the commit's bytes; a conversion in the repo's git dir hides it)" # masked's note
 # The true graph, for the git calls that check a branch, with GIT_NO_REPLACE_OBJECTS=1: an
 # agent can plant a refs/replace ref (git replace) or an info/grafts line in the shared git dir,
 # which rewrite what a commit is or descends from, so that git reads another tree than the
@@ -961,13 +960,14 @@ kept_out() {
 }
 
 # tree_state worktree -> git's status line for each file changed or added, the gate, the rules
-# and the rest of .factory/ included, but for what kept_out leaves out, and one for each file
-# whose change git's conversions hide (masked). Git compares the files with HEAD through an
-# index of its own, with the settings that could hide a change at their defaults: the
-# worktree's index and git config, which an agent can write, can mark a file unchanged
-# (assume-unchanged, skip-worktree, sparse patterns), have an fsmonitor hook or a lax
+# and the rest of .factory/ included, but for what kept_out leaves out. Git compares the files
+# with HEAD through an index of its own, with the settings that could hide a change at their
+# defaults: the worktree's index and git config, which an agent can write, can mark a file
+# unchanged (assume-unchanged, skip-worktree, sparse patterns), have an fsmonitor hook or a lax
 # core.checkStat report no change, or leave out a submodule, a name that differs in case, an
-# executable bit (core.fileMode) or a symlink made a file (core.symlinks).
+# executable bit (core.fileMode) or a symlink made a file (core.symlinks). The patterns that
+# ignore untracked files are the worktree's and your own (user_excludes). Git's conversions
+# (core.autocrlf, a filter) stay as the repo sets them: a checkout they convert reads unchanged.
 tree_state() {
   local kept dir out
   # the true graph, and an index of its own
@@ -976,9 +976,9 @@ tree_state() {
   dir=$(mktemp -d)
   GIT_INDEX_FILE=$dir/index
   if git -C "$1" read-tree HEAD; then
-    fresh_status "$1" --untracked-files=all -- . "${kept[@]}" >"$dir/status" || printf 'git status failed\n' >>"$dir/status"
-    masked "$1" "$dir" . "${kept[@]}" >>"$dir/status" || printf 'git could not hash the tracked files\n' >>"$dir/status"
-    out=$(<"$dir/status")
+    out=$(git -C "$1" -c core.fsmonitor=false -c core.ignoreCase=false -c core.fileMode=true -c core.symlinks=true \
+      -c core.excludesFile="$(user_excludes)" status --porcelain --untracked-files=all --ignore-submodules=none \
+      -- . "${kept[@]}") || out="git status failed"
   else
     out="no HEAD to compare with"
   fi
@@ -986,46 +986,10 @@ tree_state() {
   printf '%s' "$out"
 }
 
-# fresh_status worktree args...: git status --porcelain against tree_state's own index, with the
-# git config that could hide a change at its defaults, the file of patterns that ignore
-# untracked files your own (user_excludes), and the paths quoted as ls-files quotes them
-fresh_status() {
-  git -C "$1" -c core.fsmonitor=false -c core.ignoreCase=false -c core.fileMode=true -c core.symlinks=true \
-    -c core.quotePath=true -c core.excludesFile="$(user_excludes)" status --porcelain --ignore-submodules=none "${@:2}"
-}
-
 # user_excludes -> your own file of patterns that ignore untracked files, core.excludesFile as
 # git reads it outside the repo: one the repo's config named, which an agent can write, could
 # leave a file you ignore out of the checks, and git status, and the branch
 user_excludes() { git -C / config --path core.excludesFile 2>/dev/null || printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"; }
-
-# masked worktree dir pathspec...: a status line for each tracked file that is not the blob in
-# tree_state's own index while git status, whose lines are in dir/status, shows no change. Git
-# compares a file through its conversions: core.autocrlf and core.eol, a text, eol, ident,
-# working-tree-encoding or filter attribute, and the filter's command. An agent can set each
-# of them in the repo's git dir, its config or info/attributes, where they hide a change from
-# git status while the gate reads the bytes. So a file whose bytes are not the blob's is
-# converted again as git would store it in a git dir of Factory's own, with none of the repo's
-# settings: the committed .gitattributes and your own git config still convert it, as for
-# eol=crlf, Git LFS or a global core.autocrlf.
-masked() {
-  # Each file, but those git status shows gone or of another kind, which hash-object cannot
-  # read: its blob, its name as git status quotes it, which also puts a name with a space in
-  # quotes, and as ls-files quotes it, which hash-object reads back. ls-files -s prints
-  # "mode blob stage<TAB>name"; a symlink or a submodule is git status's to compare.
-  git -C "$1" -c core.ignoreCase=false -c core.quotePath=true ls-files -s -- "${@:3}" \
-    | awk -F '\t' 'FILENAME == ARGV[1] { if (/^.[DT] /) gone[substr($0, 4)]; next }
-      $1 ~ /^100/ { q = ($2 ~ /^"/ || $2 !~ / /) ? $2 : "\"" $2 "\""
-        if (!(q in gone)) { split($1, m, " "); print m[2] "\t" q "\t" $2 } }' "$2/status" - >"$2/files" || return
-  cut -f 3 "$2/files" | git -C "$1" hash-object --no-filters --stdin-paths >"$2/hashes" || return
-  paste "$2/hashes" "$2/files" | awk -F '\t' '$1 != $2 { print $2 "\t" $3 "\t" $4 }' >"$2/converted"
-  [[ -s $2/converted ]] || return 0
-  git init -q "$2/own" || return
-  cut -f 3 "$2/converted" | git -C "$1" --git-dir="$2/own/.git" --work-tree=. -c core.safecrlf=false \
-    hash-object --stdin-paths >"$2/hashes" || return
-  paste "$2/hashes" "$2/converted" | awk -F '\t' -v note="$MASKED" 'FILENAME == ARGV[1] { shown[substr($0, 4)]; next }
-    $1 != $2 && !($3 in shown) { print " M " $3 " " note }' "$2/status" -
-}
 
 # file_hash file -> the sha256 of the file's bytes, nothing for a file there is not
 file_hash() { [[ ! -f $1 ]] || sha256sum <"$1" | cut -d ' ' -f 1; }
@@ -1141,13 +1105,9 @@ guard_clean() {
   local dirty
   dirty=$(tree_state "$1")
   [[ -n $dirty ]] || return 0
-  if grep -qvF "$MASKED" <<<"$dirty"; then
-    printf 'uncommitted changes in the worktree; commit your work (ignore build artifacts, do not commit them)\n'
-  fi
-  if grep -qF "$MASKED" <<<"$dirty"; then
-    printf "files that are not the commit's, though git shows no change: a conversion set in the repo's own git config or info/attributes hides it; take that conversion out of there (convert files only through .gitattributes), then restore each file (rm <file>, then git checkout -- <file>)\n"
-  fi
-  # the tracked files, by name: git's own status may show none of them (masked)
+  printf 'uncommitted changes in the worktree; commit your work (ignore build artifacts, do not commit them)\n'
+  # the tracked files, by name: git's own status, through the worktree's index and git config,
+  # may show none of them
   sed '/^?? /d' <<<"$dirty"
   return 1
 }
@@ -1240,7 +1200,7 @@ guard_run_dir() {
 # an agent's (a tool's own, as in .pytest_cache, has a directory of its own). And info/exclude
 # hides files as a .gitignore does, in every worktree of the repo: Factory recorded it as the
 # task started. What ignores a file is the worktree's patterns and your own (user_excludes),
-# never the repo's config's, and they match case as git status's do (fresh_status).
+# never the repo's config's, and they match case as git status's do (tree_state).
 guard_ignored() {
   local f d globs own kept exclude excludes bad=0
   mapfile -t globs < <(protected_globs "$1")
@@ -2835,15 +2795,13 @@ open_task_workspace() {
   ((! FACTORY_FRESH)) || rm -f "$TASK_STATE/base" # starting over, from the checkout's branch (task_context)
   start_from_origin
   record_base
-  # A task that starts on a checkout git reads as changed would fail every check after hours of
-  # work. A conversion only the repo's own git config defines (core.autocrlf, a filter such as
-  # git-crypt's) makes a checkout read so, with no change at all.
+  # a task that starts on a checkout git reads as changed would fail every check after hours of work
   local dirty
   if [[ -z $(recorded state) ]]; then
     dirty=$(tree_state "$WT")
     if [[ -n $dirty ]]; then
       printf '%s\n' "$dirty" >&2
-      die "$WT reads as changed before any work on $TASK_ID (above): commit, stash or remove what is there; where git shows no change, a conversion in the repo's own git config causes it, so move that to .gitattributes or your global git config (see the README's Guardrails); then rerun"
+      die "$WT reads as changed before any work on $TASK_ID (above): commit, stash or remove what is there; then rerun"
     fi
   fi
   log "workspace $WS at $WT"

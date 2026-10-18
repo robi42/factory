@@ -11,9 +11,7 @@ but `.factory/run/` needs your waiver at plan approval; and a submodule added or
 a symlink to a place the branch does not hold, or an ignored file at a protected
 path fails it whatever you waive. A typo in a knob's value, or in a knob's name in
 `.factory/env`, now stops the command instead of being read as something else or ignored.
-A repo whose own git config converts files, such as a local `core.autocrlf` or git-crypt's
-filter, now stops before any agent works, as its checkout reads as changed (see the
-README's Guardrails). `factory clean --force` drops one task now, named by its bead id.
+`factory clean --force` drops one task now, named by its bead id.
 `factory next` and `queue` need flock (util-linux) now. The agents may no longer run
 `git push`, `gh` or Factory itself. Finish a task 0.1.x started before upgrading, or rerun
 it with `--fresh` (a plain rerun plans it again from scratch). Upgrade between runs: a run
@@ -304,15 +302,10 @@ that waits for your approval takes your answer where its own Factory looks for i
 - The check for uncommitted changes trusted what an agent can set: the worktree's index
   and git config (a file marked assume-unchanged or skip-worktree, sparse patterns, an
   fsmonitor hook, `core.checkStat=minimal`, `core.ignoreCase`, `core.fileMode=false`,
-  `core.symlinks=false`, a submodule's `ignore` setting) and git's conversions
-  (`core.autocrlf`, a `text`, `eol` or `filter` attribute in `.git/info/attributes`) hid
-  an edited `.factory/gate`, or any other change, while the gate ran on it: a clean filter
-  handed git the committed `justfile` for an edited one. Git now compares the worktree
-  with HEAD through an index of Factory's own, with those settings at their defaults, and
-  Factory holds each tracked file's bytes to the commit's, converted as git would store
-  them with only the committed `.gitattributes` and your own git config: `eol=crlf`, Git
-  LFS and a global `core.autocrlf` pass, a conversion set in the repo's git dir fails. The
-  guardrails name the files that differ.
+  `core.symlinks=false`, a submodule's `ignore` setting) hid an edited `.factory/gate`, or
+  any other change, while the gate ran on it. Git now compares the worktree with HEAD
+  through an index of Factory's own, with those settings at their defaults. The guardrails
+  name the files that differ.
 - Untracked files hid from the check for uncommitted changes behind an untracked
   `.gitignore` that ignores itself, such as a `conftest.py` beside one in `tests/`, behind
   a line added to `info/exclude`, or behind a `core.excludesFile` in the repo's config.

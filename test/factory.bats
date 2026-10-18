@@ -1497,7 +1497,7 @@ IN
   [[ $output != *"grep: "* ]] # grep's own words, which name a temporary file, for each file
 }
 
-@test "guard: files git converts on checkout as the committed .gitattributes or your own git config say pass: eol=crlf, a global core.autocrlf, a global filter as Git LFS's" {
+@test "guard: files git converts on checkout pass: eol=crlf, core.autocrlf or a filter as Git LFS's, in your own git config or the repo's" {
   make_repo
   export GIT_CONFIG_GLOBAL=$TMP/gitconfig
   git config --global filter.fake.clean 'sed s/^/pointer:/'
@@ -1519,6 +1519,17 @@ IN
   git -C "$REPO" checkout -- run.sh
   [[ $(cat "$REPO/run.sh") == *$'\r' ]]
   guard_check "$REPO" main
+  # the same set in the repo's own git config, as git lfs install --local, nbstripout, git-crypt
+  # or a repo shared with Windows do: a fresh checkout reads unchanged
+  rm "$GIT_CONFIG_GLOBAL"
+  git -C "$REPO" config core.autocrlf true
+  git -C "$REPO" config filter.fake.clean 'sed s/^/pointer:/'
+  git -C "$REPO" config filter.fake.smudge 'sed s/^pointer://'
+  git -C "$REPO" worktree add -q --detach "$TMP/wt-local" work
+  [[ $(cat "$TMP/wt-local/run.sh") == *$'\r' ]]
+  [ "$(cat "$TMP/wt-local/asset.bin")" = payload$'\r' ]
+  [ -z "$(tree_state "$TMP/wt-local")" ]
+  guard_check "$TMP/wt-local" main
 }
 
 @test "guard: an untracked .gitignore that ignores itself in a tracked directory, or a line added to info/exclude, hides files and fails the check" {
@@ -1657,42 +1668,14 @@ IN
   [[ $output == *"uncommitted changes in the worktree"* ]]
 }
 
-@test "guard: a change still counts when git's conversions show git the committed bytes" {
+@test "guard: a change still counts when the git config leaves out an executable bit or a symlink" {
   make_repo
-  printf 'skip\n' >"$REPO/.factory/guardrails.txt"
-  printf 'ci:\n\tjust test\n' >"$REPO/justfile"
   printf 'echo tool\n' >"$REPO/tool.sh"
   ln -s run.sh "$REPO/link"
-  commit_all "rules, recipe, tool and link"
+  commit_all "tool and link"
   git -C "$REPO" branch -f main # the base has them
   printf 'echo hello\n' >"$REPO/run.sh"
   commit_all change
-  # The rules with CRLF line endings, which core.autocrlf reads as the commit's LF: every
-  # pattern would end in a CR, and the guardrails would match nothing. git add finds nothing
-  # to add, and git status nothing to show.
-  git -C "$REPO" config core.autocrlf true
-  printf 'skip\r\n' >"$REPO/.factory/guardrails.txt"
-  git -C "$REPO" add -A
-  [ -z "$(git -C "$REPO" status --porcelain)" ]
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output != *"uncommitted changes in the worktree"* ]] # committing would not help
-  [[ $output == *"files that are not the commit's, though git shows no change"* ]]
-  [[ $output == *" M .factory/guardrails.txt $MASKED"* ]]
-  git -C "$REPO" config --unset core.autocrlf
-  printf 'skip\n' >"$REPO/.factory/guardrails.txt"
-  # An edited recipe, and a clean filter, named in info/attributes, that hands git the commit's.
-  printf 'justfile filter=hide\n' >"$REPO/.git/info/attributes"
-  git -C "$REPO" config filter.hide.clean "sed 's/true # relaxed/just test/'"
-  printf 'ci:\n\ttrue # relaxed\n' >"$REPO/justfile"
-  git -C "$REPO" add -A
-  [ -z "$(git -C "$REPO" status --porcelain)" ]
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *" M justfile $MASKED"* ]]
-  printf 'ci:\n\tjust test\n' >"$REPO/justfile"
-  run guard_check "$REPO" main
-  [ "$status" -eq 0 ]
   # An executable bit core.fileMode leaves out, and a symlink made a file core.symlinks leaves out.
   git -C "$REPO" config core.fileMode false
   chmod +x "$REPO/tool.sh"
@@ -1896,7 +1879,7 @@ IN
   printf '*\n!.GITIGNORE\n' >"$REPO/tests/.gitignore"
   printf 'import pytest\n' >"$REPO/tests/conftest.py"
   git -C "$REPO" config core.ignoreCase true
-  [ -z "$(GIT_CONFIG_GLOBAL=$TMP/gitconfig fresh_status "$REPO")" ]
+  [ -z "$(GIT_CONFIG_GLOBAL=$TMP/gitconfig tree_state "$REPO")" ]
   GIT_CONFIG_GLOBAL=$TMP/gitconfig run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"ignored file at a protected path: .mise.local.toml"* ]]
