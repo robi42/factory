@@ -1528,16 +1528,15 @@ task_head() {
     || die "$WT is at ${HEAD_SHA:-no commit}, not at the tip of $BRANCH (${tip:-none}), which Factory gates, guards and pushes: check out $BRANCH there"
 }
 
-# base_ref: the ref the branch forks from: the local base branch, origin's tracking ref, or
-# origin's as Factory fetched it (upstream_ref), whichever the branch forked from latest, the
-# later of these on a tie. Origin's after the rebase for a pull request, also once origin has
-# moved on again (a stale local base would blame the branch for what the upstream added); the
-# local one while it carries commits origin does not, or without an origin. Full names: a tag
-# or a branch named origin/<base> would be read as either.
+# base_ref: the ref the branch forks from: the local base branch or origin's tracking ref,
+# whichever the branch forked from latest, origin's on a tie. Origin's after the rebase for a
+# pull request, also once origin has moved on again (a stale local base would blame the branch
+# for what the upstream added); the local one while it carries commits origin does not, or
+# without an origin. Full names: a tag or a branch named origin/<base> would be read as either.
 base_ref() {
   local ref best="refs/heads/$BASE" fork last=""
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
-  for ref in "refs/heads/$BASE" "refs/remotes/origin/$BASE" "$(upstream_ref)"; do
+  for ref in "refs/heads/$BASE" "refs/remotes/origin/$BASE"; do
     fork=$(git -C "$WT" merge-base "$ref" HEAD 2>/dev/null) || continue
     if [[ -z $last ]] || git -C "$WT" merge-base --is-ancestor "$last" "$fork"; then
       best=$ref last=$fork
@@ -1546,12 +1545,10 @@ base_ref() {
   printf '%s' "$best"
 }
 
-# upstream_ref -> the ref Factory keeps origin's base branch in for the task, as it fetched it
-# (fetch_base): a name of its own, which no remote's config or fetch writes
-upstream_ref() { printf 'refs/factory/%s/upstream/%s' "$TASK_ID" "$BASE"; }
-
-# recorded_base_branch -> the branch the task's recorded base was read from: refs/heads/<branch>,
-# a remote's refs/remotes/<remote>/<branch> and Factory's own fetch of it alike name <branch>
+# recorded_base_branch -> the branch the task's recorded base was read from: refs/heads/<branch>
+# and a remote's refs/remotes/<remote>/<branch> alike name <branch>. So does
+# refs/factory/<id>/upstream/<branch>, where an earlier Factory kept its own fetch of origin's
+# base for a task: a task it started may record its base there; that line can go once none does.
 recorded_base_branch() {
   local ref
   read -r _ ref 2>/dev/null <"$TASK_STATE/base" || return 1
@@ -1565,9 +1562,8 @@ recorded_base_branch() {
 # record_base: the commit the branch is measured from, with the ref it was read from, kept in
 # Factory's state once, as Factory takes up the task's worktree: where the branch forks off the
 # base ref (base_ref). Only Factory moves it on: as it rebases the branch onto origin's base
-# (rebase_onto_base), or as the branch took in newer commits of it (took_in). The ref itself
-# is no base: an agent can move main or origin/main (git update-ref), your main with it, so
-# that its commits drop out of every diff read against the ref. What the gate and the
+# (rebase_onto_base), or as the branch took in newer commits of it that origin holds
+# (guard_branch); a ref rewritten since stops the run (task_base). What the gate and the
 # guardrails passed on was measured from the base before, so a base taken anew voids it.
 record_base() {
   local ref sha
@@ -1612,46 +1608,42 @@ task_base() {
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   read -r sha ref 2>/dev/null <"$TASK_STATE/base" || die "no base commit recorded for $TASK_ID in $TASK_STATE"
   git -C "$WT" merge-base --is-ancestor "$sha" "$ref" 2>/dev/null \
-    || die "$ref no longer holds $sha, the commit $BRANCH is measured from: it was rewritten since, by you, by a force-push to origin's $BASE that Factory fetched, or by an agent; look at it before you go on, and if that is as it should be, remove $TASK_STATE/base for a rerun to measure the branch from where it forks off then"
+    || die "$ref no longer holds $sha, the commit $BRANCH is measured from: it was rewritten since, by you, by a force-push to origin's $BASE that a fetch brought, or by an agent; look at it before you go on, and if that is as it should be, remove $TASK_STATE/base for a rerun to measure the branch from where it forks off then"
   printf '%s' "$sha"
 }
 
 # fetch_base -> origin's tip of the base branch, fetched from origin by its full name into
-# upstream_ref, a ref of Factory's own; origin's tracking ref gets it too, for a gate that
-# diffs against it. Neither is followed where an agent made it a symbolic ref (--no-deref),
-# which would move the ref it names, your main say. The commit is the one the fetch wrote to
-# FETCH_HEAD, whatever the remote's fetch config says.
+# origin's tracking ref, which base_ref reads, as may a gate that diffs against it. It is not
+# followed where an agent made it a symbolic ref (--no-deref), which would move the ref it
+# names, your main say. The commit is the one the fetch wrote to FETCH_HEAD, whatever the
+# remote's fetch config says.
 fetch_base() {
   local tip
   GIT_TERMINAL_PROMPT=0 git -C "$WT" fetch -q --no-tags --write-fetch-head origin "refs/heads/$BASE" || return 1
   tip=$(git -C "$WT" rev-parse --verify -q 'FETCH_HEAD^{commit}') || return 1
-  git -C "$WT" update-ref --no-deref -m "factory: origin's $BASE" "$(upstream_ref)" "$tip" || return 1
-  git -C "$WT" update-ref --no-deref -m "factory: fetched origin's $BASE" "refs/remotes/origin/$BASE" "$tip" \
-    || warn "could not update origin/$BASE to $tip"
+  git -C "$WT" update-ref --no-deref -m "factory: fetched origin's $BASE" "refs/remotes/origin/$BASE" "$tip" || return 1
   printf '%s' "$tip"
 }
 
-# took_in base -> the newest commit of origin's base branch that the branch holds, when that is
-# newer than base: a rebase onto the base or a merge of it brought in commits that are not the
-# branch's own. Only origin's commits count, as Factory fetches them (fetch_base), and it
-# fetches only when a local copy of the base points that way: an agent can put a commit of its
-# own on a local ref, which would then drop out of every diff.
+# took_in base -> where the branch forks off its base ref (base_ref), when that is newer than
+# base: a merge of the base branch, or a fast-forward to it, brought in commits that are not
+# the branch's own, origin's or yours on main, as when the builder merges a fix of yours you
+# have not pushed. Read from the refs as they stand: origin's may be out of reach meanwhile.
 took_in() {
-  local base=$1 ref fork="" tip
+  local fork
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
-  for ref in "refs/heads/$BASE" "refs/remotes/origin/$BASE" "$(upstream_ref)"; do
-    fork=$(git -C "$WT" merge-base HEAD "$ref" 2>/dev/null) || fork=""
-    if [[ -n $fork && $fork != "$base" ]] && git -C "$WT" merge-base --is-ancestor "$base" "$fork"; then
-      break
-    fi
-    fork=""
-  done
-  [[ -n $fork ]] || return 1
-  tip=$(fetch_base) || return 1
-  fork=$(git -C "$WT" merge-base HEAD "$tip") || return 1
-  [[ $fork != "$base" ]] || return 1
-  git -C "$WT" merge-base --is-ancestor "$base" "$fork" || return 1
+  fork=$(git -C "$WT" merge-base "$(base_ref)" HEAD) || return 1
+  [[ $fork != "$1" ]] || return 1
+  git -C "$WT" merge-base --is-ancestor "$1" "$fork" || return 1
   printf '%s' "$fork"
+}
+
+# measured_base -> the commit the branch is measured from now: the newer one it took in
+# (took_in), else the recorded one (task_base)
+measured_base() {
+  local base
+  base=$(task_base) || exit 1
+  took_in "$base" || printf '%s' "$base"
 }
 
 # gate_branch logfile: the gate on the tip of the task's branch, in its own worktree
@@ -1669,11 +1661,16 @@ gate_branch() {
 
 # guard_branch: the guardrails on the commit the gate passed on, the tip of the task's branch
 # in its own worktree, measured from the recorded base, or from the newer one the branch took
-# in (took_in). The commit they pass on is recorded as the one a push may send (push_gated).
-# Prints the violations, and sets GUARD_FAILED to the checks that failed (guard_check), or to
-# ungated. The outcome is recorded (guard), with them.
+# in (took_in). The newer one is recorded as the base once origin's tracking ref holds it; one
+# only your base branch holds, as a fix of yours not pushed yet, is read anew on each check,
+# and so is any in a repo without an origin: you may still rewrite it (git pull --rebase),
+# where a recorded base its ref no longer holds would stop the run (task_base). The commit they
+# pass on is recorded as the one a push may send (push_gated). Prints the violations, and sets
+# GUARD_FAILED to the checks that failed (guard_check), or to ungated. The outcome is recorded
+# (guard), with them.
 guard_branch() {
   local base newer
+  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   task_head
   if [[ $HEAD_SHA != "$(recorded gated)" ]]; then
     printf 'the gate has not passed on %s, the tip of %s (it passed on %s)\n' "$HEAD_SHA" "$BRANCH" "$(recorded gated)"
@@ -1683,8 +1680,10 @@ guard_branch() {
   fi
   base=$(task_base) || exit 1
   if newer=$(took_in "$base"); then
-    log "$BRANCH took in newer commits of origin's $BASE; measuring it from $newer, the newest of them"
-    printf '%s %s\n' "$newer" "$(upstream_ref)" >"$TASK_STATE/base"
+    log "$BRANCH took in newer commits of $BASE; measuring it from $newer, the newest of them"
+    if git -C "$WT" merge-base --is-ancestor "$newer" "refs/remotes/origin/$BASE" 2>/dev/null; then
+      printf '%s %s\n' "$newer" "refs/remotes/origin/$BASE" >"$TASK_STATE/base"
+    fi
     base=$newer
   fi
   if ! guard_check "$WT" "$base"; then
@@ -1757,8 +1756,9 @@ rebase_in_progress() {
 rebase_onto_base() {
   local agent=$1 files onto base err
   local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
-  # a base moved by another hand fails here, before the branch moves onto it
-  base=$(task_base) || exit 1
+  # a base moved by another hand fails here, before the branch moves onto it; a newer one the
+  # branch took in, a fix of yours on main say, origin must hold as well
+  base=$(measured_base) || exit 1
   onto=$(fetch_base) || die "could not fetch $BASE from origin to bring $BRANCH up to date with it"
   git -C "$WT" merge-base --is-ancestor "$base" "$onto" \
     || die "origin's $BASE, at $onto, does not hold $base, the commit $BRANCH is measured from: the pull request would carry commits that origin never had and that no check read as the branch's, such as ones on your $BASE you have not pushed, or an agent's. Push or drop them, or look at $base; if it is wrong, remove $TASK_STATE/base for a rerun to measure the branch from where it forks off then"
@@ -1780,7 +1780,7 @@ rebase_onto_base() {
     tree_dirty "$WT" && die "$WT has uncommitted changes after the rebase; commit or stash them, then rerun"
     git -C "$WT" merge-base --is-ancestor "$onto" HEAD || die "$BRANCH is still not on top of origin's $BASE; rebase it in $WT, then rerun"
   fi
-  printf '%s %s\n' "$onto" "$(upstream_ref)" >"$TASK_STATE/base"
+  printf '%s %s\n' "$onto" "refs/remotes/origin/$BASE" >"$TASK_STATE/base"
 }
 
 # pr_checks -> markdown bullets describing what the run directory proves
@@ -2159,7 +2159,7 @@ P
 review_prompt() {
   cat <<P
 Review task $TASK_ID: $TASK_TITLE
-The plan is in $RUN_DIR/plan.md. The changes: git diff $(task_base)...HEAD
+The plan is in $RUN_DIR/plan.md. The changes: git diff $(measured_base)...HEAD
 Factory ran the gate on this commit and it passed; its log is $RUN_DIR/gate-$1.log. Do not run it again.
 Look for bugs, missed requirements, shortcuts (skipped tests, suppressions, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.$(build_recheck "$1" "" "${2:-}")
 Write the review to $RUN_DIR/review-$1.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
@@ -2248,7 +2248,7 @@ P
 # planner_build_review_prompt round [human's note]
 planner_build_review_prompt() {
   cat <<P
-The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(task_base)...HEAD
+The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(measured_base)...HEAD
 Factory ran the gate on this commit and it passed; its log is $RUN_DIR/gate-$1.log. Do not run it again.
 Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.$(build_recheck "$1" -plan "${2:-}")
 Write your notes to $RUN_DIR/review-$1-plan.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
@@ -2669,7 +2669,7 @@ show_for_approval() {
     says_protected "$2/plan.md" || warn "the plan does not end with its Protected paths line: ask the planner whether the build must change protected paths"
     printf '\n%s [%s]pprove (edit the file or talk to the planner%s first if you like), a[%s]prove and allow the protected paths it names (%s), [%s]evise with a note, a[%s]ort? (%s/%s/%s/%s) ' "$TAG" "$a" "$esc" "$p" "$(protected_named "$2/plan.md" | listed)" "$r" "$b" "$a" "$p" "$r" "$b" >&2
   else
-    base=$(task_base) || exit 1
+    base=$(measured_base) || exit 1
     printf 'build for %s on %s, reviews in %s:\n\n' "$TASK_ID" "$BRANCH" "$2" >&2
     if [[ -t 2 ]]; then # git sees only the indenting sed, so it gets the colours and width here
       color=always
@@ -3077,16 +3077,15 @@ changed_keys() { LC_ALL=C comm -3 <(LC_ALL=C sort <<<"$1") <(LC_ALL=C sort <<<"$
 changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "${2:-$WT}" | LC_ALL=C sort); }
 
 # refs_state worktree -> where its HEAD points, and the refs Factory reads the task by, a line
-# each, which a planner's turn must leave as they were: the task's branch, Factory's refs for
-# the task (refs/factory/<id>/), and the replace refs, which rewrite what a commit is or
-# descends from. The repo's other refs decide nothing for the task once its base is recorded,
-# and others move them meanwhile: your main, the tags and tracking refs a fetch brings, a
-# stash, other tasks' branches.
+# each, which a planner's turn must leave as they were: the task's branch and the replace refs,
+# which rewrite what a commit is or descends from. The repo's other refs decide nothing for
+# the task once its base is recorded, and others move them meanwhile: your main, the tags and
+# tracking refs a fetch brings, a stash, other tasks' branches.
 refs_state() {
   local head
   head=$(git -C "$1" symbolic-ref -q HEAD) || head=detached
   printf 'HEAD %s %s\n' "$(git -C "$1" rev-parse -q --verify HEAD || printf none)" "$head"
-  git -C "$1" for-each-ref --format='%(refname) %(objectname)' "refs/heads/$BRANCH" "refs/factory/${TASK_ID:?}/" refs/replace/
+  git -C "$1" for-each-ref --format='%(refname) %(objectname)' "refs/heads/$BRANCH" refs/replace/
 }
 
 # planner_left_refs refs-state: refuse a planner turn that moved HEAD or a ref refs_state takes
@@ -4075,8 +4074,9 @@ cmd_clean() {
       fi
       git -C "$repo" worktree prune
       git -C "$repo" branch -D "$branch" >/dev/null
-      # Factory's state for the task, and its fetch of origin's base: its base and checks would
-      # hold for the task run again. A symbolic ref an agent put there goes, not the ref it names.
+      # Factory's state for the task: its base and checks would hold for the task run again.
+      # An earlier Factory kept its fetch of origin's base for a task in refs/factory/<id>/,
+      # which goes with the task: that line can go once the tasks it ran are cleaned.
       if is_bead_id "$id"; then
         rm -rf "$TASK_STATE"
         git -C "$repo" for-each-ref --format='delete %(refname)' "refs/factory/$id/" | git -C "$repo" update-ref --no-deref --stdin

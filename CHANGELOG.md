@@ -260,15 +260,17 @@ that waits for your approval takes your answer where its own Factory looks for i
   can move with `git update-ref`, your `main` with it, so that its commits dropped out of
   every diff they read. Factory now records the commit the branch forks from when it opens
   the task's worktree, and moves it only when it rebases the branch itself before a pull
-  request, or when the branch took in newer commits of origin's base, which it fetches to
-  tell; the guardrails, the reviewers' prompts and the build's approval read the branch
-  from that commit. A base ref that no longer holds it stops the run loudly, as your
-  `main` may have been rewritten. `factory clean` removes this state with the task.
+  request, or when the branch took in newer commits of its base, yours or origin's, as
+  when the builder merges your `main`; the guardrails, the reviewers' prompts and the
+  build's approval read the branch from that commit. A base ref that no longer holds it
+  stops the run loudly, as your `main` may have been rewritten. Commits an agent put on
+  your `main` that the branch took in still count as the base's, until the rebase for a
+  pull request, which needs origin to hold them. `factory clean` removes this state with
+  the task.
 - The rebase before a pull request went onto origin's tracking ref, as the remote's fetch
   config fills it, and fell back to your local branch when the fetch failed, both of which
   an agent can steer to a commit of its own. Factory now fetches the base by its full name
-  from origin into `refs/factory/<bead-id>/upstream/<base>`, a ref nothing else writes,
-  and into origin's tracking ref, without following either where it is a symbolic ref,
+  from origin into origin's tracking ref, without following it where it is a symbolic ref,
   rebases onto that, and stops when it cannot fetch. It also stops when the base it
   fetched does not hold the commit the branch was measured from, such as one an agent put
   on your `main` before the task started, or one you have not pushed: the pull request
@@ -293,8 +295,8 @@ that waits for your approval takes your answer where its own Factory looks for i
   ref or an `info/grafts` line in the shared git dir: either rewrites what `HEAD` is or
   descends from, so `git diff base...HEAD` showed no added line, no protected path and no
   gitlink, and the guardrails refused nothing. The guardrails, the uncommitted-changes
-  check, and the reading of where a branch forks off its base, what it took in from origin
-  and what it is rebased onto now ignore replace refs and grafts.
+  check, and the reading of where a branch forks off its base, what it took in of it and
+  what it is rebased onto now ignore replace refs and grafts.
 - The guardrails passed a branch whose diff against the base git could not read, since
   every check then read nothing: a line in `.git/shallow`, which an agent can write, cut
   the branch off from the base, so that the two shared no history, and an object gone from
@@ -360,10 +362,10 @@ that waits for your approval takes your answer where its own Factory looks for i
   run dir for the planner over whatever is there, and a file committed in the run dir
   fails the guardrails. `factory check` in a task's worktree honours the task's waiver.
 - A planner's commit passed the check that planning leaves the code untouched, which read
-  only uncommitted changes. A planner turn that commits, or moves HEAD, the task's branch,
-  Factory's refs for the task or a replace ref, now stops the run, and says which. The
-  repo's other refs, which you, fetches and other tasks move meanwhile (your main, tags, a
-  stash), decide nothing for the task.
+  only uncommitted changes. A planner turn that commits, or moves HEAD, the task's branch
+  or a replace ref, now stops the run, and says which. The repo's other refs, which you,
+  fetches and other tasks move meanwhile (your main, tags, a stash), decide nothing for
+  the task.
 - A line of `.factory/protected` that git cannot read as a pathspec, such as `:(bogus)x`,
   made git fail in both checks of protected paths, which then read no path and passed;
   only git's own error reached the terminal. The guardrails now fail and say which line.

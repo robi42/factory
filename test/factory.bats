@@ -2273,17 +2273,11 @@ IN
   [[ $output != *"aborted in a pane"* ]]
 }
 
-@test "the guardrails measure the branch from the base recorded with its worktree, not from where main is now" {
+@test "a main rewritten since the task's base was recorded stops the guardrails and the rebase loudly" {
   make_repo
   task_opened
-  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
-  git -C "$TMP/wt-9" commit -qam "relax the gate"
   printf 'echo x\n' >"$TMP/wt-9/run.sh"
   git -C "$TMP/wt-9" commit -qam "an honest change"
-  git -C "$TMP/wt-9" update-ref refs/heads/main HEAD~1 # the builder moves main, yours, past its first commit
-  run gate_then_guards builder 1
-  [ "$status" -eq 1 ]
-  [[ $output == *"protected path changed: .factory/gate"* ]]
   # main rewritten, so that it no longer holds the base: that fails loudly, before any rebase
   git -C "$TMP/wt-9" update-ref refs/heads/main "$(git -C "$TMP/wt-9" commit-tree -m elsewhere 'HEAD^{tree}')"
   run gate_then_guards builder 1
@@ -2419,7 +2413,7 @@ IN
   fake_task
   WT=$TMP
   TASK_DESC="" GATE=true MEMORY="" BASE=main BRANCH=factory/toy-1
-  task_base() { printf main; }
+  measured_base() { printf main; }
   [[ $(build_prompt) == *"do not rebase onto or merge main: Factory brings the branch up to date itself"* ]]
   # from the second build round on, a reviewer checks against its last notes, the builder's
   # answer and the human's note
@@ -2710,7 +2704,7 @@ IN
   mkdir -p "$TMP/.factory/run"
   gate_branch() { :; }
   guard_branch() { :; }
-  task_base() { printf main; }
+  measured_base() { printf main; }
   mark() { :; }
   ask() { printf 'asked %s: %.40s\n' "$1" "$2"; }
   work_state() { printf x >>"$TMP/turns" && cat "$TMP/turns"; } # each turn changes something, which no git repo here shows
@@ -3123,14 +3117,12 @@ JSON
   [[ $output == *"usage: factory clean <repo> [bead-id] [--force]"* ]]
   [ "$(git -C "$REPO" branch --list 'factory/*' --format='%(refname:short)')" = "factory/toy-u" ]
   mkdir -p "$(task_state "$REPO" toy-u)"
-  printf 'abc refs/heads/main\n' >"$(task_state "$REPO" toy-u)/base"
-  # an agent made Factory's ref for the task a symbolic ref to a branch: the branch stays
-  git -C "$REPO" branch keep main
-  git -C "$REPO" symbolic-ref refs/factory/toy-u/upstream/main refs/heads/keep
+  # an earlier Factory's fetch of origin's main for the task, which the task's base names
+  git -C "$REPO" update-ref refs/factory/toy-u/upstream/main main
+  printf '%s refs/factory/toy-u/upstream/main\n' "$(git -C "$REPO" rev-parse main)" >"$(task_state "$REPO" toy-u)/base"
   run cmd_clean "$REPO" toy-u --force
   [[ $output == *"cleaned factory/toy-u"* ]]
   [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
-  [ "$(git -C "$REPO" rev-parse keep)" = "$(git -C "$REPO" rev-parse main)" ]
   run git -C "$REPO" rev-parse -q --verify refs/factory/toy-u/upstream/main
   [ "$status" -eq 1 ]
   [ ! -e "$(task_state "$REPO" toy-u)" ] # a task of that id run again starts with no base or checks
@@ -3242,7 +3234,7 @@ JSON
   [ -e "$REPO/fixture.csv" ]
 }
 
-@test "planner_turn: a planner that commits, moves HEAD, Factory's refs for the task or a replace ref is refused; the refs others move may move meanwhile" {
+@test "planner_turn: a planner that commits, moves HEAD or a replace ref is refused; the refs others move may move meanwhile" {
   make_repo
   add_origin
   task_opened
@@ -3254,11 +3246,6 @@ JSON
   [ "$status" -eq 1 ]
   [[ $output == *"the planner's turn moved HEAD refs/heads/factory/toy-9 in the repo of $TMP/wt-9"* ]]
   git -C "$TMP/wt-9" reset -q --hard HEAD~1
-  ask() { git -C "$TMP/wt-9" update-ref refs/factory/toy-9/upstream/main "$(git -C "$TMP/wt-9" commit-tree -p main -m x 'main^{tree}')"; }
-  run planner_turn planner "plan it"
-  [ "$status" -eq 1 ]
-  [[ $output == *"moved refs/factory/toy-9/upstream/main in"* ]]
-  git -C "$REPO" update-ref -d refs/factory/toy-9/upstream/main
   ask() { git -C "$TMP/wt-9" replace --graft HEAD "$(git -C "$TMP/wt-9" commit-tree -m x 'HEAD^{tree}')"; }
   run planner_turn planner "plan it"
   [ "$status" -eq 1 ]
@@ -3269,13 +3256,12 @@ JSON
   [ "$status" -eq 1 ]
   [[ $output == *"moved HEAD in"* ]]
   git -C "$TMP/wt-9" checkout -q factory/toy-9
-  # meanwhile another task's builder commits, its run fetches origin's base, a fetch brings
-  # origin's tracking refs and a tag, you commit on main, and a stash is made in your checkout
+  # meanwhile another task's builder commits, a fetch brings origin's tracking refs and a tag,
+  # you commit on main, and a stash is made in your checkout
   git -C "$REPO" branch factory/toy-10 main
   git -C "$TMP/origin.git" tag v1.0 main
   ask() {
     git -C "$REPO" update-ref refs/heads/factory/toy-10 "$(git -C "$REPO" commit-tree -p main -m other 'main^{tree}')"
-    git -C "$REPO" update-ref refs/factory/toy-10/upstream/main main
     git -C "$TMP/wt-9" fetch -q origin
     git -C "$REPO" update-ref refs/heads/main "$(git -C "$REPO" commit-tree -p main -m yours 'main^{tree}')"
     printf 'wip\n' >>"$REPO/run.sh"
@@ -4599,7 +4585,7 @@ EOF
   run rebase_onto_base builder
   [ "$status" -eq 0 ]
   git -C "$REPO" merge-base --is-ancestor main work
-  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$REPO" rev-parse main) refs/factory/toy-1/upstream/main" ]
+  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$REPO" rev-parse main) refs/remotes/origin/main" ]
   # base changes the same line: conflict, the stubbed builder resolves it
   git -C "$REPO" checkout -q main
   printf 'echo base\n' >"$REPO/run.sh"
@@ -4679,7 +4665,7 @@ EOF
   [ "$(base_ref)" = refs/heads/main ]
   GATE=true
   rebase_onto_base builder
-  [ "$(base_ref)" = refs/factory/toy-1/upstream/main ] # origin's, as Factory fetched it
+  [ "$(base_ref)" = refs/remotes/origin/main ] # origin's, as Factory fetched it
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"protected path changed: .factory/gate"* ]]
@@ -4688,27 +4674,30 @@ EOF
   # origin moves on again and is fetched (a sibling task does that) while local main stays stale
   upstream later.txt $'later\n' "upstream moves on"
   git -C "$REPO" fetch -q origin main
-  [ "$(base_ref)" = refs/factory/toy-1/upstream/main ] # where the branch forks off it too, and Factory's own
+  [ "$(base_ref)" = refs/remotes/origin/main ] # where the branch forks off it too
   gate_then_guards builder copilot-1
 }
 
-@test "guard_branch: a branch that took in newer commits of origin's base is measured from the newest it holds; one only a local ref holds counts as the branch's" {
+@test "guard_branch: a branch that took in newer commits of origin's base is measured from the newest it holds, origin out of reach or not; a commit merged from a main that lacks them counts as the branch's" {
   make_repo
   add_origin
   task_opened
   printf 'echo x\n' >"$TMP/wt-9/run.sh"
   git -C "$TMP/wt-9" commit -qam work
-  # a teammate's change to the gate lands on origin's main, and the branch merges it
+  # a teammate's change to the gate lands on origin's main, and the branch merges it; origin is
+  # out of reach by the time the guardrails run, as on a train
   upstream .factory/gate $'#!/bin/sh\nexit 0 # stricter\n' "upstream touches the gate"
   git -C "$TMP/wt-9" fetch -q origin
   git -C "$TMP/wt-9" merge -q --no-edit origin/main
+  git -C "$REPO" remote set-url origin "$TMP/nowhere.git"
   gate_branch "$TMP/gate.log"
   run guard_branch
   [ "$status" -eq 0 ]
-  [[ $output == *"took in newer commits of origin's main"* ]]
-  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$TMP/other" rev-parse HEAD) refs/factory/toy-9/upstream/main" ]
+  [[ $output == *"took in newer commits of main"* ]]
+  [ "$(cat "$TASK_STATE/base")" = "$(git -C "$TMP/other" rev-parse HEAD) refs/remotes/origin/main" ]
   [ "$(cat "$TASK_STATE/guarded")" = "$(git -C "$TMP/wt-9" rev-parse HEAD)" ]
-  # a commit put on the local main, and merged: origin does not hold it, so it is the branch's
+  # a commit on your main, which lacks the teammate's that the branch is now measured from,
+  # merged: it is not on top of that base, so it counts as the branch's
   git -C "$REPO" checkout -q main
   printf 'relaxed\n' >"$REPO/.factory/rules"
   commit_all "a rule on main"
@@ -4718,6 +4707,92 @@ EOF
   [ "$status" -eq 1 ]
   [[ $output == *"protected path changed: .factory/rules"* ]]
   [[ $output != *".factory/gate"* ]]
+}
+
+@test "guard_branch: a fix of yours on main, not pushed, that the builder merges is not the branch's; a pull request waits for its push" {
+  make_repo
+  add_origin
+  task_opened
+  local base
+  base=$(<"$TASK_STATE/base")
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam work
+  # you fix the gate on your main and have not pushed it yet; the builder merges your main
+  printf '#!/bin/sh\nexit 0 # fixed\n' >"$REPO/.factory/gate"
+  commit_all "your fix"
+  git -C "$TMP/wt-9" merge -q --no-edit main
+  gate_branch "$TMP/gate.log"
+  run guard_branch
+  [ "$status" -eq 0 ]
+  [[ $output == *"took in newer commits of main"* ]]
+  [ "$(<"$TASK_STATE/base")" = "$base" ] # read anew on each check while origin lacks it
+  # the reviewers read the branch from it as well
+  [[ $(review_prompt 1) == *"git diff $(git -C "$REPO" rev-parse main)...HEAD"* ]]
+  # the pull request's rebase asks you to push it first, and goes on once you have
+  run rebase_onto_base builder
+  [ "$status" -eq 1 ]
+  [[ $output == *"such as ones on your main you have not pushed"* ]]
+  git -C "$REPO" push -q origin main
+  rebase_onto_base builder
+}
+
+@test "guard_branch: a fix of yours the builder merged before you pushed it, rewritten on its way to origin, stops nothing, and is not the branch's once the branch holds it as rewritten" {
+  make_repo
+  add_origin
+  task_opened
+  local base
+  base=$(<"$TASK_STATE/base")
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam work
+  # your fix of the gate on main, not pushed yet; the builder merges main, and the branch is
+  # measured from your fix, which is not recorded as its base
+  printf '#!/bin/sh\nexit 0 # fixed\n' >"$REPO/.factory/gate"
+  commit_all "your fix"
+  git -C "$TMP/wt-9" merge -q --no-edit main
+  gate_branch "$TMP/gate.log"
+  run guard_branch
+  [ "$status" -eq 0 ]
+  [[ $output == *"took in newer commits of main"* ]]
+  [ "$(<"$TASK_STATE/base")" = "$base" ]
+  # a teammate's change reaches origin, and you pull --rebase to push your fix: a new commit
+  upstream other.txt $'x\n' "a teammate's change"
+  git -C "$REPO" pull -q --rebase origin main
+  git -C "$REPO" push -q origin main
+  # the branch holds your fix as it was, which no base ref holds now: the guardrails read it as
+  # the branch's, and the run goes on, for the builder to merge main again
+  run guard_branch
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/gate"* ]]
+  [[ $output != *"no longer holds"* ]]
+  # once it has, the branch holds your fix as origin does, and is measured from there
+  git -C "$TMP/wt-9" merge -q --no-edit main
+  gate_branch "$TMP/gate.log"
+  run guard_branch
+  [ "$status" -eq 0 ]
+  [ "$(<"$TASK_STATE/base")" = "$(git -C "$REPO" rev-parse main) refs/remotes/origin/main" ]
+}
+
+@test "guard_branch: in a repo without an origin, the commits of your main the builder merges are read anew on each check, never recorded" {
+  make_repo
+  task_opened
+  local base
+  base=$(<"$TASK_STATE/base")
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam work
+  printf '#!/bin/sh\nexit 0 # fixed\n' >"$REPO/.factory/gate"
+  commit_all "your fix"
+  git -C "$TMP/wt-9" merge -q --no-edit main
+  gate_branch "$TMP/gate.log"
+  run guard_branch
+  [ "$status" -eq 0 ]
+  [[ $output == *"took in newer commits of main"* ]]
+  [ "$(<"$TASK_STATE/base")" = "$base" ]
+  # you amend your fix: nothing stops, and the branch holds the fix as it was, now its own
+  git -C "$REPO" commit -q --amend -m "your fix, amended"
+  run guard_branch
+  [ "$status" -eq 1 ]
+  [[ $output == *"protected path changed: .factory/gate"* ]]
+  [[ $output != *"no longer holds"* ]]
 }
 
 @test "rebase_onto_base: origin's base as fetched from origin, whatever the tracking ref or the remote's fetch config say; the tracking ref gets it, not the ref a symbolic one names" {
@@ -4739,8 +4814,7 @@ EOF
   rebase_onto_base builder
   run git -C "$REPO" merge-base --is-ancestor "$evil" work
   [ "$status" -eq 1 ]
-  [ "$(git -C "$REPO" rev-parse refs/factory/toy-1/upstream/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
-  [ "$(git -C "$REPO" rev-parse refs/remotes/origin/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ] # for a gate that diffs against it
+  [ "$(git -C "$REPO" rev-parse refs/remotes/origin/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
   run git -C "$REPO" symbolic-ref -q refs/remotes/origin/main
   [ "$status" -eq 1 ]
   [ "$(git -C "$REPO" rev-parse evil)" = "$evil" ]
@@ -4766,7 +4840,7 @@ SH
   printf '[includeIf "gitdir:%s/"]\n\tpath = %s\n' "$TMP" "$TMP/work.gitconfig" >"$TMP/gitconfig"
   git -C "$REPO" remote set-url origin "ssh://origin.invalid$TMP/origin.git"
   GIT_CONFIG_GLOBAL=$TMP/gitconfig rebase_onto_base builder
-  [ "$(git -C "$REPO" rev-parse refs/factory/toy-1/upstream/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
+  [ "$(git -C "$REPO" rev-parse refs/remotes/origin/main)" = "$(git -C "$TMP/origin.git" rev-parse main)" ]
 }
 
 @test "rebase_onto_base: refused when origin's base does not hold the commit the branch is measured from, as when an agent moved main before the task started" {
@@ -4965,6 +5039,9 @@ SH
   FACTORY_FRESH=1 run context_of "$REPO"
   [ "${lines[-3]}" = work ]
   printf '%s refs/remotes/origin/docs/rain\n' "$(git -C "$REPO" rev-parse main)" >"$st/base" # after the pull request's rebase
+  run context_of "$REPO"
+  [ "${lines[-3]}" = docs/rain ]
+  printf '%s refs/factory/toy-1/upstream/docs/rain\n' "$(git -C "$REPO" rev-parse main)" >"$st/base" # as an earlier Factory recorded it
   run context_of "$REPO"
   [ "${lines[-3]}" = docs/rain ]
   rm "$st/base" # a task from before bases were recorded

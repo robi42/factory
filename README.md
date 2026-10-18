@@ -336,9 +336,7 @@ dialog was open; `decisions.md`, your answers;
 measured from and the base branch it was read from, which a rerun keeps; `gated` and
 `guarded`, the commits the gate and then the guardrails last passed on from that base, and
 `pushed`, the one Factory last pushed; `exclude`, a hash
-of the repo's `info/exclude`. Origin's base branch, as Factory fetched
-it, is the ref `refs/factory/<bead-id>/upstream/<base>`, and origin's tracking ref gets it
-too, for a gate that diffs against it. `fy clean` removes them with the task. Beside the
+of the repo's `info/exclude`. `fy clean` removes them with the task. Beside the
 tasks' state, in `<repo>-<hash>/`, `next.lock` is what `fy next` holds while it chooses
 and claims a task, and `events.jsonl` keeps what the runs of the repo's tasks did, a JSON
 line an event: each run's start and end, the agents' turns, the gate's runs, the
@@ -427,12 +425,12 @@ Factory's own checks, language-agnostic and the same for every repo, run on the 
 after the gate passes and before review. They read the branch from the commit it forks
 from, which Factory records when it opens the task's worktree and moves only when it
 rebases the branch itself, before a pull request, or when the branch took in newer commits
-of origin's base, which Factory fetches to tell: never from where `main` or `origin/main`
-is now, which an agent can move, and your `main` with it. A base ref that no longer holds
-the recorded commit stops the run, as your `main` may have been rewritten. Before the gate
-and the guardrails, Factory also checks that git in the worktree reads the task repo's own
-git dir, through a worktree the repo lists: the worktree's `.git` file, which an agent can
-rewrite, could name another clone, whose refs and history every check would read instead.
+of its base, yours or origin's, as when the builder merges your `main`. A base ref that no
+longer holds the recorded commit stops the run, as your `main` may have been rewritten.
+Before the gate and the guardrails, Factory also checks that git in the worktree reads the
+task repo's own git dir, through a worktree the repo lists: the worktree's `.git` file,
+which an agent can rewrite, could name another clone, whose refs and history every check
+would read instead.
 
 Each check's name, as `fy stats` and a hand-over give it, follows it in parentheses.
 
@@ -509,13 +507,13 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
 - Nothing of Factory's own `.factory/run/` on the branch, which no other check reads
   (`run_dir`).
 - The planner must leave the code untouched; what one of its turns changes is sent back once.
-  A planner turn that commits, or moves HEAD, the task's branch, Factory's refs for the task
-  or a replace ref, stops the run; the refs that you, fetches and other tasks move
-  meanwhile decide nothing for the task.
+  A planner turn that commits, or moves HEAD, the task's branch or a replace ref, stops the
+  run; the refs that you, fetches and other tasks move meanwhile decide nothing for the task.
 
 The guardrails keep an agent honest, not contained: its shell runs as you, so an agent
 set on it could still write Factory's state for the task or the repo's git config, which
-tells Factory's fetch and push where origin is, change what lies outside the worktree,
+tells Factory's fetch and push where origin is, put commits on your `main` for the branch
+to take in unchecked, change what lies outside the worktree,
 such as a `.cargo/config.toml` in a directory above it, or what git status does not show,
 such as a file in an ignored `node_modules` or one in a submodule's directory, or run
 `fy approve` by a path the agents' settings do not name. The pull request's diff
