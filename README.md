@@ -374,6 +374,9 @@ last forty lines and one round to fix, rerun and commit. Guardrails run only aft
 gate passes, and reviews only after both: the reviewers read the gate's log instead of
 running the gate again. Before the bead is closed Factory checks again that the gate
 passed on the branch's tip and that the guardrails hold.
+The gate does not run again on a commit it already passed on, as on a rerun, while its
+command is the same and the worktree had no file changed or added then and has none now:
+Factory says so, and that round's log names the one of the pass.
 
 ### What belongs in a gate
 

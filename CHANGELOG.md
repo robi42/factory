@@ -100,6 +100,10 @@ that waits for your approval takes your answer where its own Factory looks for i
   waits, or before a rerun, still does not.
 - The planner and the builder no longer say how to write an apostrophe in a `!fy reject`
   note, which their dialog takes as typed; the README still does.
+- A rerun ran the gate again on a commit it had already passed on, 20 to 40 minutes in
+  Blik, as did `factory pr` after the guardrails failed. Now it is skipped while the
+  branch's tip is that commit, the gate command the same and nothing in the worktree
+  changed or added, then or now; Factory says so, and that round's log names the pass's.
 
 ### Removed
 - **Breaking:** `factory answer` (`!fy answer` in a pane) and the questions relay

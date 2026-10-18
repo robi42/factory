@@ -4631,6 +4631,77 @@ SH
   [ ! -e "$TASK_STATE/guarded" ]
 }
 
+@test "gate_branch: not run again on the commit it passed on with nothing else changed, then or now, an ignored file at a protected path included, and the same command" {
+  make_repo
+  as_task toy-1
+  on_work_branch
+  sleep() { return 1; } # no heartbeat: its sleep would keep the test's output open
+  GATE="printf 'ran\n' >>'$TMP/runs'; printf 'all passed\n'; [ ! -e '$TMP/fail' ]"
+  # no pass recorded: it runs, and its pass on a clean worktree is recorded
+  gate_branch "$TMP/gate-1.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 1 ]
+  # the same commit, nothing changed, the same command: it does not run, and says so; the
+  # round's log names the pass's, for the reviewers
+  run gate_branch "$TMP/gate-2.log"
+  [ "$status" -eq 0 ]
+  [[ $output == *"gate: it passed on $(git -C "$REPO" rev-parse --short=7 HEAD) already, with nothing else changed; not run again"* ]]
+  [ "$(wc -l <"$TMP/runs")" -eq 1 ]
+  [[ $(<"$TMP/gate-2.log") == *"was not run again; its log is $TMP/gate-1.log" ]]
+  [ "$(cat "$TASK_STATE/gated")" = "$(git -C "$REPO" rev-parse HEAD)" ]
+  # the round's log the pass's own, as a rerun from planned writes gate-1.log again, and a
+  # second fy pr gate-pr.log: it keeps what the gate wrote
+  gate_branch "$TMP/gate-1.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 1 ]
+  [ "$(<"$TMP/gate-1.log")" = "all passed" ]
+  # a file added now: it runs; and once the file is gone, the pass beside it counts for nothing
+  printf 'fixture\n' >"$REPO/fixture.txt"
+  gate_branch "$TMP/gate-3.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 2 ]
+  rm "$REPO/fixture.txt"
+  gate_branch "$TMP/gate-4.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 3 ]
+  # another command, as FACTORY_GATE can give: it runs
+  GATE="true; $GATE"
+  gate_branch "$TMP/gate-5.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 4 ]
+  # another commit: it runs, and on that commit once more, not
+  printf 'echo more\n' >>"$REPO/run.sh"
+  commit_all more
+  gate_branch "$TMP/gate-6.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 5 ]
+  gate_branch "$TMP/gate-7.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 5 ]
+  # a run that fails voids the pass before it, whose log it may have written over
+  touch "$TMP/fail" "$REPO/fixture.txt"
+  run gate_branch "$TMP/gate-6.log"
+  [ "$status" -eq 1 ]
+  rm "$TMP/fail" "$REPO/fixture.txt"
+  gate_branch "$TMP/gate-8.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 7 ]
+  # a base taken anew voids the pass with what else the gate passed on (record_base)
+  rm "$TASK_STATE/base"
+  record_base
+  gate_branch "$TMP/gate-9.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 8 ]
+  # an ignored file at a protected path, which git status shows not, can steer the gate, as a
+  # local config that relaxes the lint does: the pass beside it counts for nothing, also once
+  # the file is gone
+  printf '.factory/relax\n' >>"$(git -C "$REPO" rev-parse --path-format=absolute --git-path info/exclude)"
+  printf 'echo again\n' >>"$REPO/run.sh"
+  commit_all again
+  printf 'relaxed\n' >"$REPO/.factory/relax"
+  gate_branch "$TMP/gate-10.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 9 ]
+  rm "$REPO/.factory/relax"
+  gate_branch "$TMP/gate-11.log" 2>/dev/null
+  [ "$(wc -l <"$TMP/runs")" -eq 10 ]
+  # the gate not run counts in fy stats as a round, with no failure and no time
+  run jq -c 'del(.t, .task)' "$(events_file)"
+  [ "${lines[1]}" = '{"event":"gate","label":2,"skipped":1}' ]
+  run cmd_stats "$REPO"
+  [ "$(awk 'NR == 2 { print $1, $5, $6 }' <<<"$output")" = "toy-1 13 1" ]
+}
+
 @test "base_ref: the local main when it is newer than origin's, or when there is no origin" {
   make_repo
   on_work_branch

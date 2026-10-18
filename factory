@@ -1033,7 +1033,7 @@ listed() {
   printf '%s' "${list:-none}"
 }
 
-# guard_check worktree base: mechanical guardrails on the branch, one guard_* check after the
+# guard_check worktree base [check...]: mechanical guardrails on the branch, one check after the
 # other. Prints violations, and sets GUARD_FAILED to the checks that found them. Git lists the
 # paths NUL-terminated (-z), as it stores them: a name it would quote, such as one with a
 # non-ASCII character, would match no check, and :(literal) keeps a name from being read as
@@ -1049,7 +1049,9 @@ guard_check() {
   # without a commit, guard_commits says so
   git -C "$wt" read-tree HEAD 2>/dev/null || rm -f "$GIT_INDEX_FILE"
   GUARD_FAILED=""
-  for check in top clean commits readable artifacts tests protected run_dir ignored symlinks lines; do
+  local checks=("${@:3}") # the guard_* checks named, else all of them
+  ((${#checks[@]})) || checks=(top clean commits readable artifacts tests protected run_dir ignored symlinks lines)
+  for check in "${checks[@]}"; do
     if ! "guard_$check" "$wt" "$base"; then
       bad=1
       GUARD_FAILED+="${GUARD_FAILED:+ }$check"
@@ -1406,7 +1408,7 @@ record_base() {
     sha=$(git -C "$WT" merge-base "$ref" HEAD) || die "$BRANCH has no fork point from $ref to be measured from"
     mkdir -p "$TASK_STATE"
     printf '%s %s\n' "$sha" "$ref" >"$TASK_STATE/base"
-    rm -f "$TASK_STATE/gated" "$TASK_STATE/guarded"
+    rm -f "$TASK_STATE/gated" "$TASK_STATE/gate-pass" "$TASK_STATE/guarded"
   fi
 }
 
@@ -1479,16 +1481,37 @@ measured_base() {
 }
 
 # gate_branch logfile: the gate on the tip of the task's branch, in its own worktree
-# (task_head). The commit it passes on is recorded, for the guardrails (guard_branch).
+# (task_head). The commit it passes on is recorded, for the guardrails (guard_branch). A pass
+# with nothing changed or added in the worktree (tree_state), nor an ignored file at a
+# protected path (guard_ignored), which git status shows not, is recorded with its log and the
+# command as well (gate-pass): while the tip is that commit, the worktree stays so and the
+# command the same, as on a rerun, the gate is not run again, which can take most of an hour,
+# and the round's log names the pass's. A pass beside such a file, a local config that relaxes
+# the lint say, proves nothing about the commit alone, also once the file is gone. Each run
+# voids the record first, so that it names the latest run's log, which no later run has
+# written over.
 gate_branch() {
-  local sha
+  local sha dirty ignored pass was label=${1##*/gate-}
   task_head
   sha=$HEAD_SHA
+  dirty=$(tree_state "$WT")
+  if ! ignored=$(guard_check "$WT" "$sha" ignored); then dirty+=$ignored; fi
+  pass=$(recorded gate-pass) # "<commit> <log>", then the command
+  was=${pass%%$'\n'*}
+  if [[ -z $dirty && $was == "$sha "* && ${pass#*$'\n'} == "$GATE" ]]; then
+    was=${was#* }
+    log "gate: it passed on ${sha:0:7} already, with nothing else changed; not run again"
+    [[ $was -ef $1 ]] || printf 'The gate passed on %s already, with nothing else changed, and was not run again; its log is %s\n' "$sha" "${was#"$WT/"}" >"$1"
+    metric gate label "${label%.log}" skipped 1
+    return 0
+  fi
+  rm -f "$TASK_STATE/gate-pass"
   run_gate "$WT" "$GATE" "$1" || return 1
   task_head
   [[ $HEAD_SHA == "$sha" ]] || die "$BRANCH moved from $sha to $HEAD_SHA while the gate ran; rerun to check the new tip"
   mkdir -p "$TASK_STATE"
   printf '%s\n' "$sha" >"$TASK_STATE/gated"
+  [[ -n $dirty ]] || printf '%s %s\n%s\n' "$sha" "$1" "$GATE" >"$TASK_STATE/gate-pass"
 }
 
 # guard_branch: the guardrails on the commit the gate passed on, the tip of the task's branch
