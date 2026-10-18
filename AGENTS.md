@@ -26,5 +26,12 @@ Code and Codex sessions in Herdr panes, with Beads for tasks and mechanical guar
 - Never add a suppression comment; fix the finding or restructure so the checker agrees.
 - Keep prompts short and mechanical checks strict; a new step must earn its place on a
   real task before it stays.
+- The guardrails catch an agent's honest mistakes and lazy shortcuts, and must hold
+  whatever the user's own setup does to git's output. They are not containment: an agent
+  set on evading them runs as the user. A new check needs a real failure or a likely
+  honest mistake behind it; a trick only such an agent would use is listed for the user,
+  not closed in code.
+- The README says in a line what a check does; how it works lives in the code's comments
+  and the commit message. A CHANGELOG entry is a few lines.
 - A user-visible change gets an entry under `[Unreleased]` in `CHANGELOG.md`: what was
   wrong, what happens now. A release bumps `FACTORY_VERSION` in `factory`.
