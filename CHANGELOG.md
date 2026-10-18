@@ -98,6 +98,8 @@ that waits for your approval takes your answer where its own Factory looks for i
   counts as the planner's, as its questions now wait inside its turn: the planner is asked
   to revert the change, and the run stops if it stays. What you change while an approval
   waits, or before a rerun, still does not.
+- The planner and the builder no longer say how to write an apostrophe in a `!fy reject`
+  note, which their dialog takes as typed; the README still does.
 
 ### Removed
 - **Breaking:** `factory answer` (`!fy answer` in a pane) and the questions relay

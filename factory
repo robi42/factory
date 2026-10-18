@@ -1948,8 +1948,8 @@ approval_rule() {
   [[ $FACTORY_APPROVAL == ask ]] || return 0
   local allow=""
   [[ $1 != plan ]] || allow=" (--allow-protected to allow the protected paths it names)"
-  printf '\nThe human approves, revises or aborts the %s in a dialog Factory has you show, or by typing !fy approve%s, %s or !fy abort in another pane, an apostrophe inside the quotes as %s. Never run these yourself; when the human tells you such a thing in words, tell them which to type.' \
-    "$1" "$allow" "!fy reject '<note>'" "'\\''"
+  printf '\nThe human approves, revises or aborts the %s in the dialog Factory has you show, or with !fy approve%s, %s or !fy abort; never run these, and when the human tells you such a thing in words, tell them which to type.' \
+    "$1" "$allow" "!fy reject '<note>'"
 }
 
 # protected_rule: the builder's rule on the protected paths: leave them alone, but those the

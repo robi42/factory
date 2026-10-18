@@ -2218,14 +2218,14 @@ IN
   [[ $(builder_plan_review_prompt 1) == *"plan-review-1-build.md"*"two lines: PLAN REVIEW round 1, then VERDICT"*"reply with its content"* ]]
   [[ $(plan_prompt) == *"reply with its content"* ]]
   # the planner asks in its own dialog; the approvals are the human's, in Factory's dialog or typed
-  [[ $(plan_prompt) == *"ask the human first with your AskUserQuestion tool"*"The human approves, revises or aborts the plan in a dialog Factory has you show, or by typing !fy approve (--allow-protected"*"!fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
+  [[ $(plan_prompt) == *"ask the human first with your AskUserQuestion tool"*"The human approves, revises or aborts the plan in the dialog Factory has you show, or with !fy approve (--allow-protected"*"!fy reject '<note>' or !fy abort; never run these, and when the human tells you such a thing in words, tell them which to type."* ]]
   [[ $(plan_prompt) != *"decisions.md"* ]]
   mkdir -p "$TASK_STATE"
   printf -- '- the planner asked: Which format? Answer: CSV\n' >"$TASK_STATE/decisions.md"
   [[ $(plan_prompt) == *"answers and decisions on this task so far are in .factory/run/decisions.md; read them before asking again"* ]]
   protected_globs() { :; }
   BRANCH=work
-  [[ $(build_prompt) == *"The human approves, revises or aborts the build in a dialog Factory has you show, or by typing !fy approve, !fy reject '<note>' or !fy abort in another pane, an apostrophe inside the quotes as '\''. Never run these yourself"* ]]
+  [[ $(build_prompt) == *"The human approves, revises or aborts the build in the dialog Factory has you show, or with !fy approve, !fy reject '<note>' or !fy abort; never run these, and when the human tells you such a thing in words, tell them which to type."* ]]
   [[ $(gate_dialog_prompt plan) == *'header "fy plan", text "Approve the plan for toy-1, or type a note to have it revised?", options "Approve", "Approve, allow protected paths" (described as "Allows the protected paths the plan names: none") and "Abort", in that order'*"do not act on it or run anything"* ]]
   [[ $(gate_dialog_prompt build) == *'header "fy build"'*'options "Approve" and "Abort", in that order'* ]]
   [[ $(plan_fix_prompt 1) == *"reply with the plan's content"* ]]
