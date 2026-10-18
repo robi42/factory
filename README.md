@@ -341,11 +341,7 @@ dialog was open; `decisions.md`, your answers;
 measured from and the base branch it was read from, which a rerun keeps; `gated` and
 `guarded`, the commits the gate and then the guardrails last passed on from that base, and
 `pushed`, the one Factory last pushed; `exclude`, a hash
-of the repo's `info/exclude`. A file in the run dir by one of the names Factory kept
-there before (`approved`, `reject.md`, `aborted`, `allow-protected`, `state`,
-`tree-at-ask`, `tree-at-answer`) counts for nothing, stops the next run and fails the
-guardrails: only an agent would put one there. `--fresh` removes one, as it starts the
-task over. Origin's base branch, as Factory fetched
+of the repo's `info/exclude`. Origin's base branch, as Factory fetched
 it, is the ref `refs/factory/<bead-id>/upstream/<base>`, and origin's tracking ref gets it
 too, for a gate that diffs against it. `fy clean` removes them with the task. Beside the
 tasks' state, in `<repo>-<hash>/`, `transport` holds the repo's git config for reaching
@@ -516,9 +512,8 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
   (`symlinks`).
 - No submodule added or pointed at another commit, waiver or not: the gate would read its
   files, which no diff shows. Leave such a change for after the merge (`submodules`).
-- Nothing of Factory's own `.factory/run/` on the branch, which no other check reads, and
-  no file there by a name Factory once kept there (see Run artifacts), which only an
-  agent would put there (`run_dir`).
+- Nothing of Factory's own `.factory/run/` on the branch, which no other check reads
+  (`run_dir`).
 - The planner must leave the code untouched; what one of its turns changes is sent back once.
   A planner turn that commits, or moves HEAD, the task's branch, Factory's refs for the task
   or a replace ref, stops the run; the refs that you, fetches and other tasks move

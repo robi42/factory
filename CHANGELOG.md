@@ -16,14 +16,9 @@ A repo whose own git config converts files, such as a local `core.autocrlf` or g
 filter, now stops before any agent works, as its checkout reads as changed (see the
 README's Guardrails). `factory clean --force` drops one task now, named by its bead id.
 `factory next` and `queue` need flock (util-linux) now. The agents may no longer run
-`git push`, `gh` or Factory itself. A task 0.1.x started stops at its rerun on the files
-0.1.x kept in its run dir, which Factory reads from there no longer. Rerun it with
-`--fresh` to start it over; or, for it to resume where it was, move `.factory/run/state`
-to the task's state dir, as the message says, with `allow-protected` if you had waived
-the protected paths, listing in it those the build may change, a path a line, and remove
-the others. A build 0.1.x approved goes through one more round of gate, reviews and your
-approval, as 0.1.x recorded no check of it. Upgrade between runs: a run that waits for
-your approval takes your answer where its own Factory looks for it.
+`git push`, `gh` or Factory itself. Finish a task 0.1.x started before upgrading, or rerun
+it with `--fresh` (a plain rerun plans it again from scratch). Upgrade between runs: a run
+that waits for your approval takes your answer where its own Factory looks for it.
 
 ### Added
 - The approvals ask you in a question dialog in the agent's pane, the planner's for the
@@ -367,11 +362,8 @@ your approval takes your answer where its own Factory looks for it.
   `factory approve`, `reject` and `abort`, and the dialogs' hooks write; the waiver only
   your answer at the plan's approval (`p`, the dialog, or
   `factory approve <repo> <bead-id> --allow-protected`). It writes your answers into the
-  run dir for the planner over whatever is there. A file in the run dir by a name Factory
-  kept there (`approved`, `reject.md`, `aborted`, `allow-protected`, `state`,
-  `tree-at-ask`, `tree-at-answer`) stops the next run before any agent works, and fails
-  the guardrails, as one committed there does: only an agent would put it there. `--fresh`
-  removes one. `factory check` in a task's worktree honours the task's waiver.
+  run dir for the planner over whatever is there, and a file committed in the run dir
+  fails the guardrails. `factory check` in a task's worktree honours the task's waiver.
 - A planner's commit passed the check that planning leaves the code untouched, which read
   only uncommitted changes. A planner turn that commits, or moves HEAD, the task's branch,
   Factory's refs for the task or a replace ref, now stops the run, and says which. The

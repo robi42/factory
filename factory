@@ -38,11 +38,6 @@ ENV_KNOBS=$(compgen -A variable FACTORY_)
 : "${FACTORY_FRESH:=0}"
 COPILOT_BOT='copilot-pull-request-reviewer[bot]'
 RUN_DIR=.factory/run
-# the names under which Factory once kept in the run dir what only it and the human decide: the
-# human's answers at a gate, the waiver, the resume point, and the tree a planner's question
-# found and left. It keeps them in its own state for the task now (task_state), as the agents
-# write the run dir, so a file there by one of these names can only be an agent's.
-OLD_DECISIONS=(approved reject.md aborted allow-protected state tree-at-ask tree-at-answer)
 # lines of a failed gate's log to show: a failure's own lines, past the build's noise
 GATE_LOG_TAIL=40
 MASKED="(not the commit's bytes; a conversion in the repo's git dir hides it)" # masked's note
@@ -1243,37 +1238,14 @@ guard_protected() {
 
 # guard_run_dir worktree base: the run dir is Factory's, out of the branch. A file committed
 # there with git add -f would be in no check's view, as the protected paths and the patterns
-# leave the run dir out; a waiver there, as the waiver once was, or an answer or a resume point
-# (old_decisions), can only be an agent's.
+# leave the run dir out.
 guard_run_dir() {
-  local f bad=0 committed=$'\n'
+  local f bad=0
   while IFS= read -r -d '' f; do
     printf "file committed in Factory's run dir: %s (no part of the branch; git rm --cached it)\n" "$f"
-    committed+=$f$'\n'
     bad=1
   done < <(guard_diff "$1" --name-only -z "$2...HEAD" -- "$RUN_DIR")
-  while IFS= read -r f; do
-    [[ -n $f && $committed != *$'\n'$f$'\n'* ]] || continue # one committed has its line above
-    if [[ $f == */allow-protected ]]; then
-      printf "%s found: a waiver there can only be an agent's; the human's is Factory's to keep (remove it)\n" "$f"
-    else
-      printf "%s found: Factory keeps none there, so it can only be an agent's; the human's answers and Factory's state are Factory's to keep (remove it)\n" "$f"
-    fi
-    bad=1
-  done < <(old_decisions "$1")
   return $bad
-}
-
-# old_decisions worktree -> the files by the names of OLD_DECISIONS in its run dir, or committed
-# there, a path from the worktree's top a line
-old_decisions() {
-  local f committed
-  committed=$(git -C "$1" ls-tree --name-only HEAD -- "$RUN_DIR/" 2>/dev/null) || committed=""
-  for f in "${OLD_DECISIONS[@]}"; do
-    if [[ -e $1/$RUN_DIR/$f || -L $1/$RUN_DIR/$f || $'\n'$committed$'\n' == *$'\n'$RUN_DIR/$f$'\n'* ]]; then
-      printf '%s\n' "$RUN_DIR/$f"
-    fi
-  done
 }
 
 # guard_ignored worktree: no ignored file that steers the gate unseen. A protected path is one
@@ -2952,17 +2924,6 @@ open_task_workspace() {
   local exclude
   open_workspace "$1" "$BRANCH" "$TASK_ID $TASK_TITLE"
   mkdir -p "$WT/$RUN_DIR" "$TASK_STATE"
-  # Factory reads no answer, waiver or resume point from the run dir, which the agents write: one
-  # there by a name it once had (old_decisions) stops the run before it changes anything, rather
-  # than being taken for the human's; one --fresh can remove goes, as the task starts over
-  local f old
-  old=$(old_decisions "$WT")
-  if [[ -n $old ]] && ((FACTORY_FRESH)); then
-    log "starting $TASK_ID over: removing ${old//$'\n'/ } from $WT"
-    while IFS= read -r f; do rm -f "${WT:?}/$f"; done <<<"$old"
-    old=$(old_decisions "$WT") # a committed one is still there
-  fi
-  [[ -z $old ]] || die "$WT holds ${old//$'\n'/ }: Factory keeps your answers, the waiver, its gate and where a rerun resumes in $TASK_STATE, not in the run dir the agents write, so these are an agent's, or an earlier Factory's. Look at them and at the branch, then rerun with --fresh to start the task over without them, or remove them from the branch and the run dir and rerun; a state file Factory 0.1.x left there resumes the task where it was, and a waiver you gave holds, once you move them to $TASK_STATE"
   # starting over: from here on, a run that stops before its first step leaves none of the old
   # steps standing for a rerun to resume after (resume_point)
   ((! FACTORY_FRESH)) || rm -f "$TASK_STATE/state"
@@ -4005,24 +3966,20 @@ task_args() {
   TARGS=("$(repo_of "$top")" "$id" "$@")
 }
 
-# cmd_dialog_hook plan|build bead-id run-dir [task-state-dir]: Claude Code runs this with a
+# cmd_dialog_hook plan|build bead-id run-dir task-state-dir: Claude Code runs this with a
 # hook's JSON on stdin (see dialog_hooks). A question dialog opening leaves a mark naming its
 # tool call (asking), and the planner's also takes the tree, into Factory's state for the task,
 # so that what the human changes while it is open is not the planner's (planner_turn). The
 # answer to Factory's approval dialog goes to the gate as approve, reject or abort would send
 # it; any other answer goes into the task's decisions.
 cmd_dialog_hook() {
-  local role=$1 in event dir n i header q a notes topic TASK_ID TASK_STATE # the hook's task alone
+  local role=$1 TASK_ID=$2 dir=$3 TASK_STATE=$4 in event n i header q a notes topic # the hook's task alone
   in=$(cat)
   event=$(jq -r '.hook_event_name // ""' <<<"$in")
-  if (($# >= 3)); then
-    TASK_ID=$2 dir=$3
-  fi
-  if [[ ! -d ${dir:-} ]]; then # nothing to mark without the run dir; an answer says so
+  if [[ ! -d $dir ]]; then # nothing to mark without the run dir; an answer says so
     [[ $event == PostToolUse ]] || return 0
     die "no run dir of a task for this dialog; the answer went to the agent only"
   fi
-  TASK_STATE=${4:-$(task_state "$dir" "$TASK_ID")} || return 1 # an agent started before the hook was told
   case $event in
     PreToolUse)
       jq -r '[.tool_use_id // "", .transcript_path // ""] | @tsv' <<<"$in" >"$dir/asking-$role"

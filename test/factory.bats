@@ -1306,21 +1306,21 @@ P
   # the human's, what the planner changed before is not, whatever the agent's cwd.
   mkdir "$TMP/wt-9/src"
   printf 'sneaky\n' >>"$TMP/wt-9/run.sh"
-  hook PreToolUse "$TMP/wt-9/src" | cmd_dialog_hook plan toy-9 "$run"
+  hook PreToolUse "$TMP/wt-9/src" | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ "$(cat "$run/asking-plan")" = "toolu_1	$TMP/transcript.jsonl" ]
   printf 'id,n\n' >"$TMP/wt-9/sample.csv"
-  CWD=$TMP/wt-9/src dialog Format "Which format?" '[{"label":"CSV"},{"label":"JSON"}]' CSV "keep the header" | cmd_dialog_hook plan toy-9 "$run"
+  CWD=$TMP/wt-9/src dialog Format "Which format?" '[{"label":"CSV"},{"label":"JSON"}]' CSV "keep the header" | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ ! -e "$run/asking-plan" ]
   [ ! -e "$st/tree-at-ask" ]
   [ "$(cat "$st/tree-at-answer")" = "?? sample.csv" ]
   [ "$(cat "$TMP/recorded")" = "the planner asked: Which format? Answer: CSV Notes: keep the header" ]
-  dialog Format "Which?" '[{"label":"CSV"}]' "(notes only)" "either works" | cmd_dialog_hook plan toy-9 "$run"
+  dialog Format "Which?" '[{"label":"CSV"}]' "(notes only)" "either works" | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ "$(tail -1 "$TMP/recorded")" = "the planner asked: Which? Answer: (no option) Notes: either works" ]
   # Chat about this closes a dialog with no answer: the turn's end clears the mark, and what the
   # human changed meanwhile is still theirs
-  hook PreToolUse | cmd_dialog_hook plan toy-9 "$run"
+  hook PreToolUse | cmd_dialog_hook plan toy-9 "$run" "$st"
   printf 'more\n' >"$TMP/wt-9/notes.txt"
-  hook Stop | cmd_dialog_hook plan toy-9 "$run"
+  hook Stop | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ ! -e "$run/asking-plan" ]
   [ "$(tail -1 "$st/tree-at-answer")" = "?? notes.txt" ]
   git -C "$TMP/wt-9" checkout -q -- run.sh
@@ -1336,43 +1336,43 @@ P
   cd "$OLDPWD"
   [ "$status" -eq 0 ]
   [ -e "$run/asking-build" ]
-  hook Stop | cmd_dialog_hook build toy-9 "$run"
+  hook Stop | cmd_dialog_hook build toy-9 "$run" "$st"
   [ ! -e "$run/asking-build" ]
   # no run dir: nothing to mark, and an answer says so
-  hook PreToolUse | cmd_dialog_hook plan toy-9 "$TMP/gone"
-  run cmd_dialog_hook plan toy-9 "$TMP/gone" < <(dialog Format "Which format?" '[{"label":"CSV"}]' CSV)
+  hook PreToolUse | cmd_dialog_hook plan toy-9 "$TMP/gone" "$st"
+  run cmd_dialog_hook plan toy-9 "$TMP/gone" "$st" < <(dialog Format "Which format?" '[{"label":"CSV"}]' CSV)
   [ "$status" -eq 1 ]
   [[ $output == *"no run dir of a task for this dialog; the answer went to the agent only"* ]]
   [ ! -e "$TMP/gone" ]
   # Factory's own dialog, while the plan waits
   printf 'plan %s\n' "$$" >"$st/waiting"
-  dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan toy-9 "$run"
+  dialog "fy plan" "$q" "$opts" Approve | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ -e "$st/approved" ]
   [ ! -e "$(task_state "$REPO" toy-9)/allow-protected" ]
   rm -f "$st/approved"
-  dialog "fy plan" "$q" "$opts" "Approve, allow protected paths" | cmd_dialog_hook plan toy-9 "$run"
+  dialog "fy plan" "$q" "$opts" "Approve, allow protected paths" | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ -e "$st/approved" ]
   [ -e "$(task_state "$REPO" toy-9)/allow-protected" ]
   [ ! -e "$run/allow-protected" ]
   rm -f "$st/approved" "$(task_state "$REPO" toy-9)/allow-protected"
-  dialog "fy plan" "$q" "$opts" Abort | cmd_dialog_hook plan toy-9 "$run"
+  dialog "fy plan" "$q" "$opts" Abort | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ -e "$st/aborted" ]
   rm -f "$st/aborted"
   local note=$'keep `x` as is, don\'t touch $HOME\nand split it'
-  dialog "fy plan" "$q" "$opts" "$note" | cmd_dialog_hook plan toy-9 "$run"
+  dialog "fy plan" "$q" "$opts" "$note" | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ "$(cat "$st/reject.md")" = "$note" ]
   rm -f "$st/reject.md"
   # a dialog for another gate, a closed gate, or a choice Factory did not offer: nothing sent
   printf 'build %s\n' "$$" >"$st/waiting"
-  run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" "$opts" Approve)
+  run cmd_dialog_hook plan toy-9 "$run" "$st" < <(dialog "fy plan" "$q" "$opts" Approve)
   [ "$status" -eq 1 ]
   [[ $output == *"that dialog was about the plan of toy-9, whose build waits now"* ]]
   rm -f "$st/waiting"
-  run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" "$opts" Approve)
+  run cmd_dialog_hook plan toy-9 "$run" "$st" < <(dialog "fy plan" "$q" "$opts" Approve)
   [ "$status" -eq 1 ]
   [[ $output == *"nothing of toy-9 waits for approval"* ]]
   printf 'plan %s\n' "$$" >"$st/waiting"
-  run cmd_dialog_hook plan toy-9 "$run" < <(dialog "fy plan" "$q" '[{"label":"Approve"},{"label":"Maybe"}]' Maybe)
+  run cmd_dialog_hook plan toy-9 "$run" "$st" < <(dialog "fy plan" "$q" '[{"label":"Approve"},{"label":"Maybe"}]' Maybe)
   [ "$status" -eq 1 ]
   [[ $output == *'choice "Maybe" is none Factory knows'* ]]
   [ ! -e "$st/approved" ]
@@ -2219,7 +2219,7 @@ IN
   [ ! -e "$TMP/allow-protected" ]
 }
 
-@test "a waiver an agent leaves in the run dir waives nothing and fails the guardrails; the human's holds" {
+@test "a waiver an agent leaves in the run dir waives nothing; the human's holds" {
   make_repo
   task_opened
   printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
@@ -2228,9 +2228,7 @@ IN
   run gate_then_guards builder 1
   [ "$status" -eq 1 ]
   [[ $output == *"protected path changed: .factory/gate"* ]]
-  [[ $output == *".factory/run/allow-protected found: a waiver there can only be an agent's"* ]]
   # the human's, from fy approve, holds in the run and in fy check
-  rm "$TMP/wt-9/$RUN_DIR/allow-protected"
   printf 'plan %s\n' "$$" >"$(task_state "$REPO" toy-9)/waiting"
   cmd_approve "$REPO" toy-9 --allow-protected
   printf '# Plan\nrelax the gate\n\nProtected paths: .factory/gate\n' >"$TMP/wt-9/$RUN_DIR/plan.md"
@@ -2241,17 +2239,15 @@ IN
   TASK_STATE="" run cmd_check "$TMP/wt-9" main
   [ "$status" -eq 0 ]
   [[ $output == *"protected paths the human allowed: .factory/gate"*"guardrails passed"* ]]
-  : >"$TMP/wt-9/$RUN_DIR/allow-protected" # an agent's on the branch, gone from the worktree
-  git -C "$TMP/wt-9" add -f "$RUN_DIR/allow-protected"
+  git -C "$TMP/wt-9" add -f "$RUN_DIR/allow-protected" # the agent's on the branch, gone from the worktree
   git -C "$TMP/wt-9" commit -qm waive
   rm "$TMP/wt-9/$RUN_DIR/allow-protected"
   run guard_check "$TMP/wt-9" main
   [ "$status" -eq 1 ]
   [[ $output == *"file committed in Factory's run dir: .factory/run/allow-protected"* ]]
-  [[ $output != *"allow-protected found"* ]] # one line for it, saying what to do
 }
 
-@test "an answer, a resume point or a tree an agent leaves in the run dir decides nothing, and the next run stops on it" {
+@test "an answer, a resume point or a tree an agent leaves in the run dir decides nothing" {
   make_repo
   task_opened
   # the planner changes code and lists the change as the human's, made while it asked
@@ -2262,41 +2258,9 @@ IN
   run planner_turn planner "plan it"
   [ "$status" -eq 1 ]
   [[ $output == *"the planner left changes"* ]]
-  git -C "$TMP/wt-9" checkout -q -- run.sh
-  # the next run stops on it before any agent works, as on a resume point that skips the reviews
-  run open_task_workspace "$REPO"
-  [ "$status" -eq 1 ]
-  [[ $output == *"$TMP/wt-9 holds .factory/run/tree-at-answer: Factory keeps your answers"* ]]
-  rm "$TMP/wt-9/$RUN_DIR/tree-at-answer"
+  # a resume point there skips nothing
   printf 'built 1\n' >"$TMP/wt-9/$RUN_DIR/state"
-  rm "$TASK_STATE/base"
-  run open_task_workspace "$REPO"
-  [ "$status" -eq 1 ]
-  [[ $output == *"holds .factory/run/state"* ]]
-  [ ! -e "$TASK_STATE/state" ]
-  # starting over, --fresh removes it; one committed stays, and stops the run before it changes anything
-  FACTORY_FRESH=1 run open_task_workspace "$REPO"
-  [ "$status" -eq 0 ]
-  [[ $output == *"starting toy-9 over: removing .factory/run/state from $TMP/wt-9"* ]]
-  [ ! -e "$TMP/wt-9/$RUN_DIR/state" ]
-  printf 'built 1\n' >"$TMP/wt-9/$RUN_DIR/state"
-  git -C "$TMP/wt-9" add -f "$RUN_DIR/state"
-  git -C "$TMP/wt-9" commit -qm resume
-  printf 'built 2\n' >"$TASK_STATE/state"
-  FACTORY_FRESH=1 run open_task_workspace "$REPO"
-  [ "$status" -eq 1 ]
-  [[ $output == *"holds .factory/run/state"* ]]
-  [ "$(cat "$TASK_STATE/state")" = "built 2" ]
-  git -C "$TMP/wt-9" reset -q --hard HEAD~1
-  mkdir -p "$TMP/wt-9/$RUN_DIR" # git took it with the file
-  printf 'built 1\n' >"$TMP/wt-9/$RUN_DIR/state"
-  # and the guardrails, as on the waiver
-  printf 'echo x\n' >"$TMP/wt-9/run.sh"
-  git -C "$TMP/wt-9" commit -qam work
-  : >"$TMP/wt-9/$RUN_DIR/approved"
-  run guard_check "$TMP/wt-9" main
-  [ "$status" -eq 1 ]
-  [[ $output == *".factory/run/approved found"*".factory/run/state found"* ]]
+  [ -z "$(resume_point)" ]
   # the builder answers the plan's gate in the run dir as the gate opens; the human's answer counts
   plan_ready
   show_dialog() { : >"$TMP/approved"; }
@@ -2550,12 +2514,12 @@ IN
         ;;
       *)
         printf 'sneaky\n' >>"$WT/run.sh" # the planner's change, before it asks
-        hook PreToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR"
+        hook PreToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" "$TASK_STATE"
         printf 'id,n\n' >"$WT/sample.csv" # the human drops a sample in while answering
-        hook PostToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR"
-        hook PreToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" # a second question
+        hook PostToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" "$TASK_STATE"
+        hook PreToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" "$TASK_STATE" # a second question
         printf 'x,y\n' >"$WT/other.csv"
-        hook PostToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR"
+        hook PostToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" "$TASK_STATE"
         printf 'the plan\n' >"$WT/$RUN_DIR/plan.md"
         ;;
     esac
