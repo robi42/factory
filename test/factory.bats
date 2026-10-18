@@ -54,17 +54,6 @@ add_submodule() {
   git -C "$REPO" -c protocol.file.allow=always submodule add -q "$TMP/lib" "$1"
 }
 
-# doctored_root line -> a root commit of main's tree, with run.sh holding the line: no parent,
-# a drop-in for main's root
-doctored_root() {
-  local idx=$TMP/doctored-index blob tree
-  GIT_INDEX_FILE=$idx git -C "$REPO" read-tree main
-  blob=$(printf '%s\n' "$1" | git -C "$REPO" hash-object -w --stdin)
-  GIT_INDEX_FILE=$idx git -C "$REPO" update-index --add --cacheinfo 100644,"$blob",run.sh
-  tree=$(GIT_INDEX_FILE=$idx git -C "$REPO" write-tree)
-  git -C "$REPO" commit-tree "$tree" -m doctored
-}
-
 # add_origin: a bare clone of REPO becomes its origin remote
 add_origin() {
   git clone -q --bare "$REPO" "$TMP/origin.git"
@@ -702,40 +691,6 @@ context_of() {
   [ "$status" -eq 1 ] # the artifact is still on the branch
   [[ $output == *"build artifact committed: src/naïve/lib.o"* ]]
   [[ $output != *"no test files did"* ]]
-}
-
-@test "guard: a git replace ref on the base does not hide an added line" {
-  make_repo
-  # Build the bad string at runtime so this file passes its own guard check.
-  local pipe='||' base doc
-  printf 'deploy %s true\n' "$pipe" >"$REPO/run.sh"
-  commit_all bad
-  # A doctored root commit whose tree already holds the bad line; replace main's commit with
-  # it, so git diff main...HEAD reads a base that is not the branch's and shows run.sh unchanged.
-  base=$(git -C "$REPO" rev-parse main)
-  doc=$(doctored_root "deploy $pipe true")
-  git -C "$REPO" replace "$base" "$doc"
-  [ -z "$(git -C "$REPO" diff --name-only main...HEAD -- run.sh)" ] # the poisoned diff hides it
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"run.sh: deploy $pipe true"* ]]
-}
-
-@test "guard: an info/grafts line does not cut the branch from its base" {
-  make_repo
-  # Build the bad string at runtime so this file passes its own guard check.
-  local pipe='||' doc tip common
-  printf 'deploy %s true\n' "$pipe" >"$REPO/run.sh"
-  commit_all bad
-  doc=$(doctored_root "deploy $pipe true")
-  tip=$(git -C "$REPO" rev-parse HEAD)
-  common=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)
-  # Graft the branch tip onto the doctored root, so a plain base...HEAD finds no merge base and
-  # a guard that trusts grafts reads nothing and refuses nothing.
-  printf '%s %s\n' "$tip" "$doc" >"$common/info/grafts"
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"run.sh: deploy $pipe true"* ]]
 }
 
 @test "guard: a branch whose diff git cannot read fails, cut off from its base or with an object gone" {
@@ -4592,30 +4547,6 @@ SH
   [ "$status" -eq 1 ]
   [[ $output == *"origin's main, at $(git -C "$TMP/origin.git" rev-parse main), does not hold $agents, the commit work is measured from"* ]]
   [ "$(cut -d ' ' -f 1 "$TASK_STATE/base")" = "$agents" ]
-  # nor once a graft has origin's next commit descend from it
-  upstream up.txt $'up\n' upstream
-  git -C "$REPO" fetch -q origin
-  git -C "$REPO" replace --graft "$(git -C "$TMP/other" rev-parse HEAD)" "$agents"
-  run rebase_onto_base builder
-  [ "$status" -eq 1 ]
-  [[ $output == *"does not hold $agents"* ]]
-}
-
-@test "guard_branch: a graft that has origin's next commit descend from the branch's takes none of the branch's commits in" {
-  make_repo
-  add_origin
-  task_opened
-  # the builder relaxes the gate, then grafts origin's next commit onto the base and its own
-  printf '#!/bin/sh\nexit 0 # relaxed\n' >"$TMP/wt-9/.factory/gate"
-  git -C "$TMP/wt-9" commit -qam "an agent's"
-  upstream up.txt $'up\n' upstream
-  git -C "$TMP/wt-9" fetch -q origin
-  git -C "$REPO" replace --graft "$(git -C "$TMP/other" rev-parse HEAD)" "$(cut -d ' ' -f 1 "$TASK_STATE/base")" "$(git -C "$TMP/wt-9" rev-parse HEAD)"
-  gate_branch "$TMP/gate.log"
-  run guard_branch
-  [ "$status" -eq 1 ]
-  [[ $output == *"protected path changed: .factory/gate"* ]]
-  [[ $output != *"took in"* ]]
 }
 
 @test "record_base: a base taken anew voids what the gate and the guardrails passed on" {

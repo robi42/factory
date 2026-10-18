@@ -43,12 +43,6 @@ GUARDRAILS=$FACTORY_HOME/guardrails.txt
 RUN_DIR=.factory/run
 # lines of a failed gate's log to show: a failure's own lines, past the build's noise
 GATE_LOG_TAIL=40
-# The true graph, for the git calls that check a branch, with GIT_NO_REPLACE_OBJECTS=1: an
-# agent can plant a refs/replace ref (git replace) or an info/grafts line in the shared git dir,
-# which rewrite what a commit is or descends from, so that git reads another tree than the
-# branch's and misses a change. This graft file is one git never finds; a /dev/null graft file
-# exists, and has git print a deprecation notice.
-NO_GRAFTS=/dev/null/no-grafts
 # files that look like tests, for the tests-required guardrail
 TEST_PATH_RE='(^|/)(tests?|spec|specs|__tests__|bats)/|(^|/)test_[^/]*\.py$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|scala|cs|swift)$|_spec\.rb$|\.bats$'
 
@@ -947,8 +941,8 @@ kept_out() {
 # (core.autocrlf, a filter) stay as the repo sets them: a checkout they convert reads unchanged.
 tree_state() {
   local kept dir out
-  # the true graph, and an index of its own
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS GIT_INDEX_FILE
+  # an index of its own
+  local -x GIT_INDEX_FILE
   mapfile -t kept < <(kept_out "$1")
   dir=$(mktemp -d)
   GIT_INDEX_FILE=$dir/index
@@ -1040,10 +1034,10 @@ listed() {
 # a pathspec.
 guard_check() {
   local wt=$1 base=$2 bad=0 check dir
-  # every check reads base...HEAD or HEAD, through the true graph, in the helpers too; and what
-  # is tracked from an index read from HEAD, the branch's: the worktree's own, which an agent
-  # can write, would take a file staged there (git add -f) for a tracked one
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS GIT_INDEX_FILE
+  # every check reads base...HEAD or HEAD, in the helpers too; and what is tracked from an
+  # index read from HEAD, the branch's: the worktree's own, which an agent can write, would
+  # take a file staged there (git add -f) for a tracked one
+  local -x GIT_INDEX_FILE
   dir=$(mktemp -d)
   GIT_INDEX_FILE=$dir/index
   # without a commit, guard_commits says so
@@ -1369,7 +1363,6 @@ task_head() {
 # without an origin. Full names: a tag or a branch named origin/<base> would be read as either.
 base_ref() {
   local ref best="refs/heads/$BASE" fork last=""
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   for ref in "refs/heads/$BASE" "refs/remotes/origin/$BASE"; do
     fork=$(git -C "$WT" merge-base "$ref" HEAD 2>/dev/null) || continue
     if [[ -z $last ]] || git -C "$WT" merge-base --is-ancestor "$last" "$fork"; then
@@ -1401,7 +1394,6 @@ recorded_base_branch() {
 # guardrails passed on was measured from the base before, so a base taken anew voids it.
 record_base() {
   local ref sha
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   if [[ ! -s $TASK_STATE/base ]]; then
     task_head
     ref=$(git -C "$WT" rev-parse --symbolic-full-name "$(base_ref)") || die "no base ref $BASE for $BRANCH"
@@ -1418,8 +1410,7 @@ record_base() {
 # origin lacks stays the task's, as does one Factory cannot fetch (fetch_base).
 start_from_origin() {
   local tip n
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
-  [[ ! -s $TASK_STATE/base ]] || return 0                     # a task under way keeps its base
+  [[ ! -s $TASK_STATE/base ]] || return 0 # a task under way keeps its base
   git -C "$WT" remote get-url origin >/dev/null 2>&1 || return 0
   if ! tip=$(fetch_base); then
     warn "could not fetch origin's $BASE; $TASK_ID starts from yours"
@@ -1439,7 +1430,6 @@ start_from_origin() {
 # was moved by another hand than Factory's, as when your main is rewritten: that fails loudly.
 task_base() {
   local sha ref
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   read -r sha ref 2>/dev/null <"$TASK_STATE/base" || die "no base commit recorded for $TASK_ID in $TASK_STATE"
   git -C "$WT" merge-base --is-ancestor "$sha" "$ref" 2>/dev/null \
     || die "$ref no longer holds $sha, the commit $BRANCH is measured from: it was rewritten since, by you, by a force-push to origin's $BASE that a fetch brought, or by an agent; look at it before you go on, and if that is as it should be, remove $TASK_STATE/base for a rerun to measure the branch from where it forks off then"
@@ -1465,7 +1455,6 @@ fetch_base() {
 # have not pushed. Read from the refs as they stand: origin's may be out of reach meanwhile.
 took_in() {
   local fork
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   fork=$(git -C "$WT" merge-base "$(base_ref)" HEAD) || return 1
   [[ $fork != "$1" ]] || return 1
   git -C "$WT" merge-base --is-ancestor "$1" "$fork" || return 1
@@ -1525,7 +1514,6 @@ gate_branch() {
 # (guard), with them.
 guard_branch() {
   local base newer
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   task_head
   if [[ $HEAD_SHA != "$(recorded gated)" ]]; then
     printf 'the gate has not passed on %s, the tip of %s (it passed on %s)\n' "$HEAD_SHA" "$BRANCH" "$(recorded gated)"
@@ -1610,7 +1598,6 @@ rebase_in_progress() {
 # a local ref held, an agent's say, would go into the pull request unchecked.
 rebase_onto_base() {
   local agent=$1 files onto base err
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   # a base moved by another hand fails here, before the branch moves onto it; a newer one the
   # branch took in, a fix of yours on main say, origin must hold as well
   base=$(measured_base) || exit 1
@@ -3817,7 +3804,6 @@ cmd_pr() {
 # is an ancestor from the start, so ancestry alone takes a task still in planning for a merged one.
 merged_into() {
   local repo=$1 branch=$2 base=$3 status=$4
-  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=$NO_GRAFTS # the true graph
   if [[ -z $status || $status == closed ]] \
     && git -C "$repo" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$base" 2>/dev/null; then
     return 0

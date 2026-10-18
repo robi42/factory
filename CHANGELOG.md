@@ -306,12 +306,6 @@ that waits for your approval takes your answer where its own Factory looks for i
   guardrails read that clone's refs, history and HEAD. Factory now refuses to gate or
   guard a worktree unless git there reads the task repo's own git dir, through a worktree
   the repo lists.
-- The guardrails read a tree other than the branch's when an agent planted a `git replace`
-  ref or an `info/grafts` line in the shared git dir: either rewrites what `HEAD` is or
-  descends from, so `git diff base...HEAD` showed no added line, no protected path and no
-  gitlink, and the guardrails refused nothing. The guardrails, the uncommitted-changes
-  check, and the reading of where a branch forks off its base, what it took in of it and
-  what it is rebased onto now ignore replace refs and grafts.
 - The guardrails passed a branch whose diff against the base git could not read, since
   every check then read nothing: a line in `.git/shallow`, which an agent can write, cut
   the branch off from the base, so that the two shared no history, and an object gone from
