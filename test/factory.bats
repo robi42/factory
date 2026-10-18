@@ -2823,32 +2823,6 @@ JSON
   [[ $output == *"Notes from earlier work"*"bd recall"*$'style: argparse, not click\nci: just ci' ]]
 }
 
-@test "cmd_sync: pull then push; an empty remote is fine, any other pull error is not" {
-  make_repo
-  mkdir "$REPO/.beads"
-  FACTORY_BD_PUSH=0 # sync pushes even when runs do not
-  bd() {
-    case "$*" in
-      *"dolt pull")
-        printf '%s\n' "$BD_PULL"
-        return "$BD_PULL_RC"
-        ;;
-      *"config get sync.remote") printf 'git+https://x/y.git\n' ;;
-      *"dolt push") printf 'pushed\n' ;;
-    esac
-  }
-  BD_PULL=$'Fetching from origin...\nEverything up-to-date' BD_PULL_RC=0 run cmd_sync "$REPO"
-  [ "$status" -eq 0 ]
-  [[ $output == *"beads: Everything up-to-date"*"beads pushed to git+https://x/y.git"* ]]
-  BD_PULL='error: no branches found on remote' BD_PULL_RC=1 run cmd_sync "$REPO"
-  [ "$status" -eq 0 ]
-  [[ $output == *"nothing to pull"*"beads pushed"* ]]
-  BD_PULL=$'error: remote not reachable\nnetwork is down' BD_PULL_RC=1 run cmd_sync "$REPO"
-  [ "$status" -eq 1 ]
-  [[ $output == *"beads pull failed: network is down"* ]]
-  [[ $output != *"beads pushed"* ]]
-}
-
 @test "cmd_clean: merged task branches go, unmerged stay unless forced" {
   make_repo
   git -C "$REPO" checkout -q main

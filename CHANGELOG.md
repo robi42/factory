@@ -88,7 +88,7 @@ that waits for your approval takes your answer where its own Factory looks for i
   branch is the commit it pushed, and names what the worktree holds that the pull request
   lacks.
 - Every command takes any directory of a repo for the repo: `factory run`, `pr`, `init`,
-  `next`, `queue`, `add`, `tasks` and `sync` took only its top.
+  `next`, `queue`, `add` and `tasks` took only its top.
 - The agents' prompts tell them how you approve only where Factory asks you, not under
   `--auto`, where those commands refuse.
 - Factory needs Bash 4.4 or newer, as the README now says, where it said Bash 4: an older
@@ -111,6 +111,8 @@ that waits for your approval takes your answer where its own Factory looks for i
   beside the script (`FACTORY_GUARDRAILS`) where the repo has no `.factory/guardrails.txt`.
   An exported `FACTORY_GUARDRAILS` is now ignored, as are the other three, and a
   `.factory/env` that sets one of the four stops the command: it names no knob.
+- `factory sync` is gone: it pushed the Beads database even with `FACTORY_BD_PUSH=0`. By
+  hand it is `bd -C <repo> dolt pull && bd -C <repo> dolt push`.
 
 ### Fixed
 - A build whose plan you approved with protected paths allowed was still told to change

@@ -81,7 +81,6 @@ usage() {
   row '  flags: --pr, --auto, --no-copilot, --fresh' 'open a PR; skip both approvals; no Copilot review; do not resume'
   row 'factory add     <repo> ["title" [description]]' 'file a task; no title opens your editor (or reads stdin)'
   row 'factory tasks   <repo> [--all | bd list args...]' 'open tasks: in progress, then in the order next takes them'
-  row 'factory sync    <repo>' 'pull, then push the Beads database to its sync remote'
   row 'factory init    <repo> [bd init args...]' 'lean bd init with a short prefix, detect the gate, AGENTS.md stub'
   row 'factory approve <repo> <bead-id> [--allow-protected]' 'approve the plan or build; --allow-protected (plan only) allows the protected paths it names'
   row "factory reject  <repo> <bead-id> '<note>'" 'send a note back; the plan or build comes back revised'
@@ -3470,21 +3469,6 @@ cmd_add() {
   bd_push "$repo"
 }
 
-# cmd_sync repo: pull (when the remote has beads data), then push
-cmd_sync() {
-  local repo out
-  repo=$(repo_top "$1") || exit 1
-  need_beads "$repo"
-  if out=$(bd -C "$repo" dolt pull 2>&1); then
-    log "beads: $(tail -n1 <<<"$out")"
-  elif [[ $out == *"no branches found"* ]]; then
-    log "beads: remote has no beads data yet, nothing to pull"
-  else
-    die "beads pull failed: $(tail -n1 <<<"$out")"
-  fi
-  FACTORY_BD_PUSH=1 bd_push "$repo"
-}
-
 # task_order [color]: bd list --json on stdin -> one line per task: those in progress first,
 # which next leaves to their runs, then the open ones in the order next takes them: a task after
 # the open ones that block it (blocks or conditional-blocks, its own or a parent's), else by
@@ -4015,11 +3999,6 @@ main() {
       check_knobs
       check_push "${ARGS[0]}"
       cmd_queue "${ARGS[@]}"
-      ;;
-    sync)
-      (($# == 1)) || die "usage: factory sync <repo>"
-      need bd
-      cmd_sync "$1"
       ;;
     tasks)
       (($# >= 1)) || die "usage: factory tasks <repo> [--all | bd list args...]"

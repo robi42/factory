@@ -173,7 +173,6 @@ fy clean   ~/src/app                         # drop workspaces, worktrees and br
 fy clean   ~/src/app ap-k3x --force          # ...or of one task you abandoned
 fy check   <worktree> main                   # gate + guardrails on a branch, no agents
 fy stats   ~/src/app                         # how its tasks went: rounds, failures, notes
-fy sync    ~/src/app                         # pull, then push the Beads database
 fy status                                    # live Factory agents in Herdr
 ```
 
