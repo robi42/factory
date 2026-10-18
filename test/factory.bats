@@ -588,12 +588,11 @@ context_of() {
   done
 }
 
-@test "guard: the git config hides no submodule the branch adds, nor the line the diff holds for it" {
+@test "guard: Factory's list refuses a submodule the branch adds or points at another commit, whatever the git config, waiver or not; one it removes passes" {
   make_repo
-  # The repo's own rule refuses the line of an added submodule, and it protects vendor/.
-  printf '^\\+Subproject commit [0-9a-f]{7,}\n' >"$REPO/.factory/guardrails.txt"
+  # vendor/ is protected: the git config hides the submodule from neither check
   printf 'vendor\n' >"$REPO/.factory/protected"
-  commit_all "own rules"
+  commit_all "protect vendor"
   merge_work
   add_submodule vendor/lib
   commit_all "add lib"
@@ -607,6 +606,20 @@ context_of() {
     [[ $output == *"protected path changed: vendor/lib"* ]]
     git -C "$REPO" config --unset "${setting%%=*}"
   done
+  # the human's submodule, in the base, which the branch points at another commit: the
+  # waiver is for the protected path, not for the line
+  merge_work
+  git -C "$REPO/vendor/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m more
+  commit_all "move lib"
+  waive vendor/lib
+  run guard_check "$REPO" main
+  [ "$status" -eq 1 ]
+  [[ $output == *"vendor/lib: Subproject commit "* ]]
+  [[ $output != *"protected path changed"* ]]
+  git -C "$REPO" rm -q vendor/lib
+  commit_all "remove lib"
+  run guard_check "$REPO" main
+  [ "$status" -eq 0 ]
 }
 
 @test "guard: lines grep would read together with a NUL further on are checked" {
@@ -1919,31 +1932,6 @@ IN
   run guard_check "$REPO" main
   [ "$status" -eq 1 ]
   [[ $output == *"symlink to a place the branch does not hold: tool.sh -> target/release/app"* ]]
-}
-
-@test "guard: a submodule the branch adds or points at another commit fails, waiver or not; one it removes passes" {
-  make_repo
-  add_submodule lib
-  commit_all "add lib"
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"submodule added or pointed at another commit: lib"* ]]
-  waive # the waiver is for what the branch's diff shows
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"submodule added or pointed at another commit: lib"* ]]
-  rm "$TASK_STATE/allow-protected"
-  # the human's submodule, in the base, which the branch points at another commit
-  merge_work
-  git -C "$REPO/lib" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m more
-  commit_all "move lib"
-  run guard_check "$REPO" main
-  [ "$status" -eq 1 ]
-  [[ $output == *"submodule added or pointed at another commit: lib"* ]]
-  git -C "$REPO" rm -q lib
-  commit_all "remove lib"
-  run guard_check "$REPO" main
-  [ "$status" -eq 0 ]
 }
 
 @test "guard: an ignored build artifact passes, and so does the run directory under a protected .factory" {
@@ -5368,7 +5356,7 @@ SH
   run run_gate "$TMP/wt" false "$TMP/wt/.factory/run/gate-copilot-2.log"
   [ "$status" -eq 1 ]
   local c
-  for c in top clean commits readable artifacts protected run_dir ignored symlinks submodules; do
+  for c in top clean commits readable artifacts protected run_dir ignored symlinks; do
     eval "guard_$c() { :; }"
   done
   guard_tests() { return 1; }

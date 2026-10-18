@@ -31,3 +31,7 @@ unittest\.skip
 \bx(it|test|describe)\(
 t\.Skip(f|Now)?\(
 [#]\[ignore([[:space:]]*=|\])
+
+# a submodule added or pointed at another commit, as git add makes of a clone in the tree:
+# the gate would read its files, which no diff shows; leave that change for after the merge
+^\+Subproject commit [0-9a-f]{7,}

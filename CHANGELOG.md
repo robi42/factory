@@ -366,10 +366,11 @@ that waits for your approval takes your answer where its own Factory looks for i
   refuse a symlink the branch adds, renames or points elsewhere to a place the branch does
   not hold, waiver or not, and one to a directory unless you waived the protected paths.
 - A submodule the branch added, or pointed at another commit, brought in files that the
-  gate read and no diff showed, and git config an agent can write (`diff.submodule`,
-  `diff.ignoreSubmodules`) could hide even its one `+Subproject commit` line. The
-  guardrails now refuse such a submodule, waiver or not, whatever the config says; that
-  change is yours to make after the merge.
+  gate read and no diff showed, and git config (`diff.submodule`, `diff.ignoreSubmodules`)
+  could hide even its one `+Subproject commit` line. Factory's `guardrails.txt` now
+  refuses that line, whatever the config says; that change is yours to make after the
+  merge. A repo that keeps its own `.factory/guardrails.txt` needs the line in it to
+  refuse submodules too: copy it from Factory's list.
 
 ## [0.1.11] - 2026-10-05
 

@@ -441,10 +441,11 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
   `+` in front, so `^\+` anchors it at the line's start. Every added line of a text file
   outside `.factory/` is read; `.factory/` is protected instead, so a change there needs
   your waiver. A renamed file's lines count only where it changed. A file git takes for
-  binary, such as an image, has none, and a submodule one,
-  `+Subproject commit` and the id of the commit it points at. A pattern grep cannot read
-  fails the guardrails, rather than matching nothing, and so does a rules file it cannot
-  read (`lines`).
+  binary, such as an image, has none, and a submodule one, `+Subproject commit` and the id
+  of the commit it points at, which Factory's list refuses: the gate would read the
+  submodule's files, which no diff shows, so adding one or pointing it at another commit
+  is yours to do after the merge. A pattern grep cannot read fails the guardrails, rather
+  than matching nothing, and so does a rules file it cannot read (`lines`).
 - A change to code files must also touch a test file (`FACTORY_REQUIRE_TESTS=0` to relax).
   In Rust, whose unit tests live in the file they test, a `#[test]` or an assertion added
   to the changed file will do. A deleted test file is no test changed, nor a deleted code
@@ -485,8 +486,6 @@ Each check's name, as `fy stats` and a hand-over give it, follows it in parenthe
   to nothing, the gate would read through it what no diff shows. A symlink to a directory
   gives the files under it paths that no protected glob names, so it needs the waiver, as
   a path the plan names (`symlinks`).
-- No submodule added or pointed at another commit, waiver or not: the gate would read its
-  files, which no diff shows. Leave such a change for after the merge (`submodules`).
 - Nothing of Factory's own `.factory/run/` on the branch, which no other check reads
   (`run_dir`).
 - The planner must leave the code untouched; what one of its turns changes is sent back once.

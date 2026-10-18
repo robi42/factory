@@ -1071,7 +1071,7 @@ guard_check() {
   # without a commit, guard_commits says so
   git -C "$wt" read-tree HEAD 2>/dev/null || rm -f "$GIT_INDEX_FILE"
   GUARD_FAILED=""
-  for check in top clean commits readable artifacts tests protected run_dir ignored symlinks submodules lines; do
+  for check in top clean commits readable artifacts tests protected run_dir ignored symlinks lines; do
     if ! "guard_$check" "$wt" "$base"; then
       bad=1
       GUARD_FAILED+="${GUARD_FAILED:+ }$check"
@@ -1121,8 +1121,8 @@ guard_readable() {
   return 1
 }
 
-# guard_artifacts worktree base: no build artifact added. --no-renames, as in the symlink and
-# gitlink checks: git pairs an added artifact with a deleted file of like content as a
+# guard_artifacts worktree base: no build artifact added. --no-renames, as in the symlink
+# check: git pairs an added artifact with a deleted file of like content as a
 # rename (R), which --diff-filter=A leaves out, so a committed build/out.o git read as renamed
 # from a data file would pass unflagged.
 guard_artifacts() {
@@ -1228,18 +1228,6 @@ guard_symlinks() {
   return $bad
 }
 
-# guard_submodules worktree base: a submodule brings in a tree of its own, which the branch's
-# diff shows as one line, the commit it points at: the gate reads files there that no diff
-# shows, waiver or not
-guard_submodules() {
-  local f bad=0
-  while IFS= read -r -d '' f; do
-    printf 'submodule added or pointed at another commit: %s (the gate would read files no diff shows; take it out of the branch, for a human to change after the merge)\n' "$f"
-    bad=1
-  done < <(gitlinks "$1" "$2")
-  return $bad
-}
-
 # guard_lines worktree base: no line the branch adds matches a forbidden pattern; a file git
 # takes for binary data, such as an image, has none
 guard_lines() {
@@ -1288,16 +1276,6 @@ guard_lines() {
   return $bad
 }
 
-# gitlinks worktree base: the paths, NUL-terminated, at which the branch adds a submodule or
-# points one at another commit. git's raw diff gives each change as its modes, ids and status,
-# then its path; a submodule's mode is 160000.
-gitlinks() {
-  local meta f
-  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
-    if [[ $meta =~ ^:[0-7]+\ 160000\  ]]; then printf '%s\0' "$f"; fi
-  done < <(guard_diff "$1" --raw -z --no-renames --diff-filter=AMT "$2...HEAD")
-}
-
 # guard_diff worktree [git diff args]: git diff in the worktree as git itself writes it,
 # whatever the git config and attributes say, which an agent can write: no colour codes,
 # external diff tool or textconv filter; renames found, as by git's default (diff.renames),
@@ -1326,8 +1304,8 @@ label() {
 # unit tests in the file they test (#[cfg(test)]): a test or an assertion added to a .rs file
 # counts as a test changed, and a renamed one's lines count only where it changed (guard_lines).
 # A deleted test file is no test changed, nor a deleted code file a change of code, and a file
-# moved unchanged is neither. Unchanged is the same blob, by the ids git's raw diff gives
-# (gitlinks): a rename's R100 says only that the lines are the same, in whatever order.
+# moved unchanged is neither. Unchanged is the same blob, by the ids git's raw diff gives after
+# the modes: a rename's R100 says only that the lines are the same, in whatever order.
 tests_changed_with_source() {
   local LC_ALL=C meta was is st f old i code=0 lines rust=() olds=()
   local code_re='\.(py|js|jsx|ts|tsx|go|rs|java|kt|kts|scala|sh|bash|rb|ex|exs|c|cc|cpp|h|hpp|cs|swift|php|lua|clj|el)$'
