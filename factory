@@ -518,25 +518,22 @@ turn_ends() {
 # the transcript view (ctrl+o) that a dialog waits under it
 QUESTION_SCREEN='Enter to select · |Ready to submit your answers[?]|dialog waiting · '
 
-# screen_ends_in question|prompt: an agent's screen (on stdin) ends in a question dialog, a
-# question's footer or the review step, or in Claude Code's prompt box, empty or with a draft.
-# The dialog takes the box's place: the agent's own text quoting one sits above the box, and
-# the dialog's ❯ marks a numbered option. An editor opened from the dialog shows neither.
-screen_ends_in() {
-  Q=$QUESTION_SCREEN awk -v want="$1" '$0 ~ ENVIRON["Q"] {last = "question"; next}
-    /^[[:space:]]*❯/ && !/^[[:space:]]*❯[[:space:]]*[0-9]+\./ {last = "prompt"} END {exit last != want}'
+# question_on_screen: an agent's screen (on stdin) ends in a question dialog, a question's
+# footer or the review step, not in Claude Code's prompt box, empty or with a draft. The dialog
+# takes the box's place: the agent's own text quoting one sits above the box, and the dialog's
+# ❯ marks a numbered option. An editor opened from the dialog shows neither.
+question_on_screen() {
+  Q=$QUESTION_SCREEN awk '$0 ~ ENVIRON["Q"] {last = "question"; next}
+    /^[[:space:]]*❯/ && !/^[[:space:]]*❯[[:space:]]*[0-9]+\./ {last = "prompt"} END {exit last != "question"}'
 }
-
-question_on_screen() { screen_ends_in question; }
 
 # asking name: the agent waits for the human's answer in a question dialog. Herdr can read such
 # an agent as idle (in Factory's panes Claude Code draws a rule below the dialog's footer, and
 # Herdr looks for the footer below the last rule), so Factory looks itself. The mark the
 # dialog's hook left names the tool call: the question is open until the session's transcript
 # has the call's result, which an answer, Esc and Chat about this all write, whatever the screen
-# shows meanwhile (an editor, the transcript view). Without a transcript (Claude Code keeps
-# none with CLAUDE_CODE_SKIP_PROMPT_HISTORY) a mark holds until the agent's prompt is back; an
-# agent without the hook goes by its screen alone. Codex, the reviewer, asks in no such dialog.
+# shows meanwhile (an editor, the transcript view). An agent without the hook, or a session
+# without a transcript, goes by its screen alone. Codex, the reviewer, asks in no such dialog.
 asking() {
   local mark id="" tp="" txt
   mark=$(asking_mark "$1") || return 1
@@ -545,26 +542,11 @@ asking() {
   fi
   if [[ -n $id && -f $tp ]]; then
     grep -qF "\"tool_use_id\":\"$id\"" "$tp" || return 0
-    question_closed "${mark##*/asking-}" "$(dirname "$mark")" # with no hook, as by Esc
+    rm -f "$mark" # closed with no hook, as by Esc
     return 1
   fi
   txt=$(screen_of "$1") || return 1
-  question_on_screen <<<"$txt" && return 0
-  [[ -e $mark ]] || return 1
-  screen_ends_in prompt <<<"$txt" || return 0
-  question_closed "${mark##*/asking-}" "$(dirname "$mark")"
-  return 1
-}
-
-# question_closed role run-dir: the agent's question dialog closed, answered or not. Its mark
-# goes, and what changed while the planner's was open is the human's (planner_turn), recorded in
-# Factory's state for the task, as the tree it was taken from: in the run dir an agent could
-# list there what it changes itself.
-question_closed() {
-  rm -f "$2/asking-$1"
-  [[ $1 == plan && -e ${TASK_STATE:?}/tree-at-ask ]] || return 0
-  changed_since "$(<"$TASK_STATE/tree-at-ask")" "${2%/"$RUN_DIR"}" >>"$TASK_STATE/tree-at-answer"
-  rm -f "$TASK_STATE/tree-at-ask"
+  question_on_screen <<<"$txt"
 }
 
 # asking_mark agent -> the file the planner's or the builder's dialog hook keeps while it asks
@@ -2768,7 +2750,7 @@ start_or_adopt_agents() {
     || die "something runs in the builder's pane $BUILD_PANE, which a fresh start of the agents takes: end it, then rerun"
   # a question the old agents left open went with their sessions, whose transcripts will
   # never close it: its marks would have the fresh agents wait for an answer forever
-  rm -f "$WT/$RUN_DIR/asking-plan" "$WT/$RUN_DIR/asking-build" "$TASK_STATE/tree-at-ask"
+  rm -f "$WT/$RUN_DIR/asking-plan" "$WT/$RUN_DIR/asking-build"
   close_extra_panes "$WS" "$BUILD_PANE"
   # builder left, planner over reviewer right; equal columns, the planner a little taller
   plan_pane=$(h pane split --pane "$BUILD_PANE" --direction right --ratio 0.5 --cwd "$WT" --no-focus | jq -r '.result.pane.pane_id // empty')
@@ -2836,7 +2818,6 @@ adopt_agent() {
   log "$name is gone; starting it again in its pane, with a new session"
   if [[ $kind == claude ]]; then
     rm -f "$WT/$RUN_DIR/asking-$role"
-    [[ $role != plan ]] || rm -f "$TASK_STATE/tree-at-ask"
     dialog_hooks "$role" >"$WT/$RUN_DIR/hooks-$role.json"
   fi
   write_env
@@ -2919,8 +2900,8 @@ Reply with just DONE."
   die "the planner left changes in $WT, though planning must not touch code; revert these, then rerun:"$'\n'"$new"
 }
 
-# changed_since tree-state [worktree] -> the lines of tree_state that the earlier state lacks
-changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "${2:-$WT}" | LC_ALL=C sort); }
+# changed_since tree-state -> the lines of tree_state "$WT" that the earlier state lacks
+changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "$WT" | LC_ALL=C sort); }
 
 # head_of worktree -> the commit checked out there and the branch it is on, which a planner's
 # turn must leave as they were: a commit carries its change out of the tree that
@@ -2928,17 +2909,14 @@ changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "${2:-
 head_of() { printf '%s %s' "$(git -C "$1" rev-parse -q --verify HEAD || printf none)" "$(git -C "$1" symbolic-ref -q HEAD || printf detached)"; }
 
 # planner_turn planner-agent prompt: one turn of the planner, then the checks that it left the
-# code and HEAD alone. What changed before the turn is not the planner's, nor what the
-# human changed while one of its question dialogs was open: the dialog's hook records that in
-# tree-at-answer, in Factory's state for the task.
+# code and HEAD alone. What changed before the turn is not the planner's; what changed during
+# it is, also while one of its question dialogs waited for the human.
 planner_turn() {
   local before head
-  rm -f "${TASK_STATE:?}/tree-at-answer" # tree-at-ask stays: a question still open keeps its snapshot
   show_decisions "$WT/$RUN_DIR"
   before=$(tree_state "$WT")
   head=$(head_of "$WT")
   ask "$1" "$2"
-  [[ ! -s $TASK_STATE/tree-at-answer ]] || before+=$'\n'$(<"$TASK_STATE/tree-at-answer")
   planner_kept_hands_off "$1" "$before"
   [[ $(head_of "$WT") == "$head" ]] \
     || die "the planner's turn committed or checked out in $WT, from $head to $(head_of "$WT"): planning must not. Look at what it did, put HEAD back, and rerun"
@@ -3744,10 +3722,9 @@ task_args() {
 
 # cmd_dialog_hook plan|build bead-id run-dir task-state-dir: Claude Code runs this with a
 # hook's JSON on stdin (see dialog_hooks). A question dialog opening leaves a mark naming its
-# tool call (asking), and the planner's also takes the tree, into Factory's state for the task,
-# so that what the human changes while it is open is not the planner's (planner_turn). The
-# answer to Factory's approval dialog goes to the gate as approve, reject or abort would send
-# it; any other answer goes into the task's decisions.
+# tool call (asking), which goes as the dialog closes. The answer to Factory's approval dialog
+# goes to the gate as approve, reject or abort would send it; any other answer goes into the
+# task's decisions.
 cmd_dialog_hook() {
   local role=$1 TASK_ID=$2 dir=$3 TASK_STATE=$4 in event n i header q a notes topic # the hook's task alone
   in=$(cat)
@@ -3759,18 +3736,14 @@ cmd_dialog_hook() {
   case $event in
     PreToolUse)
       jq -r '[.tool_use_id // "", .transcript_path // ""] | @tsv' <<<"$in" >"$dir/asking-$role"
-      if [[ $role == plan ]]; then
-        mkdir -p "$TASK_STATE"
-        tree_state "${dir%/"$RUN_DIR"}" >"$TASK_STATE/tree-at-ask"
-      fi
       return 0
       ;;
     Stop) # a dialog closed with no answer, as Chat about this closes one, ends with the turn
-      [[ ! -e $dir/asking-$role ]] || question_closed "$role" "$dir"
+      rm -f "$dir/asking-$role"
       return 0
       ;;
   esac
-  question_closed "$role" "$dir"
+  rm -f "$dir/asking-$role"
   n=$(jq '.tool_input.questions | length' <<<"$in")
   for ((i = 0; i < n; i++)); do
     header=$(jq -r --argjson i "$i" '.tool_input.questions[$i].header // ""' <<<"$in")

@@ -1227,29 +1227,19 @@ P
     jq -n --arg cwd "${CWD:-$TMP/wt-9}" --arg h "$1" --arg q "$2" --argjson o "$3" --arg a "$4" --arg n "${5:-}" \
       '{cwd: $cwd, hook_event_name: "PostToolUse", tool_name: "AskUserQuestion", tool_input: {questions: [{header: $h, question: $q, options: $o}]}, tool_response: ({answers: {($q): $a}} + if $n == "" then {} else {annotations: {($q): {notes: $n}}} end)}'
   }
-  # the planner's own question: its mark names the tool call. What changed while it was open is
-  # the human's, what the planner changed before is not, whatever the agent's cwd.
+  # the planner's own question: its mark names the tool call, whatever the agent's cwd
   mkdir "$TMP/wt-9/src"
-  printf 'sneaky\n' >>"$TMP/wt-9/run.sh"
   hook PreToolUse "$TMP/wt-9/src" | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ "$(cat "$run/asking-plan")" = "toolu_1	$TMP/transcript.jsonl" ]
-  printf 'id,n\n' >"$TMP/wt-9/sample.csv"
   CWD=$TMP/wt-9/src dialog Format "Which format?" '[{"label":"CSV"},{"label":"JSON"}]' CSV "keep the header" | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ ! -e "$run/asking-plan" ]
-  [ ! -e "$st/tree-at-ask" ]
-  [ "$(cat "$st/tree-at-answer")" = "?? sample.csv" ]
   [ "$(cat "$TMP/recorded")" = "the planner asked: Which format? Answer: CSV Notes: keep the header" ]
   dialog Format "Which?" '[{"label":"CSV"}]' "(notes only)" "either works" | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ "$(tail -1 "$TMP/recorded")" = "the planner asked: Which? Answer: (no option) Notes: either works" ]
-  # Chat about this closes a dialog with no answer: the turn's end clears the mark, and what the
-  # human changed meanwhile is still theirs
+  # Chat about this closes a dialog with no answer: the turn's end clears the mark
   hook PreToolUse | cmd_dialog_hook plan toy-9 "$run" "$st"
-  printf 'more\n' >"$TMP/wt-9/notes.txt"
   hook Stop | cmd_dialog_hook plan toy-9 "$run" "$st"
   [ ! -e "$run/asking-plan" ]
-  [ "$(tail -1 "$st/tree-at-answer")" = "?? notes.txt" ]
-  git -C "$TMP/wt-9" checkout -q -- run.sh
-  rm -f "$TMP/wt-9/sample.csv" "$TMP/wt-9/notes.txt" "$st/tree-at-answer"
   # the hook as Claude Code runs it, through main, told the task's state. Its first argument is
   # its role, no repo, though a build/ in the dir it runs in is one in a checkout whose
   # .factory/env would stop a command.
@@ -2055,17 +2045,9 @@ IN
   [[ $output == *"file committed in Factory's run dir: .factory/run/allow-protected"* ]]
 }
 
-@test "an answer, a resume point or a tree an agent leaves in the run dir decides nothing" {
+@test "an answer or a resume point an agent leaves in the run dir decides nothing" {
   make_repo
   task_opened
-  # the planner changes code and lists the change as the human's, made while it asked
-  ask() {
-    printf 'echo planned\n' >"$TMP/wt-9/run.sh"
-    printf ' M run.sh\n' >"$TMP/wt-9/$RUN_DIR/tree-at-answer"
-  }
-  run planner_turn planner "plan it"
-  [ "$status" -eq 1 ]
-  [[ $output == *"the planner left changes"* ]]
   # a resume point there skips nothing
   printf 'built 1\n' >"$TMP/wt-9/$RUN_DIR/state"
   [ -z "$(resume_point)" ]
@@ -2298,16 +2280,12 @@ IN
   [[ $output == *"planner never wrote .factory/run/plan.md"* ]]
 }
 
-@test "write_plan: each planner turn is checked; what the human changes while its dialog is open is theirs, what it changed before asking is not" {
+@test "write_plan: each planner turn is checked; what it changed, it is asked to revert" {
   make_repo
   task_worktree
   fake_task
-  as_task toy-9 # whose state its dialogs' hook records what the human changed in
   WT=$TMP/wt-9
   TASK_DESC="" GATE=true MEMORY=""
-  hook() {
-    jq -n --arg e "$1" --arg cwd "$WT" '{cwd: $cwd, hook_event_name: $e, tool_name: "AskUserQuestion", tool_input: {questions: [{header: "Fmt", question: "Which?", options: [{label: "A"}]}]}, tool_response: {answers: {"Which?": "A"}}}'
-  }
   ask() {
     case $2 in
       "You changed files"*)
@@ -2315,13 +2293,7 @@ IN
         git -C "$WT" checkout -q -- run.sh
         ;;
       *)
-        printf 'sneaky\n' >>"$WT/run.sh" # the planner's change, before it asks
-        hook PreToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" "$TASK_STATE"
-        printf 'id,n\n' >"$WT/sample.csv" # the human drops a sample in while answering
-        hook PostToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" "$TASK_STATE"
-        hook PreToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" "$TASK_STATE" # a second question
-        printf 'x,y\n' >"$WT/other.csv"
-        hook PostToolUse | cmd_dialog_hook plan toy-9 "$WT/$RUN_DIR" "$TASK_STATE"
+        printf 'sneaky\n' >>"$WT/run.sh"
         printf 'the plan\n' >"$WT/$RUN_DIR/plan.md"
         ;;
     esac
@@ -2329,9 +2301,6 @@ IN
   run write_plan planner
   [ "$status" -eq 0 ]
   [[ $output == *"revert asked: You changed files"*" M run.sh"* ]]
-  [[ $output != *"sample.csv"* && $output != *"other.csv"* ]]
-  [ -e "$WT/sample.csv" ]
-  [ -e "$WT/other.csv" ]
   [ "$(cat "$WT/run.sh")" = "echo hi" ]
 }
 
@@ -3252,17 +3221,13 @@ JSON
   printf 'Enter to select · ↑/↓ to navigate\n' >"$TMP/screen"
   run asking t-review
   [ "$status" -eq 1 ]
-  # a session that keeps no transcript: its mark holds until the agent's prompt is back
+  # a session that keeps no transcript goes by its screen
   printf 'toolu_2\t%s\n' "$TMP/none.jsonl" >"$run/asking-plan"
-  : >"$TMP/screen" # the editor
-  asking t-plan
   printf '❯ Ask me which format\n──\n  dialog waiting · Showing detailed transcript · ctrl+o to toggle\n' >"$TMP/screen"
   asking t-plan # the transcript view, its sticky prompt above
-  [ -e "$run/asking-plan" ]
   printf '✻ Done\n────\n❯ \n────\n' >"$TMP/screen"
   run asking t-plan
   [ "$status" -eq 1 ]
-  [ ! -e "$run/asking-plan" ]
 }
 
 @test "await_answer: Factory's own approval dialog, left from a gate that has ended, goes with Esc" {
@@ -3708,8 +3673,6 @@ JSON
   : >"$tp" # the dead session's: the call, never its result
   printf 'toolu_1\t%s\n' "$tp" >"$run/asking-plan"
   printf 'toolu_2\t%s\n' "$tp" >"$run/asking-build"
-  mkdir -p "$TASK_STATE"
-  : >"$TASK_STATE/tree-at-ask"
   herdr() {
     case "$*" in
       "agent list"*) printf '{"result":{"agents":[]}}' ;;
@@ -3725,7 +3688,7 @@ JSON
   run start_or_adopt_agents "$TMP/repo"
   [ "$status" -eq 0 ]
   [ "$(paste -sd, "$TMP/started")" = toy-1-plan,toy-1-build,toy-1-review ]
-  for f in "$run/asking-plan" "$run/asking-build" "$TASK_STATE/tree-at-ask"; do
+  for f in "$run/asking-plan" "$run/asking-build"; do
     [ ! -e "$f" ]
   done
   # the task's live agents are adopted with their questions, which may still be open
@@ -3749,11 +3712,10 @@ JSON
   PLAN_AGENT=toy-1-plan BUILD_AGENT=toy-1-build REVIEW_AGENT=toy-1-review
   WS=w1 WT=$TMP/wt BUILD_PANE=p1 FACTORY_HOME=$TMP/factory
   local run="$TMP/wt/$RUN_DIR" tp="$TMP/transcript.jsonl"
-  mkdir -p "$run" "$TASK_STATE"
+  mkdir -p "$run"
   : >"$tp" # the sessions' transcripts: the calls, never their results
   printf 'toolu_1\t%s\n' "$tp" >"$run/asking-plan"
   printf 'toolu_2\t%s\n' "$tp" >"$run/asking-build"
-  : >"$TASK_STATE/tree-at-ask"
   herdr() { # the agents and panes the files hold; something runs in front in the panes $TMP/busy names
     printf '%s\n' "$*" >>"$TMP/herdr.log"
     case "$*" in
@@ -3792,7 +3754,6 @@ JSON
   [[ $output != *"colour"* ]]
   [ -e "$run/asking-plan" ]
   [ -e "$run/asking-build" ]
-  [ -e "$TASK_STATE/tree-at-ask" ]
   [ -s "$run/env.sh" ]
   [ "$(grep -cE '^pane (close|split)' "$TMP/herdr.log")" -eq 0 ] # no pane closed or split
   # the planner quit: it starts again purple, with its dialog hooks; the question its session
@@ -3806,11 +3767,9 @@ JSON
   [[ $output == *"started toy-1-plan claude p2 --model $FACTORY_PLAN_MODEL --effort $FACTORY_PLAN_EFFORT"*"--settings $run/hooks-plan.json --name plan"*"colour toy-1-plan purple"* ]]
   [ -s "$run/hooks-plan.json" ]
   [ ! -e "$run/asking-plan" ]
-  [ ! -e "$TASK_STATE/tree-at-ask" ]
   [ -e "$run/asking-build" ]
   # the builder quit, and an editor runs in its pane: the run stops and says what to do
   printf 'toolu_3\t%s\n' "$tp" >"$run/asking-plan"
-  : >"$TASK_STATE/tree-at-ask"
   agents toy-1-plan toy-1-review
   printf '%s' '{"result":{"panes":[{"pane_id":"p1","agent":null,"label":"build"},{"pane_id":"p2","agent":"claude","label":"plan"},
     {"pane_id":"p3","agent":"codex","label":"review"}]}}' >"$TMP/panes"
@@ -3832,7 +3791,6 @@ JSON
   [[ $output == *"started toy-1-build claude p1 --model $FACTORY_BUILD_MODEL"*"colour toy-1-build cyan"* ]]
   [ ! -e "$run/asking-build" ]
   [ -e "$run/asking-plan" ]
-  [ -e "$TASK_STATE/tree-at-ask" ]
 }
 
 @test "launched_with: what the agent's pane runs, told by its arguments" {

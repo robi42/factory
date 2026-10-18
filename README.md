@@ -330,8 +330,7 @@ a rerun resumes (`--fresh` clears it); `waiting`, what the run waits for at an a
 while it waits, and `approved`, `reject.md` or `aborted`, an answer from a dialog or `fy
 approve`, `reject` or `abort`, until the run takes it; `allow-protected`, the
 protected paths you allowed, a path a line, as the plan named them when you approved it;
-the planner's `tree-at-ask` and `tree-at-answer`, what you changed while its question
-dialog was open; `decisions.md`, your answers;
+`decisions.md`, your answers;
 `base`, the commit the branch is
 measured from and the base branch it was read from, which a rerun keeps; `gated` and
 `guarded`, the commits the gate and then the guardrails last passed on from that base, and

@@ -94,6 +94,10 @@ that waits for your approval takes your answer where its own Factory looks for i
 - Factory needs Bash 4.4 or newer, as the README now says, where it said Bash 4: an older
   Bash takes an empty list for an unset variable. On one, Factory stops at its start and
   says which Bash it needs.
+- A file you add or change in the worktree while one of the planner's questions is open
+  counts as the planner's, as its questions now wait inside its turn: the planner is asked
+  to revert the change, and the run stops if it stays. What you change while an approval
+  waits, or before a rerun, still does not.
 
 ### Removed
 - **Breaking:** `factory answer` (`!fy answer` in a pane) and the questions relay
