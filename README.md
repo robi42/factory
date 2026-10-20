@@ -574,6 +574,12 @@ desktop's notification service so an approval request reaches you on another wor
 `terminal` asks the terminal you attach from to show one, and `off` shows none. Set it in
 `~/.config/herdr/config.toml` and apply with `herdr server reload-config`.
 
+**Pane names on Omarchy.** Factory names its panes build, plan and review, and Herdr
+draws a pane's name on its frame. Omarchy's stock Herdr config draws tmux's dividers
+instead, with no outer frame, so only the review pane, under the planner's, shows its
+name. Herdr's defaults frame every pane: set `pane_outer_borders = true` and
+`pane_gaps = true` under `[ui]` in the same file, and apply them the same way.
+
 **Herdr agent integrations.** `herdr integration install claude` and `codex` switch
 Herdr from screen heuristics to hook-based agent state, which makes idle and blocked
 detection more reliable. Factory handles the known startup dialogs either way, and hands
