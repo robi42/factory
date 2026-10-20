@@ -3463,7 +3463,7 @@ JSON
   [ ! -s "$TMP/keys" ]
 }
 
-@test "settle_dialogs: Codex resuming a session another process still holds retries with r until it opens" {
+@test "settle_dialogs: Codex resuming a session another Codex still holds retries with r until it opens" {
   herdr() { # the lock goes once r was pressed twice
     printf '%s\n' "$*" >>"$TMP/herdr.log"
     case "$*" in
@@ -3481,7 +3481,30 @@ JSON
   run settle_dialogs t-review
   [ "$status" -eq 0 ]
   [ "$(grep -c '^agent send-keys t-review r$' "$TMP/herdr.log")" -eq 2 ]
-  [[ $output == *"t-review: its session is still held by the process it replaces; retrying (attempt 1)"* ]]
+  [ "$(grep -c '^agent send-keys t-review f$' "$TMP/herdr.log")" -eq 0 ]
+  [[ $output == *"t-review: its session is still held by another Codex; retrying (attempt 1)"* ]]
+}
+
+@test "settle_dialogs: a session Codex's background server holds on to goes on in a fork of it" {
+  herdr() { # as on Blik's bk-995: the server keeps the lock for 30 minutes, until f forks
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "agent read"*)
+        if grep -qx 'agent send-keys t-review f' "$TMP/herdr.log"; then
+          printf '• Thread forked from 01a159d9-3f84-7172-96ad-6c8179453ccb\n• Fork created. You can continue here.\n› Ask Codex to do anything\n'
+        else
+          printf '  🔒  This conversation is open in another app\n      Close it there and press R to continue here.\n   r retry   f fork   esc/^c/q exit   ^t transcript\n'
+        fi
+        ;;
+      *) printf '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+    esac
+  }
+  sleep() { :; }
+  run settle_dialogs t-review
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^agent send-keys t-review r$' "$TMP/herdr.log")" -eq 2 ]
+  [ "$(grep -c '^agent send-keys t-review f$' "$TMP/herdr.log")" -eq 1 ]
+  [[ $output == *"t-review: its session is still held by another Codex; going on in a fork of it, its history kept (attempt 3)"* ]]
 }
 
 @test "settle_dialogs: Codex's folder trust dialog gets Enter, as the old one did" {

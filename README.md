@@ -88,7 +88,9 @@ the task's base, whatever branch your checkout is on by then; `--fresh` takes th
 checkout's anew. After a restart of Herdr's server (a reboot, an update), Herdr brings the
 agents back with their sessions but without the arguments Factory started them with; the
 rerun starts each such agent again with them, its session resumed, so it keeps its
-effort, model, permissions and dialog hook.
+effort, model, permissions and dialog hook. Where Codex's background server still holds
+the reviewer's session, as it does for 30 minutes after the Codex in it quits, the
+reviewer goes on in a fork of the session, which keeps its history.
 
 Known startup dialogs (trust prompts, Codex's hook review and transcript overlay) are
 cleared from the screen automatically, and a pane whose shell swallowed the startup command

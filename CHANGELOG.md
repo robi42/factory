@@ -171,7 +171,9 @@ stops the command. `factory clean --force` drops one task now, named by its bead
   Herdr 0.8 reports the timeout under a new code, and the run stopped instead.
 - A rerun after a restart of Herdr's server (a reboot, an update) adopted the agents Herdr
   brought back with their resume alone, without their effort, model and permissions; it
-  starts them again with Factory's arguments now, their sessions resumed.
+  starts them again with Factory's arguments now, their sessions resumed. The reviewer's
+  session, which Codex's background server holds for 30 minutes after the Codex Herdr
+  restored quits, goes on in a fork of it, its history kept.
 - `factory tasks` showed bd's notice that its `--json` output changes in bd 2.0. Factory
   now reads bd's JSON in the envelope bd 2.0 makes its default, which ends the notice and
   keeps the task list, `factory next` and the task lookups working on bd 2.0.

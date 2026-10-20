@@ -273,9 +273,17 @@ settle_dialogs() {
       sleep 0.5
       keys "$name" enter
     elif grep -qF 'This conversation is open in another app' <<<"$txt"; then
-      # Codex resuming a session the process it replaces, just quit, still holds for a moment
-      log "$name: its session is still held by the process it replaces; retrying (attempt $i)"
-      keys "$name" r
+      # Codex resuming a session another Codex still holds. A process just quit lets go of it
+      # in a moment, but Codex's background server, which a Codex Herdr restored runs in,
+      # holds it for 30 minutes after that one quit. So a retry or two, then the dialog's
+      # fork: a new session with the same history, run with this Codex's arguments.
+      if ((i < 3)); then
+        log "$name: its session is still held by another Codex; retrying (attempt $i)"
+        keys "$name" r
+      else
+        log "$name: its session is still held by another Codex; going on in a fork of it, its history kept (attempt $i)"
+        keys "$name" f
+      fi
     elif grep -qE 'Do you trust the contents of this directory|Trust this folder\?' <<<"$txt"; then
       log "$name: accepting Codex trust dialog (attempt $i)"
       keys "$name" enter
