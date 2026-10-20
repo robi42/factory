@@ -697,8 +697,14 @@ bd_field() {
   bd_one "$1" show "$2" 2>/dev/null | jq -r "$3"
 }
 
-# need_beads repo: the commands that touch tasks want a bd init first
-need_beads() { [[ -d $1/.beads ]] || die "no beads in $1; run: factory init $1"; }
+# need_beads repo: the commands that touch tasks want a bd init first, and in a fresh clone of a
+# repo that has one, its tasks: git brings .beads with bd's metadata.json but not the database,
+# which bd where then names no path for, and bd bootstrap takes from origin
+need_beads() {
+  [[ -d $1/.beads ]] || die "no beads in $1; run: factory init $1"
+  [[ ! -e $1/.beads/metadata.json ]] || bd_json "$1" where 2>/dev/null | jq -e '.database_path' >/dev/null \
+    || die "no task database in $1 yet, as in a fresh clone; to take its tasks from origin, run: bd -C $1 bootstrap --yes"
+}
 
 # repo_top dir -> the top of the checkout the dir is in, the repo a command names
 repo_top() { git -C "$1" rev-parse --show-toplevel 2>/dev/null || die "$1 is no git checkout"; }

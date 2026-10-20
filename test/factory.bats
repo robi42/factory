@@ -2765,6 +2765,29 @@ JSON
   [[ $output == *"no beads in"* ]]
 }
 
+@test "need_beads: a fresh clone, with bd's metadata but no database yet, is told to bootstrap it" {
+  mkdir -p "$TMP/app/.beads"
+  bd() {
+    [[ $* == "-C $TMP/app where --json" ]] || return 1
+    printf '%s\n' "$BD_WHERE"
+  }
+  BD_WHERE=""
+  run need_beads "$TMP/app" # no metadata.json: bd is not asked
+  [ "$status" -eq 0 ]
+  printf '{"backend": "dolt"}\n' >"$TMP/app/.beads/metadata.json"
+  BD_WHERE='{"path": "'"$TMP"'/app/.beads", "schema_version": 1}'
+  run need_beads "$TMP/app"
+  [ "$status" -eq 1 ]
+  [[ $output == *"no task database in $TMP/app yet"* ]]
+  [[ $output == *"run: bd -C $TMP/app bootstrap --yes"* ]]
+  BD_WHERE='{"database_path": "'"$TMP"'/app/.beads/embeddeddolt", "path": "'"$TMP"'/app/.beads", "schema_version": 1}'
+  run need_beads "$TMP/app"
+  [ "$status" -eq 0 ]
+  BD_WHERE='{"data": {"database_path": "'"$TMP"'/app/.beads/embeddeddolt"}, "schema_version": 1}' # bd 2.0's envelope
+  run need_beads "$TMP/app"
+  [ "$status" -eq 0 ]
+}
+
 @test "memory_block: nothing without memories, else the notes block for the prompts" {
   bd() {
     printf '%s\n' "$BD_MEM"

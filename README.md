@@ -139,6 +139,7 @@ Status: early. Built and used by one person on Arch Linux; expect rough edges el
 ```sh
 # once per repo
 fy init    ~/src/app                         # lean bd init, short prefix, gate, AGENTS.md stub
+bd -C ~/src/app bootstrap --yes              # ...or, in a fresh clone of one, its tasks from origin
 
 # tasks
 fy add     ~/src/app "Add CSV export" "..."  # file a task

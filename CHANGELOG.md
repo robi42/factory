@@ -260,6 +260,9 @@ stops the command. `factory clean --force` drops one task now, named by its bead
   origin holds. Newer ones only your `main` holds, as a fix of yours the builder merged or
   an agent's commits, count as the base's without being recorded, and stop the rebase for
   a pull request.
+- In a fresh clone the task commands stopped on bd's "no beads database found": git brings
+  `.beads` but not the tasks. Factory now says to take them from origin with
+  `bd -C <repo> bootstrap --yes`.
 
 ## [0.1.11] - 2026-10-05
 
