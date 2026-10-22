@@ -2571,6 +2571,17 @@ open_workspace() {
   WT=$(jq -r '.result.worktree.path // empty' <<<"$out")
   BUILD_PANE=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
   [[ -n $WS && -n $WT && -n $BUILD_PANE ]] || die "unexpected worktree response: $out"
+  name_tab "$BUILD_PANE" "$TASK_ID"
+}
+
+# name_tab pane label: the tab of the pane, where the agents' panes go, takes the label while it
+# bears the number Herdr gave it, as a new one does; a name you gave it stays. A failure is
+# told, not fatal: the tab only shows which task is there.
+name_tab() {
+  local tab
+  tab=$(herdr pane get "$1" 2>/dev/null | jq -r '.result.pane.tab_id // empty') && [[ -n $tab ]] || return 0
+  herdr tab get "$tab" 2>/dev/null | jq -e '.result.tab | (.label // "") as $l | $l == "" or $l == (.number | tostring)' >/dev/null || return 0
+  herdr tab rename "$tab" "$2" >/dev/null 2>&1 || warn "could not name the task's tab $2"
 }
 
 # ---------------------------------------------------------------- events ----

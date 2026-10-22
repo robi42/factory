@@ -28,7 +28,8 @@ The CLI is `factory`; `fy` is the alias used below.
 
 ![A Herdr workspace during the dual code review, taken with an earlier version: the builder (Opus 5, left, cyan prompt line) has finished and shows its diff; the planner (Fable 5.1, top right) has checked the branch against its plan, Factory's prompt with the verdict-line contract visible above its answer; the Codex reviewer (GPT 6 Astra, bottom right) has written its review](assets/screenshot.png)
 
-Every task gets its own Git worktree and Herdr workspace, so you can watch or step in.
+Every task gets its own Git worktree and Herdr workspace, so you can watch or step in; the
+tab with its agents bears the task's bead id, unless you named it.
 The agents are your normal `claude` and `codex` sessions, so your skills, MCP servers,
 hooks, `CLAUDE.md` and `AGENTS.md` apply unchanged; a run adds no instruction files.
 Whenever an agent stops for a question or an approval you get a Herdr toast.

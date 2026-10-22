@@ -3278,6 +3278,35 @@ JSON
   [[ $output == *"unexpected worktree response"* ]]
 }
 
+@test "open_workspace: the agents' tab is named after the task while it bears Herdr's number; a name you gave it stays" {
+  fake_task
+  herdr() { # the tab's label is in $TMP/label; a rename fails where $TMP/no-rename is
+    printf '%s\n' "$*" >>"$TMP/herdr.log"
+    case "$*" in
+      "worktree create"*) printf '{"result":{"workspace":{"workspace_id":"w9"},"worktree":{"path":"%s/wt"},"root_pane":{"pane_id":"w9:p1"}}}' "$TMP" ;;
+      "pane get w9:p1") printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t2"}}}' ;;
+      "tab get w9:t2") printf '{"result":{"tab":{"tab_id":"w9:t2","number":2,"label":"%s"}}}' "$(cat "$TMP/label")" ;;
+      "tab rename"*) [[ ! -e $TMP/no-rename ]] ;;
+    esac
+  }
+  printf 2 >"$TMP/label"
+  run open_workspace "$TMP" factory/toy-1 "toy-1 t"
+  [ "$status" -eq 0 ]
+  grep -qx 'tab rename w9:t2 toy-1' "$TMP/herdr.log"
+  # your name for it stays, on a rerun too
+  : >"$TMP/herdr.log"
+  printf 'mine' >"$TMP/label"
+  run open_workspace "$TMP" factory/toy-1 "toy-1 t"
+  [ "$status" -eq 0 ]
+  run -1 grep -q '^tab rename' "$TMP/herdr.log"
+  # a rename that fails is told, and the run goes on
+  printf 2 >"$TMP/label"
+  touch "$TMP/no-rename"
+  run open_workspace "$TMP" factory/toy-1 "toy-1 t"
+  [ "$status" -eq 0 ]
+  [[ $output == *"could not name the task's tab toy-1"* ]]
+}
+
 @test "set_color: /color is typed, and its Enter goes in once the prompt shows it; then the screen says the colour is set" {
   herdr() { # the screen: the shell's until the box is up, then an empty prompt box, the typed /color in it unless unseen, after the Enter the answer unless stuck
     printf '%s\n' "$*" >>"$TMP/herdr.log"

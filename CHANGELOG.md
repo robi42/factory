@@ -50,6 +50,8 @@ stops the command. `factory clean --force` drops one task now, named by its bead
 - `extras/factory-user/`: a recipe for running Factory, Herdr and the agents as a user of
   their own, which holds only its clones, a GitHub token for them and the agents' logins,
   so that an `--auto` run reaches nothing else of yours.
+- The Herdr tab with a task's agents is named after the task's bead id, as `bk-0b1`,
+  where Herdr numbered it; a name you gave it stays.
 
 ### Changed
 - The planner asks its questions in its own question dialog, with options where they
