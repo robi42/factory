@@ -10,3 +10,6 @@ Things that are useful next to Factory but not part of it.
 - `factory-user/`: a recipe for running Factory, Herdr and the agents as a user of their
   own, which holds only its clones, a GitHub token for them and the agents' logins, for
   `--auto` runs that nobody watches.
+- `workspace-tabs/`: a script for `FACTORY_WORKSPACE_SCRIPT` that opens tabs beside a
+  task's agents: the plan and the reviews in glow, the changes not committed yet in hunk,
+  the history in tig, the code in nvim, and a shell to try the build in.

@@ -4,7 +4,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 # The scripts the checks below read; the Bats files come by glob.
-scripts := "factory extras/cargo-sccache/sccache"
+scripts := "factory extras/cargo-sccache/sccache extras/workspace-tabs/tabs"
 
 _default:
     @just help

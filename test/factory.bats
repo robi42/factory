@@ -109,6 +109,9 @@ fake_task() {
   TASK_TITLE=t
 }
 
+# fake_state: TASK_STATE, Factory's state for the fake task, in the test's own dir
+fake_state() { TASK_STATE=$TMP/state; }
+
 # plan_ready: a plan waiting for the human, as plan_phase hands it to human_gate; a note's
 # plan round only says that it ran
 plan_ready() {
@@ -2365,6 +2368,24 @@ IN
   [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = "build_phase resume,finish_task" ]
 }
 
+@test "run_task: the workspace script has its turn once the agents are up, before the planning" {
+  make_repo
+  setup_task() { TASK_ID=toy-1 BRANCH=factory/toy-1; }
+  open_task_workspace() {
+    WT=$TMP/wt
+    mkdir -p "$WT/$RUN_DIR"
+  }
+  start_or_adopt_agents() { printf 'agents\n'; }
+  workspace_script() { printf 'workspace_script\n'; }
+  plan_phase() { printf 'plan_phase\n'; }
+  build_phase() { :; }
+  finish_task() { :; }
+  FACTORY_FRESH=0
+  run run_task "$REPO" toy-1
+  [ "$status" -eq 0 ]
+  [ "$(grep -v '^\S*\[factory' <<<"$output" | paste -sd,)" = agents,workspace_script,plan_phase ]
+}
+
 @test "plan_phase: a revised plan goes back to both reviewers, up to FACTORY_PLAN_ROUNDS" {
   fake_task
   WT=$TMP
@@ -3280,6 +3301,7 @@ JSON
 
 @test "open_workspace: the agents' tab is named after the task while it bears Herdr's number; a name you gave it stays" {
   fake_task
+  fake_state
   herdr() { # the tab's label is in $TMP/label; a rename fails where $TMP/no-rename is
     printf '%s\n' "$*" >>"$TMP/herdr.log"
     case "$*" in
@@ -3305,6 +3327,68 @@ JSON
   run open_workspace "$TMP" factory/toy-1 "toy-1 t"
   [ "$status" -eq 0 ]
   [[ $output == *"could not name the task's tab toy-1"* ]]
+}
+
+@test "open_workspace: a workspace the run makes is recorded for the workspace script, one it finds open not" {
+  fake_task
+  fake_state
+  herdr() { # the workspaces open are the ids in $TMP/open, w9 among them once made
+    case "$*" in
+      "workspace list") jq -Rn '{result: {workspaces: [inputs | {workspace_id: .}]}}' "$TMP/open" ;;
+      "worktree create"*)
+        grep -qx w9 "$TMP/open" || printf 'w9\n' >>"$TMP/open"
+        printf '{"result":{"workspace":{"workspace_id":"w9"},"worktree":{"path":"%s/wt"},"root_pane":{"pane_id":"w9:p7"}}}' "$TMP"
+        ;;
+    esac
+  }
+  WS=""
+  printf 'w1\n' >"$TMP/open"
+  open_workspace "$TMP" factory/toy-1 "toy-1 t"
+  [ "$WS" = w9 ]
+  [ "$(recorded workspace-script)" = w9 ]
+  rm "$TASK_STATE/workspace-script"
+  open_workspace "$TMP" factory/toy-1 "toy-1 t"
+  [ -z "$(recorded workspace-script)" ]
+}
+
+@test "workspace_script: once in a workspace recorded for it, your command line runs in the worktree, given the workspace, the worktree and the task; a failure is told; unset, nothing runs" {
+  fake_task
+  fake_state
+  WS=w9 WT=$TMP/wt
+  mkdir -p "$WT" "$TASK_STATE"
+  cat >"$TMP/tabs" <<'EOF'
+#!/usr/bin/env bash
+printf '%s|' "$PWD" "$@" >"$OUT"
+exit "${RC:-0}"
+EOF
+  chmod +x "$TMP/tabs"
+  # none recorded, or another workspace, one the human has closed since: nothing runs
+  FACTORY_WORKSPACE_SCRIPT=$TMP/tabs OUT=$TMP/args run workspace_script
+  [ "$status" -eq 0 ]
+  printf 'w5\n' >"$TASK_STATE/workspace-script"
+  FACTORY_WORKSPACE_SCRIPT=$TMP/tabs OUT=$TMP/args run workspace_script
+  [ "$status" -eq 0 ]
+  [ ! -e "$TMP/args" ]
+  printf 'w9\n' >"$TASK_STATE/workspace-script"
+  FACTORY_WORKSPACE_SCRIPT="$TMP/tabs --mine" OUT=$TMP/args run workspace_script
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMP/args")" = "$TMP/wt|--mine|w9|$TMP/wt|toy-1|" ]
+  [[ $output == *"workspace script: $TMP/tabs --mine"* ]]
+  [ ! -e "$TASK_STATE/workspace-script" ] # once
+  # a failure is told, and the run goes on without it
+  printf 'w9\n' >"$TASK_STATE/workspace-script"
+  FACTORY_WORKSPACE_SCRIPT=$TMP/tabs OUT=$TMP/args RC=3 run workspace_script
+  [ "$status" -eq 0 ]
+  [[ $output == *"the workspace script failed; the run goes on"* ]]
+  [ ! -e "$TASK_STATE/workspace-script" ]
+  # none set: nothing runs, and none is due any more
+  rm "$TMP/args"
+  printf 'w9\n' >"$TASK_STATE/workspace-script"
+  FACTORY_WORKSPACE_SCRIPT="" OUT=$TMP/args run workspace_script
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$TMP/args" ]
+  [ ! -e "$TASK_STATE/workspace-script" ]
 }
 
 @test "set_color: /color is typed, and its Enter goes in once the prompt shows it; then the screen says the colour is set" {

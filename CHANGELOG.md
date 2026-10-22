@@ -52,6 +52,10 @@ stops the command. `factory clean --force` drops one task now, named by its bead
   so that an `--auto` run reaches nothing else of yours.
 - The Herdr tab with a task's agents is named after the task's bead id, as `bk-0b1`,
   where Herdr numbered it; a name you gave it stays.
+- `FACTORY_WORKSPACE_SCRIPT`: a command of yours that Factory runs once in each workspace
+  it makes for a task, when the agents are up, to open tabs of your own beside theirs.
+  `extras/workspace-tabs/` opens glow on the plan and the reviews, hunk, tig, nvim and a
+  shell to try the build in.
 
 ### Changed
 - The planner asks its questions in its own question dialog, with options where they

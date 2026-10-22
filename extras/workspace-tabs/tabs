@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# An example FACTORY_WORKSPACE_SCRIPT: the tabs I keep beside a task's agents, to follow its
+# run and check its work. The tools are only my choice; copy the script and make it yours.
+#
+#   glow  the plan and the reviews: plan.md on the left, a review in each pane on the right
+#   hunk  the changes not committed yet, redrawn as the builder edits files
+#   tig   the branch's history, and what is not committed yet
+#   nvim  the code
+#   qa    a shell to build and try the result in before you approve the build
+#
+# Factory runs it once in each workspace it makes for a task, when the agents are up there,
+# in the worktree, with the workspace's id, the worktree and the task's id as its arguments.
+# Each tab opens behind the agents' tab, without taking the focus. A tool's command is typed
+# into its tab's shell, so a tool you quit leaves the shell to start it again, and one that
+# is not installed leaves "command not found" there while the other tabs open anyway.
+#
+#   export FACTORY_WORKSPACE_SCRIPT=~/Projects/factory/extras/workspace-tabs/tabs
+set -euo pipefail
+ws=$1 wt=$2 # $3, the task's id, goes unused here
+
+# tab label dir [command]: a new tab named label, its shell in dir, running the command if
+# one is given -> the tab's pane
+tab() {
+  local pane
+  pane=$(herdr tab create --workspace "$ws" --cwd "$2" --label "$1" --no-focus | jq -r '.result.root_pane.pane_id')
+  [[ -z ${3:-} ]] || herdr pane run "$pane" "$3" >/dev/null
+  printf '%s\n' "$pane"
+}
+
+# split pane direction dir command: a new pane right of or below the pane, its shell in dir,
+# running the command -> the new pane
+split() {
+  local pane
+  pane=$(herdr pane split --pane "$1" --direction "$2" --cwd "$3" --no-focus | jq -r '.result.pane.pane_id')
+  herdr pane run "$pane" "$4" >/dev/null
+  printf '%s\n' "$pane"
+}
+
+# glow lists the Markdown files there are when it starts, none yet in a new task's run dir:
+# r in its file list lists the plan and the reviews once they are written, and Esc goes back
+# there from a file
+run=$wt/.factory/run
+plan=$(tab glow "$run" glow)
+reviews=$(split "$plan" right "$run" glow)
+split "$reviews" down "$run" glow >/dev/null
+tab hunk "$wt" 'hunk diff --watch' >/dev/null
+tab tig "$wt" tig >/dev/null
+tab nvim "$wt" 'nvim .' >/dev/null
+tab qa "$wt" >/dev/null

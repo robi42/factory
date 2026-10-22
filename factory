@@ -32,6 +32,7 @@ ENV_KNOBS=$(compgen -A variable FACTORY_)
 : "${FACTORY_COPILOT_ROUNDS:=3}"
 : "${FACTORY_BD_PUSH:=1}"
 : "${FACTORY_FRESH:=0}"
+: "${FACTORY_WORKSPACE_SCRIPT:=}"
 COPILOT_BOT='copilot-pull-request-reviewer[bot]'
 COPILOT_WAIT_S=900 # for each Copilot review
 # an hour: a turn stalled by then fails, one still working or waiting for your input toasts you
@@ -105,6 +106,7 @@ usage() {
   row "FACTORY_COPILOT_ROUNDS=$FACTORY_COPILOT_ROUNDS" 'Copilot review rounds before giving up'
   row "FACTORY_BD_PUSH=$FACTORY_BD_PUSH" '1: push the Beads database to its sync remote after tasks, adds, PRs and cleans'
   row "FACTORY_FRESH=$FACTORY_FRESH" '1: start the task over instead of resuming (--fresh)'
+  row "FACTORY_WORKSPACE_SCRIPT=$FACTORY_WORKSPACE_SCRIPT" 'run once in each workspace Factory makes for a task: tabs of your own, say'
 }
 
 # ------------------------------------------------------------- preflight ----
@@ -2559,9 +2561,11 @@ worktree_of() {
 # short on purpose; the branch carries the title slug, the directory does not.
 worktree_path() { printf '%s/%s/factory-%s' "$(worktrees_dir)" "$(basename "$1")" "$2"; }
 
-# open_workspace repo branch label -> WS WT BUILD_PANE
+# open_workspace repo branch label -> WS WT BUILD_PANE. A workspace the run makes is recorded
+# for the workspace script (workspace_script).
 open_workspace() {
-  local out
+  local out before
+  before=$(h workspace list | jq -r '.result.workspaces[]?.workspace_id')
   # Herdr checks out an existing branch too; open is the fallback for a checkout that already exists.
   if ! out=$(herdr worktree create --cwd "$1" --branch "$2" --path "$(worktree_path "$1" "$TASK_ID")" --label "$3" --no-focus 2>&1); then
     log "worktree create failed ($(herr_msg "$out" | tail -n1)); trying to open it"
@@ -2571,6 +2575,10 @@ open_workspace() {
   WT=$(jq -r '.result.worktree.path // empty' <<<"$out")
   BUILD_PANE=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
   [[ -n $WS && -n $WT && -n $BUILD_PANE ]] || die "unexpected worktree response: $out"
+  if ! grep -qxF "$WS" <<<"$before"; then
+    mkdir -p "$TASK_STATE"
+    printf '%s\n' "$WS" >"$TASK_STATE/workspace-script"
+  fi
   name_tab "$BUILD_PANE" "$TASK_ID"
 }
 
@@ -2582,6 +2590,22 @@ name_tab() {
   tab=$(herdr pane get "$1" 2>/dev/null | jq -r '.result.pane.tab_id // empty') && [[ -n $tab ]] || return 0
   herdr tab get "$tab" 2>/dev/null | jq -e '.result.tab | (.label // "") as $l | $l == "" or $l == (.number | tostring)' >/dev/null || return 0
   herdr tab rename "$tab" "$2" >/dev/null 2>&1 || warn "could not name the task's tab $2"
+}
+
+# workspace_script: your FACTORY_WORKSPACE_SCRIPT, a command line as the gate's, once in each
+# workspace Factory makes for the task (open_workspace records it), when the agents are up
+# there; a run that stops before then leaves it to the next. It runs in the worktree, with the
+# workspace's id, the worktree and the task's id as its arguments, to open tabs of your own
+# (extras/workspace-tabs). It gets no input; a failure is told, not fatal.
+workspace_script() {
+  [[ $(recorded workspace-script) == "$WS" ]] || return 0
+  if [[ -n $FACTORY_WORKSPACE_SCRIPT ]]; then
+    local cmd="$FACTORY_WORKSPACE_SCRIPT \"\$@\""
+    log "workspace script: $FACTORY_WORKSPACE_SCRIPT"
+    (cd "$WT" && bash -c "$cmd" workspace-script "$WS" "$WT" "$TASK_ID") </dev/null \
+      || warn "the workspace script failed; the run goes on"
+  fi
+  rm -f "$TASK_STATE/workspace-script"
 }
 
 # ---------------------------------------------------------------- events ----
@@ -3179,6 +3203,7 @@ run_task() {
   open_task_workspace "$repo"
   STEP=agents
   start_or_adopt_agents "$repo"
+  workspace_script
   local point
   point=$(resume_point)
   [[ -z $point ]] || log "resuming after: $point (use --fresh to start over)"

@@ -485,6 +485,7 @@ holds only the credentials a run needs, as `extras/factory-user/` sets up.
 | `FACTORY_COPILOT_ROUNDS` | `3` Copilot review rounds |
 | `FACTORY_BD_PUSH` | `1`: push the Beads database to its sync remote after tasks, adds, PRs and cleans |
 | `FACTORY_FRESH` | `0`; `1` starts over instead of resuming (`--fresh`) |
+| `FACTORY_WORKSPACE_SCRIPT` | none; a command run once in each workspace Factory makes for a task (see Optional extras) |
 
 `fy help` prints the current values, and `fy help <repo>` those with the repo's
 `.factory/env` applied.
@@ -602,6 +603,21 @@ and an id bd does not know, as the title of a new task. Untrack
 your PATH, the plan is rendered in the terminal instead of
 printed as-is. The look is glow's own: its config (`glow config`) picks the style, a
 built-in one or a JSON of your own, for example a Nord one to match your terminal theme.
+
+**Tabs of your own beside the agents.** `FACTORY_WORKSPACE_SCRIPT` names a command, set in
+your environment or a repo's `.factory/env`, that Factory runs once in each workspace it
+makes for a task, when the agents are up there: in the worktree, with the workspace's id,
+the worktree and the task's id as its arguments. A failure is told, and the run goes on.
+`extras/workspace-tabs/tabs` opens mine, each behind the agents' tab: the plan and the
+reviews in glow (`r` in its file list lists files written since), the changes not
+committed yet in hunk, the history in tig, the code in nvim, and a shell to try the build
+in before approving it.
+
+```sh
+export FACTORY_WORKSPACE_SCRIPT=~/Projects/factory/extras/workspace-tabs/tabs
+```
+
+![The glow tab of that Rust task's workspace: the plan on the left; on the right the builder's review of the plan above Codex's, which ends in its verdict](assets/screenshot-glow.png)
 
 ## Why so lean
 
