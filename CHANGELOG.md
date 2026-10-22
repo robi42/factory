@@ -96,6 +96,9 @@ stops the command. `factory clean --force` drops one task now, named by its bead
 - Factory keeps your answers, the waiver and where a rerun resumes in its own state for
   the task, under `${XDG_STATE_HOME:-~/.local/state}/factory/tasks/`, not in the run dir,
   which the agents write.
+- An agent that pasted its plan or review into its reply could put it in a code block,
+  which Claude Code shows unformatted, headings and lists as raw Markdown. The prompts ask
+  for it as Markdown, not in a code block.
 - A plan gets three review rounds by default, up from two (`FACTORY_PLAN_ROUNDS`). After
   two, a plan still objected to came to you with its last revision unreviewed, and a note
   was how to get another round, as on two of three tasks in Blik.
