@@ -2292,7 +2292,7 @@ IN
   [ "$(cat "$run/plan.md")" = "the plan" ]
   [ -e "$run/plan-review-1.md" ]
   # past the last round: its revision goes on unreviewed, to the human
-  run plan_phase "$TMP" 3
+  FACTORY_PLAN_ROUNDS=2 run plan_phase "$TMP" 3
   [ "$status" -eq 0 ]
   [[ $output == *"the plan is already written"*"the revision after round 2 goes on unreviewed"*"to the human, at reviewed" ]]
   [[ $output != *"plan review round"* ]]
@@ -2396,7 +2396,7 @@ IN
   # still objected to in the last round: that revision too, then on to the human
   : >"$TMP/n"
   printf '%s\n' REVISE APPROVE APPROVE REVISE >"$TMP/verdicts"
-  run plan_phase "$TMP"
+  FACTORY_PLAN_ROUNDS=2 run plan_phase "$TMP"
   [ "$(grep -c '^revise:' <<<"$output")" -eq 2 ]
   [[ $output == *"revise: Reviewers left notes on your plan in .factory/run/plan-review-2.md"*"the revision after round 2 goes on unreviewed"*"to the human" ]]
   [[ $output != *"round 3"* ]]

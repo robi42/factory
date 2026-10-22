@@ -473,7 +473,7 @@ holds only the credentials a run needs, as `extras/factory-user/` sets up.
 | `FACTORY_PLAN_EFFORT` | `max` (`low`, `medium`, `high`, `xhigh`, `max`) |
 | `FACTORY_BUILD_EFFORT` | `xhigh` (the same levels) |
 | `FACTORY_REVIEW_EFFORT` | `xhigh` (the same levels, and `ultra`) |
-| `FACTORY_PLAN_ROUNDS` | `2` plan review rounds (always at least one); a note of yours gets one more |
+| `FACTORY_PLAN_ROUNDS` | `3` plan review rounds (always at least one); a note of yours gets one more |
 | `FACTORY_ROUNDS` | `3` build / review rounds; a note of yours at the last gets one more |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
