@@ -274,6 +274,9 @@ stops the command. `factory clean --force` drops one task now, named by its bead
 - In a fresh clone the task commands stopped on bd's "no beads database found": git brings
   `.beads` but not the tasks. Factory now says to take them from origin with
   `bd -C <repo> bootstrap --yes`.
+- A rerun that found none of the task's agents alive took the root pane of the tab in front
+  as the builder's, which can be a tab of yours: it started the agents there, or stopped
+  because your tool ran in it. It takes the pane Factory labelled build now.
 
 ## [0.1.11] - 2026-10-05
 

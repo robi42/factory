@@ -2562,7 +2562,9 @@ worktree_of() {
 worktree_path() { printf '%s/%s/factory-%s' "$(worktrees_dir)" "$(basename "$1")" "$2"; }
 
 # open_workspace repo branch label -> WS WT BUILD_PANE. A workspace the run makes is recorded
-# for the workspace script (workspace_script).
+# for the workspace script (workspace_script). For one it finds open, Herdr answers with the
+# root pane of the tab in front, which may be a tab of yours: the builder's pane is the one
+# Factory labelled build there, where there is one.
 open_workspace() {
   local out before
   before=$(h workspace list | jq -r '.result.workspaces[]?.workspace_id')
@@ -2575,7 +2577,9 @@ open_workspace() {
   WT=$(jq -r '.result.worktree.path // empty' <<<"$out")
   BUILD_PANE=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
   [[ -n $WS && -n $WT && -n $BUILD_PANE ]] || die "unexpected worktree response: $out"
-  if ! grep -qxF "$WS" <<<"$before"; then
+  if grep -qxF "$WS" <<<"$before"; then
+    BUILD_PANE=$(h pane list --workspace "$WS" | jq -r --arg p "$BUILD_PANE" 'first(.result.panes[]? | select(.label == "build") | .pane_id) // $p')
+  else
     mkdir -p "$TASK_STATE"
     printf '%s\n' "$WS" >"$TASK_STATE/workspace-script"
   fi

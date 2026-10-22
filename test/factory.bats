@@ -3329,26 +3329,35 @@ JSON
   [[ $output == *"could not name the task's tab toy-1"* ]]
 }
 
-@test "open_workspace: a workspace the run makes is recorded for the workspace script, one it finds open not" {
+@test "open_workspace: a workspace the run makes is recorded for the workspace script; in one it finds open, the builder's pane is the one labelled build" {
   fake_task
   fake_state
-  herdr() { # the workspaces open are the ids in $TMP/open, w9 among them once made
+  herdr() { # the workspaces open are the ids in $TMP/open, w9 among them once made; its panes are in $TMP/panes
     case "$*" in
       "workspace list") jq -Rn '{result: {workspaces: [inputs | {workspace_id: .}]}}' "$TMP/open" ;;
       "worktree create"*)
         grep -qx w9 "$TMP/open" || printf 'w9\n' >>"$TMP/open"
         printf '{"result":{"workspace":{"workspace_id":"w9"},"worktree":{"path":"%s/wt"},"root_pane":{"pane_id":"w9:p7"}}}' "$TMP"
         ;;
+      "pane list --workspace w9") printf '{"result":{"panes":[%s]}}' "$(cat "$TMP/panes")" ;;
     esac
   }
-  WS=""
+  WS="" BUILD_PANE=""
   printf 'w1\n' >"$TMP/open"
   open_workspace "$TMP" factory/toy-1 "toy-1 t"
   [ "$WS" = w9 ]
   [ "$(recorded workspace-script)" = w9 ]
+  [ "$BUILD_PANE" = w9:p7 ] # a new workspace's root pane, its only one
   rm "$TASK_STATE/workspace-script"
+  # found open: Herdr answers with the root pane of the tab in front, one of yours here
+  printf '{"pane_id":"w9:p7","label":null},{"pane_id":"w9:p1","label":"build"},{"pane_id":"w9:p2","label":"plan"}' >"$TMP/panes"
   open_workspace "$TMP" factory/toy-1 "toy-1 t"
   [ -z "$(recorded workspace-script)" ]
+  [ "$BUILD_PANE" = w9:p1 ]
+  # with no pane labelled build, Herdr's answer stands
+  printf '{"pane_id":"w9:p7","label":null}' >"$TMP/panes"
+  open_workspace "$TMP" factory/toy-1 "toy-1 t"
+  [ "$BUILD_PANE" = w9:p7 ]
 }
 
 @test "workspace_script: once in a workspace recorded for it, your command line runs in the worktree, given the workspace, the worktree and the task; a failure is told; unset, nothing runs" {
