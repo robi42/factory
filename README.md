@@ -26,7 +26,7 @@ The CLI is `factory`; `fy` is the alias used below.
 - **You stay in the loop** where it counts: the planner may ask you questions, you
   approve every plan and every build, in dialogs in the agents' panes, and you merge.
 
-![A Herdr workspace during the dual code review, taken with an earlier version: the builder (Opus 5, left, cyan prompt line) has finished and shows its diff; the planner (Fable 5.1, top right) has checked the branch against its plan, Factory's prompt with the verdict-line contract visible above its answer; the Codex reviewer (GPT 6 Astra, bottom right) has written its review](assets/screenshot.png)
+![A Herdr workspace at the build approval of a Rust task that reports the broken relative links in Markdown files: the builder (Opus 5.5, left) has checked its work against the plan, committed it and asks for your approval in its dialog; the planner (Fable 5.1, top right) and the Codex reviewer (GPT-6-Astra, bottom right) have reviewed the build, and both approve](assets/screenshot.png)
 
 Every task gets its own Git worktree and Herdr workspace, so you can watch or step in; the
 tab with its agents bears the task's bead id, unless you named it.
