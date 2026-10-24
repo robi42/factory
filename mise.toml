@@ -5,4 +5,4 @@ shfmt = "3.14.1"
 shellcheck = "0.11.0"
 bats = "1.14.0"
 "pipx:codespell" = "2.4.3"
-"ubi:steveyegge/beads" = { version = "1.2.2", exe = "bd" }
+"ubi:gastownhall/beads" = { version = "1.2.2", exe = "bd" }

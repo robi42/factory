@@ -6,7 +6,10 @@
 
 A simple, lean software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
 
-The CLI is `factory`; `fy` is the alias used below.
+Factory takes a coding task through a plan, a build and a review of each, by Claude Code
+and Codex side by side in Herdr, a terminal workspace manager for AI coding agents, and
+stops for your approval of the plan and of the build. The CLI is `factory`; `fy` is the
+alias used below.
 
 - **Claude Code** plans (Fable 5.1) and builds (Opus 5.5), each in its own Herdr pane, the
   planner's prompt line purple and the builder's cyan. The plan states the design in a few
@@ -16,9 +19,13 @@ The CLI is `factory`; `fy` is the alias used below.
 - **Reviews are dual.** The plan is checked by Codex and by the builder who has to
   execute it; the build by Codex and by the planner who wrote the plan. Reviewers look
   for bugs, missed requirements, shortcuts, security and design problems. Both must approve.
-- **Beads** (`bd`) is the task queue and the memory: tasks are beads, agents leave
-  `bd remember` notes that later runs see, and the database is pushed to the repo's Git
-  remote so it survives the machine.
+- **[Beads](https://github.com/gastownhall/beads)** (`bd`), a lightweight issue tracker,
+  is the task queue and the memory: tasks are beads, with ids like `ap-k3x`, and agents
+  leave `bd remember` notes that later runs see. The database is pushed to the repo's Git
+  remote, as `refs/dolt/data`, so it survives the machine; on a public repo anyone can
+  read the tasks and notes there, unless Beads gets a private repo of its own (see
+  [Optional extras](#optional-extras)) or `FACTORY_BD_PUSH=0` keeps Factory from pushing
+  them.
 - **Checks are mechanical, not prose.** The gate is your repo's own definition of done,
   tests and lint and whatever else, and Factory runs it itself. The guardrails are
   Factory's own checks on the branch: no suppressions, skipped tests or swallowed errors
@@ -28,11 +35,25 @@ The CLI is `factory`; `fy` is the alias used below.
 
 ![A Herdr workspace at the build approval of a Rust task that reports the broken relative links in Markdown files: the builder (Opus 5.5, left) has checked its work against the plan, committed it and asks for your approval in its dialog; the planner (Fable 5.1, top right) and the Codex reviewer (GPT-6-Astra, bottom right) have reviewed the build, and both approve](assets/screenshot.png)
 
+*A Rust task at its build approval: the builder (left) asks for yours in its dialog, after
+the planner (top right) and the Codex reviewer (bottom right) both approved. The planner's
+prompt suggests `!fy approve`, another way to answer. The tabs beside the task's own come
+from an optional [workspace script](#optional-extras).*
+
 Every task gets its own Git worktree and Herdr workspace, so you can watch or step in; the
 tab with its agents bears the task's bead id, unless you named it.
 The agents are your normal `claude` and `codex` sessions, so your skills, MCP servers,
 hooks, `CLAUDE.md` and `AGENTS.md` apply unchanged; a run adds no instruction files.
-Whenever an agent stops for a question or an approval you get a Herdr toast.
+The planner and the builder also run as you, in Claude Code's auto mode and not in a
+sandbox, and the gate runs their code as you: [Sandboxing](#sandboxing) says how to
+isolate a run. Whenever an agent stops for a question or an approval you get a Herdr toast.
+
+Status: early. Built and used by one person on Arch Linux, with Claude Max 20x and Codex
+on ChatGPT Plus; expect rough edges elsewhere. The first three tasks `fy stats` recorded,
+features of a Rust and Qt desktop app at 2,300 to 5,200 added lines each, all merged. On
+average each took 7 hours of the agents' time, 3.3 plan and 8.7 build rounds, 10
+objections from the reviewers and 4 notes from the human, and the agents read 213M
+tokens, 98% of them cached, and wrote 0.9M.
 
 ## How a run goes
 
@@ -55,50 +76,10 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
    rounds over, or abort.
 8. **Done.** Memories stored. With `--pr` the branch is rebased onto the base (the builder
    resolves conflicts), checked again, pushed, a pull request opened, and a GitHub Copilot
-   review requested and acted on until it is clean or recommends approval. Then the bead
-   is closed and a toast sent. Merging stays yours; `fy clean` tidies up afterwards.
-
-## How it drives the agents
-
-There is no daemon and no protocol: one foreground Bash process per task talks to Herdr
-over its socket CLI. It creates the worktree workspace and panes, starts `claude` and
-`codex` in them, sends each prompt with `herdr agent prompt`, and waits on Herdr's agent
-lifecycle (`working`, `idle`, `blocked`). It reads an agent's screen only for dialogs: the
-startup dialogs it clears, and Claude Code's question dialogs, which Herdr can take for an
-idle agent, so that it neither types into one nor counts it as the end of a turn. It also
-waits for the prompt box of an agent it restarted, which Herdr reports ready while its
-session still loads. Handoffs between roles are files in the worktree's `.factory/run/`:
-the plan, the reviews with a verdict line, the gate log. Each agent also replies with what
-it wrote, so its pane shows the plan or the review; a review ends with its step and round
-(`PLAN REVIEW round 1`, `CODE REVIEW round 2`) above the verdict. Factory never trusts an
-agent's word for "done": it checks the file exists, runs the gate itself, and inspects the
-diff.
-
-Because the state is the worktree, Beads and Factory's own state for the task (see Run
-artifacts), the orchestrator is disposable. Kill it or Ctrl-C it: the agents, worktree and
-workspace stay, the bead gets a note saying at which step it was interrupted, and `fy run`
-with the bead id resumes: it reopens the workspace, closing none of your own panes there,
-adopts the agents still alive in it, starts any that is gone (its CLI quit, as for a
-switch of accounts) again in its own pane with a new session, and picks up after the last
-completed milestone: a written plan, at its next review round; a reviewed plan waiting for
-your approval; an approved plan; or an approved build, reusing an open pull request, and
-checked again first if the branch has moved on since. `--fresh` starts over. A new task
-starts from your checkout's branch, its base, or from origin's copy of it where yours is
-only behind, so that it has what was merged on origin since you last pulled. A rerun keeps
-the task's base, whatever branch your checkout is on by then; `--fresh` takes the
-checkout's anew. After a restart of Herdr's server (a reboot, an update), Herdr brings the
-agents back with their sessions but without the arguments Factory started them with; the
-rerun starts each such agent again with them, its session resumed, so it keeps its
-effort, model, permissions and dialog hook. Where Codex's background server still holds
-the reviewer's session, as it does for 30 minutes after the Codex in it quits, the
-reviewer goes on in a fork of the session, which keeps its history.
-
-Known startup dialogs (trust prompts, Codex's hook review and transcript overlay) are
-cleared from the screen automatically, and a pane whose shell swallowed the startup command
-gets a Ctrl-C and a retry; a block it does not recognise becomes a toast, and long waits
-print a heartbeat every five minutes so a thirty-minute gate is visibly a wait, not a hang.
-An agent still working, or waiting for your answer, after an hour gets you a toast and more
-time; only a turn that has stalled by then fails the run.
+   review requested and acted on until it is clean or recommends approval. What the
+   builder commits from here on passes the gate and the guardrails, not the reviewers or
+   your approval: you see it in the pull request. Then the bead is closed and a toast
+   sent. Merging stays yours; `fy clean` tidies up afterwards.
 
 ## Requirements
 
@@ -110,12 +91,13 @@ time; only a turn that has stalled by then fails the run.
   or newer, `flock` (util-linux) for `fy next` and `fy queue`, and `gh` for pull requests,
   with a Copilot subscription for the Copilot review they get (`--no-copilot` skips it).
 
-Status: early. Built and used by one person on Arch Linux; expect rough edges elsewhere.
-
 ## Install
 
 1. Install the requirements above with their own installers, start Herdr once so its
-   server is up, and log in to `claude`, `codex` and, for pull requests, `gh`.
+   server is up, and log in to `claude`, `codex` and, for pull requests, `gh`. If your
+   commits are signed through an agent that can stop to ask you, as 1Password's does, the
+   builder's commits wait for you there; left unanswered, the commit fails, and once the
+   builder's retry has failed too, the task is handed over to you.
 2. Clone and install the tools Factory manages:
    ```sh
    git clone https://github.com/robi42/factory.git ~/Projects/factory
@@ -128,7 +110,7 @@ Status: early. Built and used by one person on Arch Linux; expect rough edges el
    Claude Code runs its commands from one: `bd` through mise's global config, `fy` through
    `~/.local/bin` on that shell's PATH:
    ```sh
-   mise use -g 'ubi:steveyegge/beads[exe=bd]@1.2.2'
+   mise use -g 'ubi:gastownhall/beads[exe=bd]@1.2.2'
    # in ~/.bash_profile, unless ~/.local/bin is on its PATH already:
    export PATH="$HOME/.local/bin:$PATH"
    ```
@@ -136,6 +118,29 @@ Status: early. Built and used by one person on Arch Linux; expect rough edges el
 4. Check: `fy doctor` reports the tools a run, `fy next` and pull requests need, the git
    version, whether the Herdr server answers, the guardrails file, and whether `bd` and
    `fy` resolve from a login shell; fix what it marks MISSING and run it again.
+
+## First task
+
+On a small repo of yours, from the branch you have checked out:
+
+1. `fy init ~/src/app` sets up Beads there and writes `.factory/gate` from the repo's
+   convention (see [The gate](#the-gate)), and an `AGENTS.md` stub with a `CLAUDE.md`
+   link to it where the repo has neither. Read the gate and run it once with
+   `bash .factory/gate`. Each task gets a fresh worktree, so the gate must install what it
+   needs: for npm, `npm ci && npm test` where `fy init` writes `npm test`. Commit what
+   `fy init` wrote, since runs need the gate committed, and push it if you will want a
+   pull request. On a public remote, put `FACTORY_BD_PUSH=0` in `.factory/env` first,
+   unless the tasks may be public.
+2. `fy run ~/src/app "Add a --version flag"` files the task as a bead and runs it in this
+   terminal, which shows each step. In Herdr a workspace opens for it, its tab named after
+   the bead id: the builder's pane on the left, the planner's and the reviewer's on the
+   right.
+3. Answer the planner if it asks you something, then approve the plan in its dialog, and
+   later the build in the builder's. A Herdr toast tells you whenever one waits for you.
+4. The reviewed branch is `factory/<bead-id>-<title-slug>`. Merge it yourself, or, while
+   the task's agents are still up, open a pull request for it with
+   `fy pr ~/src/app <bead-id>`, adding `--no-copilot` without a Copilot subscription;
+   `fy clean ~/src/app` tidies up after the merge.
 
 ## Use
 
@@ -328,6 +333,48 @@ done, which tell whether a change to Factory, its prompts or its models helped; 
 guardrails that failed, by check; and your latest notes, each on one line, cut to fit the
 terminal. What goes wrong again and again shows there, to be turned into a guardrail, a
 check in the gate, or a memory.
+
+## How it drives the agents
+
+There is no daemon and no protocol: one foreground Bash process per task talks to Herdr
+over its socket CLI. It creates the worktree workspace and panes, starts `claude` and
+`codex` in them, sends each prompt with `herdr agent prompt`, and waits on Herdr's agent
+lifecycle (`working`, `idle`, `blocked`). It reads an agent's screen only for dialogs: the
+startup dialogs it clears, and Claude Code's question dialogs, which Herdr can take for an
+idle agent, so that it neither types into one nor counts it as the end of a turn. It also
+waits for the prompt box of an agent it restarted, which Herdr reports ready while its
+session still loads. Handoffs between roles are files in the worktree's `.factory/run/`:
+the plan, the reviews with a verdict line, the gate log. Each agent also replies with what
+it wrote, so its pane shows the plan or the review; a review ends with its step and round
+(`PLAN REVIEW round 1`, `CODE REVIEW round 2`) above the verdict. Factory never trusts an
+agent's word for "done": it checks the file exists, runs the gate itself, and inspects the
+diff.
+
+Because the state is the worktree, Beads and Factory's own state for the task (see Run
+artifacts), the orchestrator is disposable. Kill it or Ctrl-C it: the agents, worktree and
+workspace stay, the bead gets a note saying at which step it was interrupted, and `fy run`
+with the bead id resumes: it reopens the workspace, closing none of your own panes there,
+adopts the agents still alive in it, starts any that is gone (its CLI quit, as for a
+switch of accounts) again in its own pane with a new session, and picks up after the last
+completed milestone: a written plan, at its next review round; a reviewed plan waiting for
+your approval; an approved plan; or an approved build, reusing an open pull request, and
+checked again first if the branch has moved on since. `--fresh` starts over. A new task
+starts from your checkout's branch, its base, or from origin's copy of it where yours is
+only behind, so that it has what was merged on origin since you last pulled. A rerun keeps
+the task's base, whatever branch your checkout is on by then; `--fresh` takes the
+checkout's anew. After a restart of Herdr's server (a reboot, an update), Herdr brings the
+agents back with their sessions but without the arguments Factory started them with; the
+rerun starts each such agent again with them, its session resumed, so it keeps its
+effort, model, permissions and dialog hook. Where Codex's background server still holds
+the reviewer's session, as it does for 30 minutes after the Codex in it quits, the
+reviewer goes on in a fork of the session, which keeps its history.
+
+Known startup dialogs (trust prompts, Codex's hook review and transcript overlay) are
+cleared from the screen automatically, and a pane whose shell swallowed the startup command
+gets a Ctrl-C and a retry; a block it does not recognise becomes a toast, and long waits
+print a heartbeat every five minutes so a thirty-minute gate is visibly a wait, not a hang.
+An agent still working, or waiting for your answer, after an hour gets you a toast and more
+time; only a turn that has stalled by then fails the run.
 
 ## The gate
 
@@ -562,14 +609,19 @@ cache; its README has the setup. Do not give the worktrees one `target/` instead
 can pass its gate on another task's binaries.
 
 **GitHub for the Codex reviewer.** GitHub's remote MCP server, authenticated with a
-token in an environment variable (Herdr panes are non-login shells, so `.bashrc`):
+token in an environment variable (Herdr panes are non-login shells, so `.bashrc`). Make
+it a fine-grained token that can only read (contents, issues, pull requests): one that
+can write lets the agent change your repositories on GitHub.
 
 ```sh
 codex mcp add github --url https://api.githubcopilot.com/mcp/ \
   --bearer-token-env-var CODEX_GITHUB_PERSONAL_ACCESS_TOKEN
 ```
 
-The builder side gets the same through `claude plugin install github@claude-plugins-official`.
+The builder side gets the same through `claude plugin install github@claude-plugins-official`,
+which reads its token from `GITHUB_PERSONAL_ACCESS_TOKEN`. Make that one read-only as
+well: the planner and the builder both load the plugin, and Factory's deny rule refuses
+them `gh`, not MCP tools.
 
 **Desktop notifications.** Factory's toasts (plan or build ready, questions, blocked,
 needs you, done) are Herdr notifications, so where they appear is Herdr's `[ui.toast]
@@ -598,6 +650,24 @@ as lowercase letters and digits on either side of one hyphen, starting with a le
 (`ab-x7k`), and a child's numbers after dots (`ab-x7k.1`); `fy run` files anything else,
 and an id bd does not know, as the title of a new task. Untrack
 `.beads/interactions.jsonl` yourself to keep `git status` quiet.
+
+**A private repo for the tasks.** On a public code repo, the tasks and the agents' notes
+can live in a private repo of their own, as Factory pushes wherever Beads does. That repo
+needs a first commit, since Dolt does not push into an empty one, and `bd config set`
+commits its change to `.beads/config.yaml` itself, for your next push:
+
+```sh
+gh repo create you/app-beads --private --add-readme
+bd -C ~/src/app dolt remote remove origin
+bd -C ~/src/app dolt remote add origin git+https://github.com/you/app-beads.git
+bd -C ~/src/app config set sync.remote git+https://github.com/you/app-beads.git
+bd -C ~/src/app dolt push
+git -C ~/src/app push origin --delete refs/dolt/data refs/heads/__dolt_remote_info__
+```
+
+The last line drops the copy the code repo held until then; run it before that repo goes
+public. `bd bootstrap --yes` in a fresh clone then takes the tasks from the private repo,
+for anyone with access to it.
 
 **Rendered Markdown at the prompts.** With [glow](https://github.com/charmbracelet/glow) on
 your PATH, the plan is rendered in the terminal instead of
