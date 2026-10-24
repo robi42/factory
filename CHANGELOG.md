@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-24
+
 Upgrading from 0.1.x: finish a task 0.1.x started before you upgrade, or rerun it with
 `--fresh` (a plain rerun plans it again from scratch), and upgrade between runs: a run
 that waits for your approval takes your answer where its own Factory looks for it.
@@ -603,7 +605,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/robi42/factory/compare/v0.1.11...v0.2.0
 [0.1.11]: https://github.com/robi42/factory/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/robi42/factory/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/robi42/factory/compare/v0.1.8...v0.1.9
