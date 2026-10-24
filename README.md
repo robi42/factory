@@ -51,8 +51,8 @@ Whenever an agent stops for a question or an approval you get a Herdr toast.
    over at once and names the checks.
 6. **Code review.** Codex and the planner each review the diff. Anything but two approvals
    sends it back to step 4, up to `FACTORY_ROUNDS` times.
-7. **Your approval.** Look at the branch; approve, send a note back for one more round, or
-   abort.
+7. **Your approval.** Look at the branch; approve, send a note back, which starts the
+   rounds over, or abort.
 8. **Done.** Memories stored. With `--pr` the branch is rebased onto the base (the builder
    resolves conflicts), checked again, pushed, a pull request opened, and a GitHub Copilot
    review requested and acted on until it is clean or recommends approval. Then the bead
@@ -245,10 +245,10 @@ them.
 
 **Build approval.** Once the gate, guardrails and both reviewers are happy, Factory prints
 the branch's commits and diff stat and waits the same way: the builder's dialog, or `a`
-approve, `r` revise with a note, `b` abort. A note goes to the builder and costs one more
-round of gate, guardrails and reviews before you are asked again; in the last round it
-gets one more, past `FACTORY_ROUNDS`. Look at the worktree, or talk to the builder in its
-pane after Esc on its dialog, first if you like.
+approve, `r` revise with a note, `b` abort. A note goes to the builder and starts the
+rounds over: up to `FACTORY_ROUNDS` more of gate, guardrails and reviews, as the reviewers
+often object to what it changed, until both approve and you are asked again. Look at the
+worktree, or talk to the builder in its pane after Esc on its dialog, first if you like.
 
 **Merge.** On approval the bead is closed and you get a toast; the branch, named
 `factory/<bead-id>-<title-slug>` and checked out under Herdr's worktree directory as
@@ -475,7 +475,7 @@ holds only the credentials a run needs, as `extras/factory-user/` sets up.
 | `FACTORY_BUILD_EFFORT` | `xhigh` (the same levels) |
 | `FACTORY_REVIEW_EFFORT` | `xhigh` (the same levels, and `ultra`) |
 | `FACTORY_PLAN_ROUNDS` | `3` plan review rounds (always at least one); a note of yours gets one more |
-| `FACTORY_ROUNDS` | `3` build / review rounds; a note of yours at the last gets one more |
+| `FACTORY_ROUNDS` | `3` build / review rounds; a note of yours starts them over |
 | `FACTORY_CLAUDE_PERMISSIONS` | `auto` (any Claude Code permission mode) |
 | `FACTORY_GATE` | discovered: `.factory/gate`, then the repo's convention |
 | `FACTORY_REQUIRE_TESTS` | `1`: code changes must also touch a test file |

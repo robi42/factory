@@ -96,7 +96,7 @@ usage() {
   row "FACTORY_BUILD_EFFORT=$FACTORY_BUILD_EFFORT" 'builder effort: low, medium, high, xhigh, max'
   row "FACTORY_REVIEW_EFFORT=$FACTORY_REVIEW_EFFORT" 'reviewer effort: the same, and ultra'
   row "FACTORY_PLAN_ROUNDS=$FACTORY_PLAN_ROUNDS" 'plan review rounds before the build; a note of yours gets one more'
-  row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up; a note of yours at the last gets one more'
+  row "FACTORY_ROUNDS=$FACTORY_ROUNDS" 'build / review rounds before giving up; a note of yours starts them over'
   row "FACTORY_CLAUDE_PERMISSIONS=$FACTORY_CLAUDE_PERMISSIONS" 'Claude Code permission mode'
   row 'FACTORY_GATE=<command>' 'else .factory/gate, else the repo'"'"'s own convention'
   row "FACTORY_REQUIRE_TESTS=$FACTORY_REQUIRE_TESTS" '1: code changes must touch a test file (in Rust, a test in the file will do)'
@@ -3050,12 +3050,13 @@ approve_plan() {
 }
 
 # build_phase repo [resume]: build, then gate, guardrails, dual review and the human's
-# approval per round, up to FACTORY_ROUNDS; a note from the human always gets a round of its
-# own, past the last if need be. A turn of the builder's after the guardrails failed that
-# changes nothing they check (work_state) ends the rounds, to hand over: what they found is
-# then the human's to fix, as a commit that cannot be signed while the signer is locked. So
-# does a first turn on the plan that changes nothing, before any round: the builder did not
-# build, as when it lacks code the plan builds on. Sets ROUND VERDICT STALLED.
+# approval per round, up to FACTORY_ROUNDS; a note from the human starts the count over, past
+# the last if need be, as the reviewers often object to what a note changed, and fixing that
+# takes rounds too. A turn of the builder's after the guardrails failed that changes nothing
+# they check (work_state) ends the rounds, to hand over: what they found is then the human's
+# to fix, as a commit that cannot be signed while the signer is locked. So does a first turn
+# on the plan that changes nothing, before any round: the builder did not build, as when it
+# lacks code the plan builds on. Sets ROUND VERDICT STALLED.
 build_phase() {
   local repo=$1 violations rc limit=$FACTORY_ROUNDS gate_log note="" out work
   log "building"
@@ -3117,10 +3118,10 @@ build_phase() {
           ;;
         4)
           VERDICT=REVISE
-          log "note for the builder; another round"
+          log "note for the builder; up to $FACTORY_ROUNDS more rounds"
           note=$HUMAN_NOTE
           ask "$BUILD_AGENT" "$(build_note_prompt "$note")"
-          ((ROUND < limit)) || limit=$((ROUND + 1))
+          limit=$((ROUND + FACTORY_ROUNDS))
           ROUND=$((ROUND + 1))
           continue
           ;;

@@ -2477,6 +2477,49 @@ IN
   [ "$ROUND" -eq 2 ]
 }
 
+@test "build_phase: a note starts the rounds over, for the reviewers' objections to what it changed" {
+  fake_task
+  WT=$TMP GATE=true BASE=main BRANCH=work
+  REVIEW_AGENT=codex PLAN_AGENT=planner BUILD_AGENT=builder
+  FACTORY_ROUNDS=2
+  mkdir -p "$TMP/.factory/run"
+  gate_branch() { :; }
+  guard_branch() { :; }
+  measured_base() { printf main; }
+  mark() { :; }
+  ask() { printf 'asked %s: %.40s\n' "$1" "$2"; }
+  work_state() { printf x >>"$TMP/turns" && cat "$TMP/turns"; } # each turn changes something, which no git repo here shows
+  # round n's reviews take line n of $TMP/verdicts
+  ask_for_file() {
+    local n=${3##*/review-}
+    printf 'VERDICT: %s\n' "$(sed -n "${n%%[.-]*}p" "$TMP/verdicts")" >"$3"
+  }
+  human_gate() { # a note at the first approval, an approval after it
+    if [[ -e $TMP/noted ]]; then return 0; fi
+    : >"$TMP/noted"
+    HUMAN_NOTE="rename the flag"
+    return 4
+  }
+  # a note in round 1: round 2 objects to what it changed, and round 3 has the fix
+  printf '%s\n' APPROVE REVISE APPROVE >"$TMP/verdicts"
+  build_phase "$TMP" >"$TMP/out" 2>&1
+  [ "$VERDICT" = APPROVE ]
+  [ "$ROUND" -eq 3 ]
+  # a note in round 2, the last, gets as many rounds: the fix in round 4
+  rm "$TMP/noted"
+  printf '%s\n' REVISE APPROVE REVISE APPROVE >"$TMP/verdicts"
+  build_phase "$TMP" >"$TMP/out" 2>&1
+  [ "$VERDICT" = APPROVE ]
+  [ "$ROUND" -eq 4 ]
+  # and no more than FACTORY_ROUNDS after it
+  rm "$TMP/noted"
+  printf '%s\n' REVISE APPROVE REVISE REVISE REVISE >"$TMP/verdicts"
+  build_phase "$TMP" >"$TMP/out" 2>&1
+  [ "$VERDICT" = REVISE ]
+  [ "$ROUND" -eq 4 ]
+  run -1 grep -q 'review round 5' "$TMP/out"
+}
+
 @test "build_phase: a builder's turn that changes nothing the failed guardrails check ends the rounds; one that commits goes on" {
   make_repo
   fake_task

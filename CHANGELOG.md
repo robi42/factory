@@ -102,6 +102,10 @@ stops the command. `factory clean --force` drops one task now, named by its bead
 - A plan gets three review rounds by default, up from two (`FACTORY_PLAN_ROUNDS`). After
   two, a plan still objected to came to you with its last revision unreviewed, and a note
   was how to get another round, as on two of three tasks in Blik.
+- A note of yours at build approval got one round, and the reviewers often object to what
+  a note changed: late in the rounds that left none for the fix, and the task was handed
+  over, as twice on one task in Blik. A note starts the rounds over now, up to
+  `FACTORY_ROUNDS` more after it.
 
 ### Removed
 - **Breaking:** `factory answer` (`!fy answer` in a pane) and the questions relay
