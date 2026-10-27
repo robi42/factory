@@ -2962,6 +2962,42 @@ JSON
   [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
 }
 
+@test "cmd_clean: a bead bd keeps open, as bd 1.3 does one with open children, is named and the clean goes on" {
+  make_repo
+  git -C "$REPO" checkout -q main
+  git -C "$REPO" branch factory/toy-p
+  herdr() { printf '{"result":{"worktrees":[]}}'; }
+  bd() {
+    case "$*" in
+      *"config get"*) printf 'sync.remote (not set in config.yaml)\n' ;;
+      *show*) printf '{"status":"in_progress"}\n' ;;
+      *close*)
+        printf 'cannot close %s: 1 open child issue(s); close children first or use --force to override\n' "$4" >&2
+        return 1
+        ;;
+    esac
+  }
+  run cmd_clean "$REPO" toy-p --force
+  [ "$status" -eq 0 ]
+  [[ $output == *"bd kept toy-p open: cannot close toy-p: 1 open child issue(s)"* ]]
+  [[ $output == *"cleaned factory/toy-p"* ]]
+  [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
+}
+
+@test "cmd_add: files the bead and names it, which bd create no longer does with -q" {
+  make_repo
+  mkdir "$REPO/.beads"
+  FACTORY_BD_PUSH=0
+  bd() {
+    printf '%s\n' "$*" >>"$TMP/bd.log"
+    printf 'toy-a1\n'
+  }
+  run cmd_add "$REPO" "Add CSV export" "One file per table"
+  [ "$status" -eq 0 ]
+  [[ $output == *"filed toy-a1: Add CSV export"* ]]
+  grep -qx -- "-C $REPO create Add CSV export -d One file per table --silent" "$TMP/bd.log"
+}
+
 @test "waits_for: the tasks a task builds on whose branch is not merged into the base, with its pull request or branch" {
   make_repo
   git -C "$REPO" checkout -q main
@@ -5418,6 +5454,30 @@ SH
   [ "$status" -eq 2 ]
   [[ $output == *"needs a human"*"the worktree holds commits after ${pushed:0:7}, which the pull request lacks"* ]]
   [[ $(<"$TMP/bd.log") != *" close toy-9"* ]]
+}
+
+@test "finish_task: a bead bd keeps open, as bd 1.3 does one with open children, ends the run as done all the same" {
+  make_repo
+  add_origin
+  task_opened
+  ask() { :; }
+  gh() { :; }
+  bd() {
+    case "$*" in
+      *" close "*)
+        printf 'cannot close toy-9: 1 open child issue(s); close children first or use --force to override\n' >&2
+        return 1
+        ;;
+    esac
+  }
+  ROUND=1 VERDICT=APPROVE FACTORY_PR=0
+  printf 'echo x\n' >"$TMP/wt-9/run.sh"
+  git -C "$TMP/wt-9" commit -qam work
+  gate_then_guards builder 1
+  run finish_task "$REPO"
+  [ "$status" -eq 0 ]
+  [[ $output == *"bd kept toy-9 open: cannot close toy-9: 1 open child issue(s); close children first or use --force to override"* ]]
+  [[ $output == *"done: branch factory/toy-9"* ]]
 }
 
 @test "metric: an event is a JSON line beside the tasks' state, digits as numbers; outside a task there is none" {

@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `factory add` names the bead it filed; the quiet `bd create` it ran says nothing from bd 1.3 on.
+- A bead with open children, which bd 1.3 will not close, no longer stops a run after your
+  approval, nor `factory clean`: Factory says that bd kept it open, and goes on.
+
 ## [0.2.1] - 2026-10-29
 
 ### Fixed

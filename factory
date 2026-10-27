@@ -3138,7 +3138,7 @@ build_phase() {
 
 # finish_task repo: memories, then close the bead (with PR and Copilot review) or hand over.
 finish_task() {
-  local repo=$1 next="merge $BRANCH" copilot="" violations left
+  local repo=$1 next="merge $BRANCH" copilot="" violations left out
   local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}${STALLED:+; $STALLED}"
   PR_URL=""
   ask "$BUILD_AGENT" "$(memory_prompt)"
@@ -3166,7 +3166,10 @@ finish_task() {
     fi
   fi
   bd_note "$repo" "$TASK_ID" "approved. $summary${PR_URL:+, pr $PR_URL}$copilot"
-  bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null
+  # bd 1.3 keeps a bead with open children open; the task's own work is done all the same
+  if ! out=$({ bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null; } 2>&1); then
+    warn "bd kept $TASK_ID open: $(tail -n1 <<<"$out")"
+  fi
   run_end "done"
   toast "$TASK_ID done" "$TASK_TITLE. ${next^}." "done"
   log "done: $summary${PR_URL:+, pr $PR_URL}"
@@ -3521,7 +3524,7 @@ compose_task() {
 
 # cmd_add repo ["title" [description]]: file a task; with no title, from your editor or stdin
 cmd_add() {
-  local repo
+  local repo id
   repo=$(repo_top "$1") || exit 1
   shift
   need_beads "$repo"
@@ -3531,7 +3534,10 @@ cmd_add() {
     TASK_TITLE=$1
     TASK_DESC=${2:-}
   fi
-  bd -C "$repo" create "$TASK_TITLE" -d "$TASK_DESC" -q # -q drops bd's tip about its own agent integration
+  # bd create says nothing with -q from bd 1.3 on, and adds a tip about its own agent integration
+  # without it: Factory names the bead itself, as resolve_task does
+  id=$(bd -C "$repo" create "$TASK_TITLE" -d "$TASK_DESC" --silent)
+  log "filed $id: $TASK_TITLE"
   bd_push "$repo"
 }
 
@@ -3892,7 +3898,7 @@ waits_for() {
 
 # cmd_clean repo [bead-id] [--force]: remove finished task workspaces, worktrees and branches.
 cmd_clean() {
-  local repo only="" force=0 a base into ws branch path id status why n=0
+  local repo only="" force=0 a base into ws branch path id status why n=0 out
   repo=$(repo_top "$1") || exit 1
   shift
   for a in "$@"; do
@@ -3933,7 +3939,9 @@ cmd_clean() {
       if [[ -n $status && $status != closed ]]; then
         why=merged
         ((force)) && why=dropped
-        bd -C "$repo" close "$id" -r "Factory clean: branch $branch $why" >/dev/null
+        if ! out=$({ bd -C "$repo" close "$id" -r "Factory clean: branch $branch $why" >/dev/null; } 2>&1); then
+          warn "bd kept $id open: $(tail -n1 <<<"$out")"
+        fi
       fi
       log "cleaned $branch${ws:+ (workspace $ws)}"
       n=$((n + 1))
