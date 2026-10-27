@@ -42,7 +42,7 @@ line='export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"'
 printf '%s\n' "$line" >>~/.bash_profile
 printf '%s\n' "$line" >>~/.bashrc
 exec bash -l
-mise use -g claude codex gh 'ubi:gastownhall/beads[exe=bd]@1.2.2'
+mise use -g claude codex gh 'ubi:gastownhall/beads[exe=bd]@1.3.2'
 git clone https://github.com/robi42/factory.git ~/factory   # pull there to update
 (cd ~/factory && mise trust && mise install)
 mkdir -p ~/.local/bin

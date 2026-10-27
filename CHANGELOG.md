@@ -5,6 +5,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Factory installs Beads 1.3.2, up from 1.2.2. bd 1.3 migrates a repo's task database on its
+  first command there, and bd 1.2 refuses the database after that. Upgrade bd in every clone
+  of a repo at once, after a last `bd dolt push` with the old one where the database syncs to
+  a remote, then run `bd recompute-blocked` once in each repo, as bd's release notes ask.
+
 ### Fixed
 - `factory add` names the bead it filed; the quiet `bd create` it ran says nothing from bd 1.3 on.
 - A bead with open children, which bd 1.3 will not close, no longer stops a run after your

@@ -110,7 +110,7 @@ tokens, 98% of them cached, and wrote 0.9M.
    Claude Code runs its commands from one: `bd` through mise's global config, `fy` through
    `~/.local/bin` on that shell's PATH:
    ```sh
-   mise use -g 'ubi:gastownhall/beads[exe=bd]@1.2.2'
+   mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'
    # in ~/.bash_profile, unless ~/.local/bin is on its PATH already:
    export PATH="$HOME/.local/bin:$PATH"
    ```
