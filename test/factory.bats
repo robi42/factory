@@ -1697,6 +1697,29 @@ IN
   [[ $output == *"source files changed but no test files did"* ]]
 }
 
+@test "guard: a small repo's test.sh or tests.py is a test file, as is a test_ file in any language, but not a name the word is only part of" {
+  make_repo
+  local f
+  for f in test.sh tests.py lib/test_greet.sh src/tests.rs; do
+    git -C "$REPO" reset -q --hard main
+    printf 'echo hello\n' >>"$REPO/run.sh"
+    mkdir -p "$(dirname "$REPO/$f")"
+    printf 'check\n' >"$REPO/$f"
+    commit_all "code, and $f"
+    FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+    [ "$status" -eq 0 ]
+  done
+  for f in latest.sh testing.sh contest_x.py; do
+    git -C "$REPO" reset -q --hard main
+    printf 'echo hello\n' >>"$REPO/run.sh"
+    printf 'check\n' >"$REPO/$f"
+    commit_all "code, and $f"
+    FACTORY_REQUIRE_TESTS=1 run guard_check "$REPO" main
+    [ "$status" -eq 1 ]
+    [[ $output == *"source files changed but no test files did"* ]]
+  done
+}
+
 @test "guard: a line of .factory/protected that excludes a path cannot take .factory/ out of the checks" {
   make_repo
   printf ':(exclude).factory\n' >"$REPO/.factory/protected"

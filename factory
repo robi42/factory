@@ -44,8 +44,9 @@ GUARDRAILS=$FACTORY_HOME/guardrails.txt
 RUN_DIR=.factory/run
 # lines of a failed gate's log to show: a failure's own lines, past the build's noise
 GATE_LOG_TAIL=40
-# files that look like tests, for the tests-required guardrail
-TEST_PATH_RE='(^|/)(tests?|spec|specs|__tests__|bats)/|(^|/)test_[^/]*\.py$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|scala|cs|swift)$|_spec\.rb$|\.bats$'
+# files that look like tests, for the tests-required guardrail: a small repo's test.sh or
+# tests.py is one, and a test_ file in any language
+TEST_PATH_RE='(^|/)(tests?|spec|specs|__tests__|bats)/|(^|/)tests?(_[^/]*)?\.[a-z]+$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|scala|cs|swift)$|_spec\.rb$|\.bats$'
 
 # ---------------------------------------------------------------- output ----
 TAG=$'\033[34m[factory]\033[0m' # log's prefix, shared with the prompts that must not end the line

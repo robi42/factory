@@ -5,6 +5,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- The tests guardrail took a repo's own `test.sh` or `tests.py` for no test file: a task on
+  such a repo failed it until the builder moved the tests, which the reviewers objected
+  to, and was handed over. A file named `test` or `tests`, or starting with `test_`, counts
+  as a test now, whatever its language.
+
 ## [0.2.0] - 2026-10-24
 
 Upgrading from 0.1.x: finish a task 0.1.x started before you upgrade, or rerun it with
