@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-29
+
 Upgrading from 0.2.x: Factory's install pins Beads 1.3.2 now, which migrates a repo's task
 database for good; bd 1.2 then cannot read it, there or in a clone that pulls it. Move each
 repo's clones as the README's "Moving a repo's tasks to bd 1.3" says: one clone migrates,
@@ -634,7 +636,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/robi42/factory/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/robi42/factory/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/robi42/factory/compare/v0.1.11...v0.2.0
 [0.1.11]: https://github.com/robi42/factory/compare/v0.1.10...v0.1.11
