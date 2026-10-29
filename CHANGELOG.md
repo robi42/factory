@@ -10,6 +10,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   first command there, and bd 1.2 refuses the database after that. Upgrade bd in every clone
   of a repo at once, after a last `bd dolt push` with the old one where the database syncs to
   a remote, then run `bd recompute-blocked` once in each repo, as bd's release notes ask.
+- `factory next` and `queue` take the oldest of equally urgent tasks first, as bd 1.3's
+  `bd ready` orders them, and `factory tasks` lists them that way.
 
 ### Fixed
 - `factory add` names the bead it filed; the quiet `bd create` it ran says nothing from bd 1.3 on.

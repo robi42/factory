@@ -3544,9 +3544,10 @@ cmd_add() {
 # task_order [color]: bd list --json on stdin -> one line per task: those in progress first,
 # which next leaves to their runs, then the open ones in the order next takes them: a task after
 # the open ones that block it (blocks or conditional-blocks, its own or a parent's), else by
-# priority, newest first as bd ready does. Blocked, deferred and hooked tasks, which next skips,
-# come after the rest, and so does a dependency cycle. bd's waits-for gates are not followed,
-# nor whether a blocker's branch is merged (waits_for). Colours are bd's own.
+# priority, oldest first as bd 1.3's ready has them (1.2's had the newest first). Blocked,
+# deferred and hooked tasks, which next skips, come after the rest, and so does a dependency
+# cycle. bd's waits-for gates are not followed, nor whether a blocker's branch is merged
+# (waits_for). Colours are bd's own.
 task_order() {
   jq -r --argjson color "${1:-0}" '
     def paint($c): if $color == 1 and $c != "" then "\u001b[\($c)m\(.)\u001b[m" else . end;
@@ -3558,7 +3559,7 @@ task_order() {
           elif .type == "parent-child" and ($seen[$d] | not) then blockers($d; $seen + {($d): true})
           else empty end;
     [$all[] | .blockers = [blockers(.id; {(.id): true})]]
-    | sort_by([({in_progress: 0, open: 1}[.status] // 2), .priority, (.created_at // "" | explode | map(-.)), .id])
+    | sort_by([({in_progress: 0, open: 1}[.status] // 2), .priority, (.created_at // ""), .id])
     | {left: ., done: [], seen: {}}
     | until(.left == [];
         .seen as $seen

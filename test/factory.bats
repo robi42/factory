@@ -4231,7 +4231,7 @@ EOF
   [[ $output == *"(see $REPO/.factory/guardrails.txt)"* ]]
 }
 
-@test "task_order: blockers first, then in progress, priority and newest; a cycle ends the walk" {
+@test "task_order: blockers first, then in progress, priority and oldest, as bd 1.3's ready; a cycle ends the walk" {
   run task_order <<'JSON'
 [{"id":"t-c","title":"c","status":"open","priority":2,"created_at":"2026-10-01T00:00:03Z","dependencies":[{"depends_on_id":"t-b","type":"blocks"}]},
  {"id":"t-b","title":"b","status":"open","priority":2,"created_at":"2026-10-01T00:00:02Z","dependencies":[{"depends_on_id":"t-a","type":"blocks"},{"depends_on_id":"t-closed","type":"blocks"}]},
@@ -4242,13 +4242,13 @@ EOF
  {"id":"t-z","title":"z","status":"open","priority":3,"created_at":"2026-10-01T00:00:00Z"}]
 JSON
   [ "$status" -eq 0 ]
-  [ "$output" = $'◐ t-w ● P3 w\n○ t-p ● P1 p\n○ t-a ● P2 a\n○ t-b ● P2 b\n○ t-c ● P2 c\n○ t-r ● P2 r\n○ t-z ● P3 z' ]
+  [ "$output" = $'◐ t-w ● P3 w\n○ t-p ● P1 p\n○ t-r ● P2 r\n○ t-a ● P2 a\n○ t-b ● P2 b\n○ t-c ● P2 c\n○ t-z ● P3 z' ]
   run task_order <<'JSON'
 [{"id":"t-x","title":"x","status":"open","priority":2,"created_at":"2","dependencies":[{"depends_on_id":"t-y","type":"blocks"}]},
  {"id":"t-y","title":"y","status":"open","priority":2,"created_at":"1","dependencies":[{"depends_on_id":"t-x","type":"blocks"}]},
  {"id":"t-z","title":"z","status":"open","priority":2,"created_at":"3"}]
 JSON
-  [ "$output" = $'○ t-z ● P2 z\n○ t-x ● P2 x\n○ t-y ● P2 y' ]
+  [ "$output" = $'○ t-z ● P2 z\n○ t-y ● P2 y\n○ t-x ● P2 x' ]
   run task_order 1 <<<'[{"id":"t-1","title":"one","status":"in_progress","priority":0,"created_at":"1"}]'
   [ "$output" = $'\e[38;2;255;180;84m◐\e[m t-1 \e[1;38;2;240;113;120m● P0\e[m one' ]
 }
@@ -4262,7 +4262,7 @@ JSON
  {"id":"t-d","title":"d","status":"deferred","priority":0,"created_at":"5"},
  {"id":"t-h","title":"h","status":"hooked","priority":0,"created_at":"6"}]
 JSON
-  [ "$output" = $'○ t-q ● P3 q\n○ t-g ● P0 g\n○ t-k ● P0 k\n○ t-e ● P3 e\n◇ t-h ● P0 h\n❄ t-d ● P0 d' ]
+  [ "$output" = $'○ t-q ● P3 q\n○ t-k ● P0 k\n○ t-g ● P0 g\n○ t-e ● P3 e\n❄ t-d ● P0 d\n◇ t-h ● P0 h' ]
 }
 
 @test "cmd_tasks: the open tasks in order without arguments, bd list as it is with them" {
