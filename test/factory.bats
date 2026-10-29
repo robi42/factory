@@ -5571,7 +5571,7 @@ SH
   fake_task
   WT=$TMP/wt BRANCH=work
   mkdir -p "$TMP/wt/.factory/run" "$TASK_STATE"
-  sleep() { return 1; } # no heartbeat: its sleep would keep the test's output open
+  sleep() { return 1; } # no heartbeat, whose sleep would outlast the test
   run_gate "$TMP/wt" true "$TMP/wt/.factory/run/gate-1.log" 2>/dev/null
   run run_gate "$TMP/wt" false "$TMP/wt/.factory/run/gate-copilot-2.log"
   [ "$status" -eq 1 ]
@@ -5599,6 +5599,22 @@ SH
   [ "${lines[2]}" = '{"event":"guard","ok":0,"failed":"tests lines"}' ]
   [ "${lines[3]}" = '{"event":"guard","ok":1}' ]
   [ "${lines[4]}" = '{"event":"guard","ok":0,"failed":"ungated"}' ]
+}
+
+@test "run_gate: the heartbeat's sleep, which outlives the gate, holds no pipe of Factory's output open" {
+  fake_task
+  mkdir -p "$TMP/wt/.factory/run" "$TASK_STATE"
+  sleep() { command sleep 5; } # the heartbeat's five minutes, shortened
+  # a pipe from the run ends when the gate is done, though the heartbeat's sleep goes on
+  { run_gate "$TMP/wt" true "$TMP/wt/.factory/run/gate-1.log" 2>&1 | cat >"$TMP/out" 2>/dev/null; } 3>&- &
+  local pipe=$! i
+  for i in $(seq 20); do
+    kill -0 "$pipe" 2>/dev/null || break
+    command sleep 0.1
+  done
+  run kill -0 "$pipe"
+  [ "$status" -ne 0 ]
+  grep -q 'gate passed' "$TMP/out"
 }
 
 @test "cmd_stats: a row a task, the means per finished task by version, the guardrails that failed, your notes" {

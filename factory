@@ -914,14 +914,16 @@ protected_globs() {
 
 # run_gate worktree gate logfile: 0 when the gate passes. It runs in the foreground, so that
 # Ctrl-C stops it with the run (bash would have a background job ignore it), and a heartbeat
-# beside it logs every five minutes, as a cold build can be silent for a long time. The run is
-# recorded (gate), labelled as its log is named: gate-1.log is round 1's.
+# beside it logs every five minutes, as a cold build can be silent for a long time. Its sleep,
+# which outlives the heartbeat's kill, holds none of Factory's output open, so that a pipe
+# Factory writes to ends with the run. The run is recorded (gate), labelled as its log is
+# named: gate-1.log is round 1's.
 run_gate() {
   local beat rc=0 t0=$SECONDS label=${3##*/gate-}
   log "gate: $2"
   (
     m=0
-    while sleep 300 && kill -0 "$$" 2>/dev/null; do
+    while sleep 300 >/dev/null 2>&1 && kill -0 "$$" 2>/dev/null; do
       m=$((m + 5))
       log "gate still running ($m min, log: $3)"
     done

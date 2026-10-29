@@ -19,6 +19,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 - A bead bd will not close, one with an open blocker or, from bd 1.3 on, an open child, no
   longer stops a run after your approval, nor `factory clean`: Factory says that bd kept it
   open, and how to close it.
+- With its output in a pipe, as `factory run … | tee run.log`, a run's end waited up to five
+  minutes for the gate's heartbeat; it is the run's end now.
 
 ## [0.2.1] - 2026-10-29
 
