@@ -14,9 +14,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   `bd ready` orders them, and `factory tasks` lists them that way.
 
 ### Fixed
-- `factory add` names the bead it filed; the quiet `bd create` it ran says nothing from bd 1.3 on.
-- A bead with open children, which bd 1.3 will not close, no longer stops a run after your
-  approval, nor `factory clean`: Factory says that bd kept it open, and goes on.
+- `factory add` names the bead it filed; the quiet `bd create` it ran says nothing from bd
+  1.3 on.
+- A bead bd will not close, one with an open blocker or, from bd 1.3 on, an open child, no
+  longer stops a run after your approval, nor `factory clean`: Factory says that bd kept it
+  open, and how to close it.
 
 ## [0.2.1] - 2026-10-29
 

@@ -3166,9 +3166,10 @@ finish_task() {
     fi
   fi
   bd_note "$repo" "$TASK_ID" "approved. $summary${PR_URL:+, pr $PR_URL}$copilot"
-  # bd 1.3 keeps a bead with open children open; the task's own work is done all the same
+  # bd keeps a bead open while a blocker of it is open, and from bd 1.3 on while a child is;
+  # the task's own work is done all the same
   if ! out=$({ bd -C "$repo" close "$TASK_ID" -r "Factory: gate green, review approved; $next" >/dev/null; } 2>&1); then
-    warn "bd kept $TASK_ID open: $(tail -n1 <<<"$out")"
+    warn "bd kept $TASK_ID open: $(tail -n1 <<<"$out"); close it once bd lets you (bd -C $repo close $TASK_ID): until then factory clean keeps its branch, and the tasks it blocks wait"
   fi
   run_end "done"
   toast "$TASK_ID done" "$TASK_TITLE. ${next^}." "done"
@@ -3941,7 +3942,7 @@ cmd_clean() {
         why=merged
         ((force)) && why=dropped
         if ! out=$({ bd -C "$repo" close "$id" -r "Factory clean: branch $branch $why" >/dev/null; } 2>&1); then
-          warn "bd kept $id open: $(tail -n1 <<<"$out")"
+          warn "bd kept $id open: $(tail -n1 <<<"$out"); close it once bd lets you (bd -C $repo close $id)"
         fi
       fi
       log "cleaned $branch${ws:+ (workspace $ws)}"

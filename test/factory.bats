@@ -2977,10 +2977,11 @@ JSON
         ;;
     esac
   }
-  run cmd_clean "$REPO" toy-p --force
-  [ "$status" -eq 0 ]
-  [[ $output == *"bd kept toy-p open: cannot close toy-p: 1 open child issue(s)"* ]]
-  [[ $output == *"cleaned factory/toy-p"* ]]
+  # not through run, which turns errexit off: the close stopped the clean under it
+  (cmd_clean "$REPO" toy-p --force) >"$TMP/out" 2>&1
+  grep -qF "bd kept toy-p open: cannot close toy-p: 1 open child issue(s); close children first or use --force to override; close it once bd lets you (bd -C " "$TMP/out"
+  grep -qF " close toy-p)" "$TMP/out"
+  grep -qF "cleaned factory/toy-p" "$TMP/out"
   [ -z "$(git -C "$REPO" branch --list 'factory/*')" ]
 }
 
@@ -5474,10 +5475,11 @@ SH
   printf 'echo x\n' >"$TMP/wt-9/run.sh"
   git -C "$TMP/wt-9" commit -qam work
   gate_then_guards builder 1
-  run finish_task "$REPO"
-  [ "$status" -eq 0 ]
-  [[ $output == *"bd kept toy-9 open: cannot close toy-9: 1 open child issue(s); close children first or use --force to override"* ]]
-  [[ $output == *"done: branch factory/toy-9"* ]]
+  # not through run, which turns errexit off: the close stopped the run under it
+  (finish_task "$REPO") >"$TMP/out" 2>&1
+  grep -qF "bd kept toy-9 open: cannot close toy-9: 1 open child issue(s); close children first or use --force to override; close it once bd lets you (bd -C " "$TMP/out"
+  grep -qF " close toy-9): until then factory clean keeps its branch, and the tasks it blocks wait" "$TMP/out"
+  grep -qF "done: branch factory/toy-9" "$TMP/out"
 }
 
 @test "metric: an event is a JSON line beside the tasks' state, digits as numbers; outside a task there is none" {

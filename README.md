@@ -255,7 +255,8 @@ rounds over: up to `FACTORY_ROUNDS` more of gate, guardrails and reviews, as the
 often object to what it changed, until both approve and you are asked again. Look at the
 worktree, or talk to the builder in its pane after Esc on its dialog, first if you like.
 
-**Merge.** On approval the bead is closed and you get a toast; the branch, named
+**Merge.** On approval the bead is closed, unless bd keeps it open for an open blocker or
+child, which Factory then tells you, and you get a toast; the branch, named
 `factory/<bead-id>-<title-slug>` and checked out under Herdr's worktree directory as
 `<repo>/factory-<bead-id>`, is yours to merge. Otherwise the bead stays in progress
 with a comment saying why, and the workspace stays open. Once merged (squash merges count
