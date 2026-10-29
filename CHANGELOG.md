@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `factory stats` counted the time you took to answer an agent's own question as the agents'
+  time, almost four hours of one build turn on a real task: Herdr's detection rules
+  2026.10.11.1, in Herdr 0.9.5 and fetched by older ones, read such a dialog as blocked, and
+  Factory then timed the wait as part of the turn. It counts as yours now, as does a wait in
+  any other dialog, and a turn a run stops or fails in counts as the agents' up to then;
+  runs recorded before stay as they were.
+
 ## [0.3.0] - 2026-10-29
 
 Upgrading from 0.2.x: Factory's install pins Beads 1.3.2 now, which migrates a repo's task

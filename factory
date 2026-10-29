@@ -453,10 +453,17 @@ start_agent() {
 }
 
 # ask name text: one turn of the agent (take_turn), recorded with the time it took
-ask() {
+ask() { timed_turn take_turn "$@"; }
+
+# timed_turn fn name [args]: fn runs the rest of the agent's turn, recorded (turn) with the
+# time it took, and so far by a run that ends in it (run_end). Factory stats takes the time
+# the human answers in a turn (question) from the turn's, so the turn must be on record too.
+timed_turn() {
   local t0=$SECONDS
-  take_turn "$@"
-  metric turn agent "${1##*-}" secs $((SECONDS - t0))
+  TURN_AT=$t0 TURN_AGENT=${2##*-}
+  "$@"
+  TURN_AT=""
+  metric turn agent "${2##*-}" secs $((SECONDS - t0))
 }
 
 # take_turn name text: send a prompt and wait for the turn to settle, handing blocks to the human.
@@ -528,13 +535,16 @@ question_on_screen() {
     /^[[:space:]]*❯/ && !/^[[:space:]]*❯[[:space:]]*[0-9]+\./ {last = "prompt"} END {exit last != "question"}'
 }
 
-# asking name: the agent waits for the human's answer in a question dialog. Herdr can read such
-# an agent as idle (in Factory's panes Claude Code draws a rule below the dialog's footer, and
-# Herdr looks for the footer below the last rule), so Factory looks itself. The mark the
-# dialog's hook left names the tool call: the question is open until the session's transcript
-# has the call's result, which an answer, Esc and Chat about this all write, whatever the screen
-# shows meanwhile (an editor, the transcript view). An agent without the hook, or a session
-# without a transcript, goes by its screen alone. Codex, the reviewer, asks in no such dialog.
+# asking name: the agent waits for the human's answer in a question dialog. Herdr's detection
+# rules before 2026.10.11.1 could read such an agent as idle (in Factory's panes Claude Code
+# draws a rule with the session's name below the dialog's footer, and they looked for the
+# footer below the last rule); 2026.10.11.1 reads it as blocked while nothing but that rule
+# follows the footer. A Herdr that fetches no rules keeps its older ones, so Factory looks
+# itself. The mark the dialog's hook left names the tool call: the question is open until the
+# session's transcript has the call's result, which an answer, Esc and Chat about this all
+# write, whatever the screen shows meanwhile (an editor, the transcript view). An agent
+# without the hook, or a session without a transcript, goes by its screen alone. Codex, the
+# reviewer, asks in no such dialog.
 asking() {
   local mark id="" tp="" txt
   mark=$(asking_mark "$1") || return 1
@@ -592,15 +602,19 @@ await_answer() {
 
 # unblock name: a blocked agent gets the dialog settler first; an unknown dialog, or a question
 # the agent asks the human, goes to the human, each time it asks. Returns once the agent is
-# idle or done.
+# idle or done. Herdr's detection rules 2026.10.11.1 read a question dialog as blocked, so
+# the agent's own questions come here rather than to await_answer; as there, the wait for the
+# human is theirs in factory stats (question), and so is one for any other dialog.
 unblock() {
-  local name=$1 status
+  local name=$1 status t0
   settle_dialogs "$name" quiet
   status=$(agent_status "$name")
   while [[ $status == blocked ]]; do
     attention "$name" "is waiting for your input"
+    t0=$SECONDS
     # once answered, its turn goes on to its end, or it asks again
     wait_for "$name" "$TURN_TIMEOUT_MS" working idle "done" >/dev/null
+    metric question agent "${name##*-}" secs $((SECONDS - t0))
     status=$(wait_for "$name" "$TURN_TIMEOUT_MS" idle "done" blocked)
   done
 }
@@ -2659,6 +2673,10 @@ run_begins() {
 run_end() {
   [[ ${RUN_ENDED:-1} == 0 ]] || return 0
   RUN_ENDED=1
+  if [[ -n ${TURN_AT:-} ]]; then # a turn the run ends in, so far (timed_turn)
+    metric turn agent "$TURN_AGENT" secs $((SECONDS - TURN_AT))
+    TURN_AT=""
+  fi
   metric end outcome "$@" step "${STEP:-}"
   [[ $1 != interrupted && $1 != failed ]] || return 0
   local name
@@ -2903,7 +2921,8 @@ relaunch_restored() {
   launch_args "$role" "$2"
   launched_with "$name" "${AGENT_ARGS[@]}" || rc=$?
   ((rc == 1)) || return 0
-  turn_ends "$name" # never cut a turn short; and a tool its turn ran held the pane's foreground
+  # never cut a turn short; and a tool its turn ran held the pane's foreground
+  timed_turn turn_ends "$name"
   rc=0
   launched_with "$name" "${AGENT_ARGS[@]}" || rc=$?
   ((rc == 1)) || return 0
@@ -3022,7 +3041,8 @@ plan_phase() {
   PLAN_VERDICT=""
   if [[ $round =~ ^[1-9][0-9]*$ && -s $WT/$RUN_DIR/plan.md ]]; then
     log "the plan is already written; not planning again"
-    turn_ends "$PLAN_AGENT" # a revision the stopped run asked for may still be under way
+    # a revision the stopped run asked for may still be under way
+    timed_turn turn_ends "$PLAN_AGENT"
   else
     round=1
     log "planning"

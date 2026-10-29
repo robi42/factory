@@ -388,15 +388,15 @@ There is no daemon and no protocol: one foreground Bash process per task talks t
 over its socket CLI. It creates the worktree workspace and panes, starts `claude` and
 `codex` in them, sends each prompt with `herdr agent prompt`, and waits on Herdr's agent
 lifecycle (`working`, `idle`, `blocked`). It reads an agent's screen only for dialogs: the
-startup dialogs it clears, and Claude Code's question dialogs, which Herdr can take for an
-idle agent, so that it neither types into one nor counts it as the end of a turn. It also
-waits for the prompt box of an agent it restarted, which Herdr reports ready while its
-session still loads. Handoffs between roles are files in the worktree's `.factory/run/`:
-the plan, the reviews with a verdict line, the gate log. Each agent also replies with what
-it wrote, so its pane shows the plan or the review; a review ends with its step and round
-(`PLAN REVIEW round 1`, `CODE REVIEW round 2`) above the verdict. Factory never trusts an
-agent's word for "done": it checks the file exists, runs the gate itself, and inspects the
-diff.
+startup dialogs it clears, and Claude Code's question dialogs, which older Herdr detection
+rules can take for an idle agent, so that it neither types into one nor counts it as the
+end of a turn. It also waits for the prompt box of an agent it restarted, which Herdr
+reports ready while its session still loads. Handoffs between roles are files in the
+worktree's `.factory/run/`: the plan, the reviews with a verdict line, the gate log. Each
+agent also replies with what it wrote, so its pane shows the plan or the review; a review
+ends with its step and round (`PLAN REVIEW round 1`, `CODE REVIEW round 2`) above the
+verdict. Factory never trusts an agent's word for "done": it checks the file exists, runs
+the gate itself, and inspects the diff.
 
 Because the state is the worktree, Beads and Factory's own state for the task (see Run
 artifacts), the orchestrator is disposable. Kill it or Ctrl-C it: the agents, worktree and

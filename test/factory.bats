@@ -3626,7 +3626,7 @@ EOF
   [[ $output == *"no idle done within 2 min and it is unknown"* ]]
 }
 
-@test "unblock and wait_for: each question the agent asks is announced, and a wait on the human never times out" {
+@test "unblock and wait_for: each question the agent asks is announced and timed as the human's, and a wait on the human never times out" {
   fake_task
   : >"$TMP/waits"
   herdr() {
@@ -3636,7 +3636,10 @@ EOF
       "agent wait"*)
         printf '%s\n' "$*" >>"$TMP/waits"
         case $(wc -l <"$TMP/waits") in
-          2) printf '{"result":{"agent":{"agent_status":"blocked"}}}' ;; # it asks again
+          2) # the rest of the turn, which takes a while, then it asks again
+            sleep 3
+            printf '{"result":{"agent":{"agent_status":"blocked"}}}'
+            ;;
           4) printf '{"result":{"agent":{"agent_status":"done"}}}' ;;
           *) printf '{"result":{"agent":{"agent_status":"working"}}}' ;;
         esac
@@ -3646,6 +3649,10 @@ EOF
   run unblock planner
   [ "$status" -eq 0 ]
   [ "$(grep -c 'planner is waiting for your input' <<<"$output")" -eq 2 ]
+  # each wait on the human is theirs in factory stats, as a question await_answer sees is, and
+  # only that wait: the rest of the turn is the agent's
+  [ "$(jq -s '[.[] | select(.event == "question" and .agent == "planner")] | length' "$TMP/events.jsonl")" -eq 2 ]
+  [ "$(jq -s '[.[] | select(.event == "question") | .secs] | max' "$TMP/events.jsonl")" -le 1 ]
   # past the turn timeout, a question still open gets one reminder, and the wait goes on
   : >"$TMP/chunks"
   herdr() {
@@ -5506,6 +5513,22 @@ SH
   [ "$output" = "{\"event\":\"run\",\"from\":\"written\",\"version\":\"$FACTORY_VERSION\",\"plan\":2,\"build\":2,\"review\":2,\"approval\":\"ask\"}" ]
   run jq -c 'select(.event != "run") | del(.t, .task)' "$TMP/events.jsonl"
   [ "$output" = '{"event":"end","outcome":"failed","step":"building"}' ]
+}
+
+@test "timed_turn and run_end: a turn is recorded as it ends, and so far when the run ends in it" {
+  fake_task
+  RUN_ENDED=0
+  rest_of_turn() { :; }
+  timed_turn rest_of_turn toy-1-plan
+  [ -z "$TURN_AT" ]
+  # a turn the run stops in, as by Ctrl-C after the human answered in it, is the agents' so far,
+  # so that factory stats has a turn to take the answer's time from
+  TURN_AT=$((SECONDS - 7)) TURN_AGENT=build
+  run_end interrupted
+  [ -z "$TURN_AT" ]
+  [ "$(jq -sr '.[0] | "\(.event) \(.agent) \(.secs <= 1)"' "$TMP/events.jsonl")" = "turn plan true" ]
+  [ "$(jq -sr '.[1] | "\(.event) \(.agent) \(.secs >= 7 and .secs <= 8)"' "$TMP/events.jsonl")" = "turn build true" ]
+  [ "$(jq -sr '.[2] | "\(.event) \(.outcome)"' "$TMP/events.jsonl")" = "end interrupted" ]
 }
 
 @test "run_end: once a run; an orderly end records each agent's tokens from its transcript, a Claude Code message once, its subagents' too" {
