@@ -77,6 +77,9 @@ should not.
 
 ## The repos (once each, as `factory`)
 
+Origin must hold the repo's tasks first (see below): on bd 1.3, a bootstrap that finds none
+there starts an empty database, which will not take them later.
+
 ```sh
 git clone https://github.com/you/app.git ~/src/app
 cd ~/src/app
@@ -92,7 +95,9 @@ remote pushes them, Factory after each task. If origin has none yet, put them th
 your clone first: `bd dolt remote add origin git+https://github.com/you/app.git`, then
 `bd dolt push`. Both clones then hold the tasks: file and change them in one of them, the
 user's say (`sudo -iu factory fy add ~/src/app "..."`), or `bd dolt pull` before you
-change them in the other.
+change them in the other. If a bootstrap made an empty database all the same, move
+`.beads/embeddeddolt` aside and run `bd bootstrap --yes` again; never `bd dolt push --force`
+from it, which would replace origin's tasks with none.
 
 ## Running
 

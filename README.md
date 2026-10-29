@@ -108,7 +108,9 @@ tokens, 98% of them cached, and wrote 0.9M.
    ```
 3. Make `bd`, and `fy` for the `!fy` commands, resolve from a fresh login shell, because
    Claude Code runs its commands from one: `bd` through mise's global config, `fy` through
-   `~/.local/bin` on that shell's PATH:
+   `~/.local/bin` on that shell's PATH. Where a repo already has tasks from bd 1.2, on this
+   machine or another, follow [Moving a repo's tasks to bd 1.3](#moving-a-repos-tasks-to-bd-13)
+   instead of the first line below: bd 1.3 migrates what bd 1.2 then cannot read.
    ```sh
    mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'
    # in ~/.bash_profile, unless ~/.local/bin is on its PATH already:
@@ -118,6 +120,51 @@ tokens, 98% of them cached, and wrote 0.9M.
 4. Check: `fy doctor` reports the tools a run, `fy next` and pull requests need, the git
    version, whether the Herdr server answers, the guardrails file, and whether `bd` and
    `fy` resolve from a login shell; fix what it marks MISSING and run it again.
+
+### Moving a repo's tasks to bd 1.3
+
+Only for a repo with tasks from bd 1.2, which Factory installed up to 0.2. bd 1.3 migrates a
+repo's task database for good on the first command there that reads the tasks, such as
+`bd list`, in seconds and with every task kept; after that, bd 1.2 cannot read it, there or
+in a clone that pulls it. Where the database syncs to a remote, only one clone may migrate
+it, and none may write meanwhile:
+
+1. From now until the last clone has moved, write nothing in any clone of the repo: no
+   `fy run`, `add`, `next` or `clean`, no `bd create`, `update` or `close`; reads are fine.
+   Keep a copy of the tasks: `bd export --all -o ~/app-tasks.jsonl`.
+2. While every clone is still on bd 1.2, in each in turn `bd dolt pull`, then
+   `bd dolt push`; then `bd dolt pull` once more in each, so that all hold the same.
+3. On one machine, upgrade bd (`mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'`, and
+   `git pull && mise install` in Factory's checkout), and check that `bash -lc 'bd version'`
+   says 1.3.2. Then in the repo run `bd list`, which migrates it, `bd recompute-blocked`,
+   which fixes the blocked flags the migration may set wrongly, as bd 1.3.2's release notes
+   say, and `bd dolt push`.
+4. In each other clone, `bd dolt pull` while still on bd 1.2, then upgrade bd there too and
+   run `bd recompute-blocked`. The user of [extras/factory-user](extras/factory-user/) is one
+   more clone, with a bd of its own:
+   `sudo -iu factory mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'`.
+
+A repo whose tasks never reached its remote, as with `FACTORY_BD_PUSH=0`, still counts as
+synced to it, since `bd init` set the remote up, so bd 1.3 will not migrate it on its own
+and blocks writes. Push nothing there: instead of steps 2 to 4, run `bd migrate --force` and
+`bd recompute-blocked` in the repo, which migrate it in place.
+
+If a clone gets stuck anyway:
+
+- bd 1.3 says "refusing to auto-apply … pending schema migrations" and `bd list` fails: the
+  clone was upgraded before its pull. Pull once with the old bd:
+  `mise exec 'ubi:gastownhall/beads[exe=bd]@1.2.2' -- bd dolt pull`.
+- That pull fails with "merge conflicts in events": the clone wrote during the move. Save
+  its tasks with the old bd (`mise exec … -- bd export --all -o ~/stuck.jsonl`), then, in a
+  fresh clone of the repo on bd 1.3, `bd bootstrap --yes`, `bd import ~/stuck.jsonl` and
+  `bd dolt push`.
+- The migrated clone's push is refused, and its pull says "local changes would be stomped
+  by merge: events": another clone pushed in between. Upgrade bd in that one and
+  `bd dolt push` there; then `bd dolt pull` and `bd dolt push` in the first.
+
+bd 1.3 also keeps a lock file, `.beads.gate.lock`, at the top of the checkout, which a repo
+set up with bd 1.2 does not ignore: add `*.gate.lock*` to its `.gitignore`, as `bd init`
+does now.
 
 ## First task
 
@@ -637,9 +684,10 @@ instead, with no outer frame, so only the review pane, under the planner's, show
 name. Herdr's defaults frame every pane: set `pane_outer_borders = true` and
 `pane_gaps = true` under `[ui]` in the same file, and apply them the same way.
 
-**Herdr agent integrations.** `herdr integration install claude` and `codex` switch
-Herdr from screen heuristics to hook-based agent state, which makes idle and blocked
-detection more reliable. Factory handles the known startup dialogs either way, and hands
+**Herdr agent integrations.** `herdr integration install claude` switches Herdr from
+screen heuristics to hook-based state for Claude Code, which makes idle and blocked
+detection more reliable; `codex` did so for Codex until Herdr 0.9.5, which reads Codex's
+screen again. Factory handles the known startup dialogs either way, and hands
 one it cannot clear to you, waiting for your answer as long as you need.
 
 **Beads housekeeping.** `fy init` sets `beads.role` so Beads stops warning, and gives the
@@ -649,13 +697,13 @@ Left to itself, bd inherits the prefix of a `.beads` in a directory above, such 
 Town's `hq`, and `bd rename-prefix` renames an existing one. Factory takes a bead id only
 as lowercase letters and digits on either side of one hyphen, starting with a letter
 (`ab-x7k`), and a child's numbers after dots (`ab-x7k.1`); `fy run` files anything else,
-and an id bd does not know, as the title of a new task. Untrack
-`.beads/interactions.jsonl` yourself to keep `git status` quiet.
+and an id bd does not know, as the title of a new task.
 
 **A private repo for the tasks.** On a public code repo, the tasks and the agents' notes
 can live in a private repo of their own, as Factory pushes wherever Beads does. That repo
-needs a first commit, since Dolt does not push into an empty one, and `bd config set`
-commits its change to `.beads/config.yaml` itself, for your next push:
+needs a first commit, since Dolt does not push into an empty one, and the code repo needs
+the change `bd config set` makes to `.beads/config.yaml`, which bd does not commit: a fresh
+clone without it would start an empty database and push its tasks to the code repo again.
 
 ```sh
 gh repo create you/app-beads --private --add-readme
@@ -663,6 +711,8 @@ bd -C ~/src/app dolt remote remove origin
 bd -C ~/src/app dolt remote add origin git+https://github.com/you/app-beads.git
 bd -C ~/src/app config set sync.remote git+https://github.com/you/app-beads.git
 bd -C ~/src/app dolt push
+git -C ~/src/app commit -m 'chore: the tasks live in app-beads' .beads/config.yaml
+git -C ~/src/app push
 git -C ~/src/app push origin --delete refs/dolt/data refs/heads/__dolt_remote_info__
 ```
 

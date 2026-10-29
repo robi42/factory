@@ -5,11 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Upgrading from 0.2.x: Factory's install pins Beads 1.3.2 now, which migrates a repo's task
+database for good; bd 1.2 then cannot read it, there or in a clone that pulls it. Move each
+repo's clones as the README's "Moving a repo's tasks to bd 1.3" says: one clone migrates,
+with no writes anywhere meanwhile, and a repo that kept its tasks local (`FACTORY_BD_PUSH=0`)
+runs `bd migrate --force` instead. Factory 0.3.0 runs on bd 1.2 too, so a repo can wait; till
+it has moved, run `fy` from outside Factory's checkout, whose `mise.toml` now picks bd 1.3.2.
+
 ### Changed
-- Factory installs Beads 1.3.2, up from 1.2.2. bd 1.3 migrates a repo's task database on its
-  first command there, and bd 1.2 refuses the database after that. Upgrade bd in every clone
-  of a repo at once, after a last `bd dolt push` with the old one where the database syncs to
-  a remote, then run `bd recompute-blocked` once in each repo, as bd's release notes ask.
+- Factory installs Beads 1.3.2, up from 1.2.2.
 - `factory next` and `queue` take the oldest of equally urgent tasks first, as bd 1.3's
   `bd ready` orders them, and `factory tasks` lists them that way.
 
