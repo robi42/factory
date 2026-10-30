@@ -50,10 +50,9 @@ isolate a run. Whenever an agent stops for a question or an approval you get a H
 
 Status: early. Built and used by one person on Arch Linux, with Claude Max 20x and Codex
 on ChatGPT Plus; expect rough edges elsewhere. The first three tasks `fy stats` recorded,
-features of a Rust and Qt desktop app at 2,300 to 5,200 added lines each, all merged. On
-average each took 7 hours of the agents' time, 3.3 plan and 8.7 build rounds, 10
-objections from the reviewers and 4 notes from the human, and the agents read 213M
-tokens, 98% of them cached, and wrote 0.9M.
+features of a Rust and Qt desktop app at 2,300 to 5,200 added lines each, were all
+merged. On average the agents worked on each for about 5 hours and read 213M tokens,
+nearly all of them cached.
 
 ## How a run goes
 
