@@ -19,7 +19,7 @@ alias used below.
 - **Reviews are dual.** The plan is checked by Codex and by the builder who has to
   execute it; the build by Codex and by the planner who wrote the plan. Reviewers look
   for bugs, missed requirements, shortcuts, security and design problems. Both must approve.
-- **[Beads](https://github.com/gastownhall/beads)** (`bd`), a lightweight issue tracker,
+- **[Beads](https://beads.gascity.com/)** (`bd`), a lightweight issue tracker,
   is the task queue and the memory: tasks are beads, with ids like `ap-k3x`, and agents
   leave `bd remember` notes that later runs see. The database is pushed to the repo's Git
   remote, as `refs/dolt/data`, so it survives the machine; on a public repo anyone can
@@ -87,7 +87,7 @@ tokens, 98% of them cached, and wrote 0.9M.
 - [Herdr](https://herdr.dev), [Claude Code](https://code.claude.com/docs)
   and [Codex](https://github.com/openai/codex).
 - [mise](https://mise.jdx.dev), which installs the dev tools and
-  [Beads](https://github.com/gastownhall/beads) (`bd`) from `mise.toml`; `jq`, `git` 2.31
+  [Beads](https://beads.gascity.com/) (`bd`) from `mise.toml`; `jq`, `git` 2.31
   or newer, `flock` (util-linux) for `fy next` and `fy queue`, and `gh` for pull requests,
   with a Copilot subscription for the Copilot review they get (`--no-copilot` skips it).
 
@@ -120,51 +120,6 @@ tokens, 98% of them cached, and wrote 0.9M.
 4. Check: `fy doctor` reports the tools a run, `fy next` and pull requests need, the git
    version, whether the Herdr server answers, the guardrails file, and whether `bd` and
    `fy` resolve from a login shell; fix what it marks MISSING and run it again.
-
-### Moving a repo's tasks to bd 1.3
-
-Only for a repo with tasks from bd 1.2, which Factory installed up to 0.2. bd 1.3 migrates a
-repo's task database for good on the first command there that reads the tasks, such as
-`bd list`, in seconds and with every task kept; after that, bd 1.2 cannot read it, there or
-in a clone that pulls it. Where the database syncs to a remote, only one clone may migrate
-it, and none may write meanwhile:
-
-1. From now until the last clone has moved, write nothing in any clone of the repo: no
-   `fy run`, `add`, `next` or `clean`, no `bd create`, `update` or `close`; reads are fine.
-   Keep a copy of the tasks: `bd export --all -o ~/app-tasks.jsonl`.
-2. While every clone is still on bd 1.2, in each in turn `bd dolt pull`, then
-   `bd dolt push`; then `bd dolt pull` once more in each, so that all hold the same.
-3. On one machine, upgrade bd (`mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'`, and
-   `git pull && mise install` in Factory's checkout), and check that `bash -lc 'bd version'`
-   says 1.3.2. Then in the repo run `bd list`, which migrates it, `bd recompute-blocked`,
-   which fixes the blocked flags the migration may set wrongly, as bd 1.3.2's release notes
-   say, and `bd dolt push`.
-4. In each other clone, `bd dolt pull` while still on bd 1.2, then upgrade bd there too and
-   run `bd recompute-blocked`. The user of [extras/factory-user](extras/factory-user/) is one
-   more clone, with a bd of its own:
-   `sudo -iu factory mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'`.
-
-A repo whose tasks never reached its remote, as with `FACTORY_BD_PUSH=0`, still counts as
-synced to it, since `bd init` set the remote up, so bd 1.3 will not migrate it on its own
-and blocks writes. Push nothing there: instead of steps 2 to 4, run `bd migrate --force` and
-`bd recompute-blocked` in the repo, which migrate it in place.
-
-If a clone gets stuck anyway:
-
-- bd 1.3 says "refusing to auto-apply … pending schema migrations" and `bd list` fails: the
-  clone was upgraded before its pull. Pull once with the old bd:
-  `mise exec 'ubi:gastownhall/beads[exe=bd]@1.2.2' -- bd dolt pull`.
-- That pull fails with "merge conflicts in events": the clone wrote during the move. Save
-  its tasks with the old bd (`mise exec … -- bd export --all -o ~/stuck.jsonl`), then, in a
-  fresh clone of the repo on bd 1.3, `bd bootstrap --yes`, `bd import ~/stuck.jsonl` and
-  `bd dolt push`.
-- The migrated clone's push is refused, and its pull says "local changes would be stomped
-  by merge: events": another clone pushed in between. Upgrade bd in that one and
-  `bd dolt push` there; then `bd dolt pull` and `bd dolt push` in the first.
-
-bd 1.3 also keeps a lock file, `.beads.gate.lock`, at the top of the checkout, which a repo
-set up with bd 1.2 does not ignore: add `*.gate.lock*` to its `.gitignore`, as `bd init`
-does now.
 
 ## First task
 
@@ -740,6 +695,51 @@ export FACTORY_WORKSPACE_SCRIPT=~/Projects/factory/extras/workspace-tabs/tabs
 
 ![The glow tab of that Rust task's workspace: the plan on the left; on the right the builder's review of the plan above Codex's, which ends in its verdict](assets/screenshot-glow.png)
 
+## Moving a repo's tasks to bd 1.3
+
+Only for a repo with tasks from bd 1.2, which Factory installed up to 0.2. bd 1.3 migrates a
+repo's task database for good on the first command there that reads the tasks, such as
+`bd list`, in seconds and with every task kept; after that, bd 1.2 cannot read it, there or
+in a clone that pulls it. Where the database syncs to a remote, only one clone may migrate
+it, and none may write meanwhile:
+
+1. From now until the last clone has moved, write nothing in any clone of the repo: no
+   `fy run`, `add`, `next` or `clean`, no `bd create`, `update` or `close`; reads are fine.
+   Keep a copy of the tasks: `bd export --all -o ~/app-tasks.jsonl`.
+2. While every clone is still on bd 1.2, in each in turn `bd dolt pull`, then
+   `bd dolt push`; then `bd dolt pull` once more in each, so that all hold the same.
+3. On one machine, upgrade bd (`mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'`, and
+   `git pull && mise install` in Factory's checkout), and check that `bash -lc 'bd version'`
+   says 1.3.2. Then in the repo run `bd list`, which migrates it, `bd recompute-blocked`,
+   which fixes the blocked flags the migration may set wrongly, as bd 1.3.2's release notes
+   say, and `bd dolt push`.
+4. In each other clone, `bd dolt pull` while still on bd 1.2, then upgrade bd there too and
+   run `bd recompute-blocked`. The user of [extras/factory-user](extras/factory-user/) is one
+   more clone, with a bd of its own:
+   `sudo -iu factory mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'`.
+
+A repo whose tasks never reached its remote, as with `FACTORY_BD_PUSH=0`, still counts as
+synced to it, since `bd init` set the remote up, so bd 1.3 will not migrate it on its own
+and blocks writes. Push nothing there: instead of steps 2 to 4, run `bd migrate --force` and
+`bd recompute-blocked` in the repo, which migrate it in place.
+
+If a clone gets stuck anyway:
+
+- bd 1.3 says "refusing to auto-apply … pending schema migrations" and `bd list` fails: the
+  clone was upgraded before its pull. Pull once with the old bd:
+  `mise exec 'ubi:gastownhall/beads[exe=bd]@1.2.2' -- bd dolt pull`.
+- That pull fails with "merge conflicts in events": the clone wrote during the move. Save
+  its tasks with the old bd (`mise exec … -- bd export --all -o ~/stuck.jsonl`), then, in a
+  fresh clone of the repo on bd 1.3, `bd bootstrap --yes`, `bd import ~/stuck.jsonl` and
+  `bd dolt push`.
+- The migrated clone's push is refused, and its pull says "local changes would be stomped
+  by merge: events": another clone pushed in between. Upgrade bd in that one and
+  `bd dolt push` there; then `bd dolt pull` and `bd dolt push` in the first.
+
+bd 1.3 also keeps a lock file, `.beads.gate.lock`, at the top of the checkout, which a repo
+set up with bd 1.2 does not ignore: add `*.gate.lock*` to its `.gitignore`, as `bd init`
+does now.
+
 ## Why so lean
 
 Factory is a single Bash script of about four thousand lines, and that is the point.
@@ -779,7 +779,7 @@ Factory borrows deliberately, and leaves out even more deliberately.
   work is done. Factory keeps the roles, the interview, the dual plan review and the loop,
   and drops the harness around them.
 - [Gas Town](https://github.com/gastownhall/gastown) and
-  [Beads](https://github.com/gastownhall/beads) showed that agents need a work ledger
+  [Beads](https://beads.gascity.com/) showed that agents need a work ledger
   that outlives a session: tasks, comments and memories in a database beside the code,
   pushed with it. Factory uses Beads as is and skips the town.
 - [AI Guardrails](https://github.com/florianbuetow/ai-guardrails) showed that the rules
