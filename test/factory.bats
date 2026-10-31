@@ -3262,13 +3262,22 @@ JSON
   [[ $(cut -d' ' -f1-2 "$TMP/herdr.log" | paste -sd,) == *"agent prompt"*"agent wait"*"agent prompt"* ]]
 }
 
-@test "asking: the transcript tells whether a marked question is open; without one, the screen: a dialog in the prompt box's place" {
+@test "asking: a marked question is open from its call in the transcript to its result there; otherwise the screen says: a dialog in the prompt box's place" {
   WT=$TMP PLAN_AGENT=t-plan
   local run="$TMP/.factory/run" tp="$TMP/transcript.jsonl"
   mkdir -p "$run"
   herdr() { cat "$TMP/screen"; }
-  : >"$TMP/screen" # an editor or the transcript view: nothing of the dialog shows
+  printf '✻ Crunched for 54m 2s\n────\n❯ just fixture\n────\n' >"$TMP/screen" # the next prompt Claude Code suggests
+  # a mark whose call no transcript holds, as Claude Code 2.1.314 has left after a turn
+  printf 'toolu_9\t%s\n' "$tp" >"$run/asking-plan"
   : >"$tp"
+  run asking t-plan
+  [ "$status" -eq 1 ]
+  [ -e "$run/asking-plan" ] # the next turn's end clears it
+  # the question's call in the transcript: open, though an editor or the transcript view
+  # shows nothing of the dialog
+  : >"$TMP/screen"
+  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"AskUserQuestion"}]}}\n' >"$tp"
   printf 'toolu_1\t%s\n' "$tp" >"$run/asking-plan"
   asking t-plan
   printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true}]}}\n' >>"$tp"
@@ -3331,7 +3340,7 @@ JSON
   local run="$TMP/.factory/run" tp="$TMP/transcript.jsonl"
   mkdir -p "$run"
   printf '{}' >"$run/hooks-build.json"
-  : >"$tp"
+  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"AskUserQuestion"}]}}\n' >"$tp"
   printf 'toolu_1\t%s\n' "$tp" >"$run/asking-build" # the approval dialog's hook marked it
   herdr() {
     printf '%s\n' "$*" >>"$TMP/herdr.log"

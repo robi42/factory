@@ -540,18 +540,22 @@ question_on_screen() {
 # draws a rule with the session's name below the dialog's footer, and they looked for the
 # footer below the last rule); 2026.10.11.1 reads it as blocked while nothing but that rule
 # follows the footer. A Herdr that fetches no rules keeps its older ones, so Factory looks
-# itself. The mark the dialog's hook left names the tool call: the question is open until the
-# session's transcript has the call's result, which an answer, Esc and Chat about this all
-# write, whatever the screen shows meanwhile (an editor, the transcript view). An agent
-# without the hook, or a session without a transcript, goes by its screen alone. Codex, the
-# reviewer, asks in no such dialog.
+# itself. The mark the dialog's hook left names the tool call: the question is open from the
+# call in the session's transcript until the call's result there, which an answer, Esc and
+# Chat about this all write, whatever the screen shows meanwhile (an editor, the transcript
+# view). A mark whose call the transcript lacks marks no question: Claude Code 2.1.314 has run
+# the hook seconds after a turn ended, for a call that no transcript holds and no screen
+# showed, and a run waited on it for hours (twice, on real tasks). The next turn's end clears
+# such a mark, and a real question's may come a moment before its call is written, so it
+# stays. It, an agent without the hook, and a session without a transcript go by the screen
+# alone. Codex, the reviewer, asks in no such dialog.
 asking() {
   local mark id="" tp="" txt
   mark=$(asking_mark "$1") || return 1
   if [[ -s $mark ]]; then
     IFS=$'\t' read -r id tp <"$mark"
   fi
-  if [[ -n $id && -f $tp ]]; then
+  if [[ -n $id && -f $tp ]] && grep -qF "\"id\":\"$id\"" "$tp"; then
     grep -qF "\"tool_use_id\":\"$id\"" "$tp" || return 0
     rm -f "$mark" # closed with no hook, as by Esc
     return 1

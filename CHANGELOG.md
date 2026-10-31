@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- A run could wait for hours on a question no agent asked, saying the builder was waiting for
+  your input while its pane showed no dialog, and `factory stats` counted the wait as yours:
+  Claude Code 2.1.314 now and then runs the question dialog's hook just after a turn ends, for
+  a tool call that never shows. Factory now trusts the hook's mark only once its call is in
+  the agent's transcript, and otherwise goes by the agent's screen.
+
 ## [0.3.1] - 2026-10-29
 
 ### Fixed
