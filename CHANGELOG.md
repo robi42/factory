@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-01
+
 ### Fixed
 - `factory stats` counted the time a laptop slept as the agents', the gate's or yours: on one
   task, 2h26m of the agents' 4h26m. Factory now times turns, gates and waits by the clock
@@ -662,7 +664,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/robi42/factory/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/robi42/factory/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/robi42/factory/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/robi42/factory/compare/v0.2.1...v0.3.0
