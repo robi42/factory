@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `factory stats` counted the time a laptop slept as the agents', the gate's or yours: on one
+  task, 2h26m of the agents' 4h26m. Factory now times turns, gates and waits by the clock
+  Linux stops while the machine sleeps, which it reads through `perl`; without perl, which
+  `factory doctor` now checks for, by the wall clock as before. Runs recorded before stay as
+  they were.
+
 ## [0.3.2] - 2026-11-01
 
 ### Fixed

@@ -87,8 +87,9 @@ nearly all of them cached.
   and [Codex](https://github.com/openai/codex).
 - [mise](https://mise.jdx.dev), which installs the dev tools and
   [Beads](https://beads.gascity.com/) (`bd`) from `mise.toml`; `jq`, `git` 2.31
-  or newer, `flock` (util-linux) for `fy next` and `fy queue`, and `gh` for pull requests,
-  with a Copilot subscription for the Copilot review they get (`--no-copilot` skips it).
+  or newer, `flock` (util-linux) for `fy next` and `fy queue`, `perl` for times in
+  `fy stats` that leave out the machine's sleep, and `gh` for pull requests, with a Copilot
+  subscription for the Copilot review they get (`--no-copilot` skips it).
 
 ## Install
 
@@ -328,13 +329,13 @@ and the tokens the agents used. `fy clean` leaves it, and `fy stats` sums it up.
 
 `fy stats <repo>` shows a row for each of the latest 20 tasks: its outcome and Factory
 version, its plan and build rounds, how often the gate and the guardrails failed, the
-reviewers' objections, your notes, the time the agents, the gate and you took, and the
-tokens the agents read and wrote. Under the same columns come the means per finished task
-for each Factory version, each naming how many tasks it counts and how many of them were
-done, which tell whether a change to Factory, its prompts or its models helped; then the
-guardrails that failed, by check; and your latest notes, each on one line, cut to fit the
-terminal. What goes wrong again and again shows there, to be turned into a guardrail, a
-check in the gate, or a memory.
+reviewers' objections, your notes, the time the agents, the gate and you took while the
+machine was awake, and the tokens the agents read and wrote. Under the same columns come
+the means per finished task for each Factory version, each naming how many tasks it counts
+and how many of them were done, which tell whether a change to Factory, its prompts or its
+models helped; then the guardrails that failed, by check; and your latest notes, each on
+one line, cut to fit the terminal. What goes wrong again and again shows there, to be
+turned into a guardrail, a check in the gate, or a memory.
 
 ## How it drives the agents
 

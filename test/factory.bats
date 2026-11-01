@@ -4539,6 +4539,17 @@ EOF
   [[ $output == *"ok       flock"* ]]
 }
 
+@test "cmd_doctor: perl, whose clock keeps the machine's sleep out of factory stats, is ok or absent" {
+  herdr() { return 1; } # this machine's server stays out of it,
+  bash() { return 0; }  # and so do its login profile and its bd
+  awake_secs() { echo 5000; }
+  run cmd_doctor
+  [[ $output == *"ok       perl"* ]]
+  awake_secs() { return 1; }
+  run cmd_doctor
+  [[ $output == *"absent   perl (factory stats then counts the time the machine slept)"* ]]
+}
+
 @test "rebase_onto_base: up to date, clean rebase, and conflicts handed to the builder" {
   make_repo
   add_origin
@@ -5538,6 +5549,35 @@ SH
   [ "$(jq -sr '.[0] | "\(.event) \(.agent) \(.secs <= 1)"' "$TMP/events.jsonl")" = "turn plan true" ]
   [ "$(jq -sr '.[1] | "\(.event) \(.agent) \(.secs >= 7 and .secs <= 8)"' "$TMP/events.jsonl")" = "turn build true" ]
   [ "$(jq -sr '.[2] | "\(.event) \(.outcome)"' "$TMP/events.jsonl")" = "end interrupted" ]
+}
+
+@test "time_mark and secs_since: the seconds since a mark the machine was awake; the shell's without awake seconds at both ends, 0 without a mark" {
+  awake_secs() { echo 5600; }
+  mark=$(time_mark)
+  [ "${mark#* }" = 5600 ]
+  # an hour ago by the wall clock, and the machine slept 50 minutes of it
+  mark="$((SECONDS - 3600)) 5000"
+  [ "$(secs_since "$mark")" -eq 600 ]
+  # no awake seconds now, none at the mark, or fewer now than then: the shell's, sleep and all
+  awake_secs() { return 1; }
+  secs=$(secs_since "$mark")
+  [[ $secs -ge 3600 && $secs -le 3601 ]]
+  awake_secs() { echo 5600; }
+  secs=$(secs_since "${mark% *}")
+  [[ $secs -ge 3600 && $secs -le 3601 ]]
+  awake_secs() { echo 4000; }
+  secs=$(secs_since "$mark")
+  [[ $secs -ge 3600 && $secs -le 3601 ]]
+  [ "$(secs_since "")" -eq 0 ]
+}
+
+@test "timed_turn: a turn's time is the seconds the machine was awake in it, by its own clock" {
+  fake_task
+  AWAKE=100
+  awake_secs() { echo "$AWAKE"; }
+  rest_of_turn() { AWAKE=$((AWAKE + 600)); }
+  timed_turn rest_of_turn toy-1-build
+  [ "$(jq -r '"\(.event) \(.agent) \(.secs)"' "$TMP/events.jsonl")" = "turn build 600" ]
 }
 
 @test "run_end: once a run; an orderly end records each agent's tokens from its transcript, a Claude Code message once, its subagents' too" {
