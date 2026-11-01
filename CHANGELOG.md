@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-01
+
 ### Fixed
 - A run could wait for hours on a question no agent asked, saying the builder was waiting for
   your input while its pane showed no dialog, and `factory stats` counted the wait as yours:
@@ -653,7 +655,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/robi42/factory/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/robi42/factory/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/robi42/factory/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/robi42/factory/compare/v0.2.0...v0.2.1
