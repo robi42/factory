@@ -16,7 +16,7 @@ FACTORY_VERSION=0.3.3
 # Knobs; factory help prints the current values. A repo's .factory/env fills in the
 # ones the environment left unset (load_repo_env); flags override both.
 ENV_KNOBS=$(compgen -A variable FACTORY_)
-: "${FACTORY_PLAN_MODEL:=claude-fable-5-1}"
+: "${FACTORY_PLAN_MODEL:=claude-fable-5-2}"
 : "${FACTORY_BUILD_MODEL:=claude-opus-5-5}"
 : "${FACTORY_REVIEW_MODEL:=gpt-6-astra}"
 : "${FACTORY_PLAN_EFFORT:=max}"

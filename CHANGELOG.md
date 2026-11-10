@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The planner defaults to Fable 5.2 (`claude-fable-5-2`), released on 9 November, instead
+  of Fable 5.1; `FACTORY_PLAN_MODEL` still overrides it.
+
 ## [0.3.3] - 2026-11-01
 
 ### Fixed

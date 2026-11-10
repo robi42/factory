@@ -11,7 +11,7 @@ and Codex side by side in Herdr, a terminal workspace manager for AI coding agen
 stops for your approval of the plan and of the build. The CLI is `factory`; `fy` is the
 alias used below.
 
-- **Claude Code** plans (Fable 5.1) and builds (Opus 5.5), each in its own Herdr pane, the
+- **Claude Code** plans (Fable 5.2) and builds (Opus 5.5), each in its own Herdr pane, the
   planner's prompt line purple and the builder's cyan. The plan states the design in a few
   lines: what changes, responsibilities, interfaces.
 - **Codex** reviews (GPT 6 Astra, with web search) in a third pane. Models and their
@@ -518,7 +518,7 @@ holds only the credentials a run needs, as `extras/factory-user/` sets up.
 
 | env | default |
 |---|---|
-| `FACTORY_PLAN_MODEL` | `claude-fable-5-1` |
+| `FACTORY_PLAN_MODEL` | `claude-fable-5-2` |
 | `FACTORY_BUILD_MODEL` | `claude-opus-5-5` |
 | `FACTORY_REVIEW_MODEL` | `gpt-6-astra` |
 | `FACTORY_PLAN_EFFORT` | `max` (`low`, `medium`, `high`, `xhigh`, `max`) |
