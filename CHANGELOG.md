@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-10
+
 ### Changed
 - The planner defaults to Fable 5.2 (`claude-fable-5-2`), released on 9 November, instead
   of Fable 5.1; `FACTORY_PLAN_MODEL` still overrides it.
@@ -668,7 +670,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/robi42/factory/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/robi42/factory/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/robi42/factory/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/robi42/factory/compare/v0.3.0...v0.3.1
