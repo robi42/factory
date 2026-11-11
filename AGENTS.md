@@ -35,3 +35,7 @@ Code and Codex sessions in Herdr panes, with Beads for tasks and mechanical guar
   and the commit message. A CHANGELOG entry is a few lines.
 - A user-visible change gets an entry under `[Unreleased]` in `CHANGELOG.md`: what was
   wrong, what happens now. A release bumps `FACTORY_VERSION` in `factory`.
+- Before a release, `just outdated` lists the pins in `mise.toml` with newer releases; bump
+  them. Move bd's pin only once its release notes say whether it migrates the database,
+  and move it in the README's Install and `extras/factory-user/README.md` as well; the
+  changelog entry says how users follow.

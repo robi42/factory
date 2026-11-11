@@ -804,6 +804,7 @@ Factory borrows deliberately, and leaves out even more deliberately.
 
 ```sh
 just ci      # shfmt, shellcheck, bash -n, guardrails applied to ourselves, codespell, bats
+just outdated # the tools in mise.toml that have newer releases, to check before a release
 ```
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,

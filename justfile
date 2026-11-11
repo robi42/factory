@@ -20,6 +20,7 @@ help:
     @printf "  %-12s %s\n" "spell" "codespell"
     @printf "  %-12s %s\n" "test" "Bats tests"
     @printf "  %-12s %s\n" "ci" "Every check above, fail fast"
+    @printf "  %-12s %s\n" "outdated" "Tools in mise.toml with newer releases (not in ci)"
     @echo ""
 
 fmt:
@@ -56,6 +57,13 @@ test:
     @echo ""
     bats test
     @printf "\033[32m✓ test\033[0m\n"
+
+# Pins only change on purpose: newer releases are listed here, not failed in ci. The
+# newest overall (--bump), not the newest a pin's range allows, which for an exact pin is
+# itself; the project's pins only (--no-global), not the user's global tools.
+outdated:
+    @echo ""
+    mise outdated --bump --no-global
 
 ci:
     #!/usr/bin/env bash
