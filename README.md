@@ -112,11 +112,13 @@ nearly all of them cached.
    machine or another, follow [Moving a repo's tasks to bd 1.3](#moving-a-repos-tasks-to-bd-13)
    instead of the first line below: bd 1.3 migrates what bd 1.2 then cannot read.
    ```sh
-   mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'
+   mise use -g github:gastownhall/beads@1.3.4   # the bd that Factory's mise.toml pins
    # in ~/.bash_profile, unless ~/.local/bin is on its PATH already:
    export PATH="$HOME/.local/bin:$PATH"
    ```
-   Anything your gate needs (`just`, language toolchains) has the same requirement.
+   Anything your gate needs (`just`, language toolchains) has the same requirement. Keep
+   `bd` at the version Factory pins: an older bd refuses a database a newer one has
+   migrated, so a release that moves the pin says in the changelog how to follow.
 4. Check: `fy doctor` reports the tools a run, `fy next` and pull requests need, the git
    version, whether the Herdr server answers, the guardrails file, and whether `bd` and
    `fy` resolve from a login shell, with that `bd`'s version and whether it is the one
@@ -709,15 +711,20 @@ it, and none may write meanwhile:
    Keep a copy of the tasks: `bd export --all -o ~/app-tasks.jsonl`.
 2. While every clone is still on bd 1.2, in each in turn `bd dolt pull`, then
    `bd dolt push`; then `bd dolt pull` once more in each, so that all hold the same.
-3. On one machine, upgrade bd (`mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'`, and
-   `git pull && mise install` in Factory's checkout), and check that `bash -lc 'bd version'`
-   says 1.3.2. Then in the repo run `bd list`, which migrates it, `bd recompute-blocked`,
+3. On one machine, upgrade bd with the `mise use -g` line under [Install](#install), and
+   `git pull && mise install` in Factory's checkout; `fy doctor` then shows bd at the version
+   Factory pins. Then in the repo run `bd list`, which migrates it, `bd recompute-blocked`,
    which fixes the blocked flags the migration may set wrongly, as bd 1.3.2's release notes
    say, and `bd dolt push`.
 4. In each other clone, `bd dolt pull` while still on bd 1.2, then upgrade bd there too and
    run `bd recompute-blocked`. The user of [extras/factory-user](extras/factory-user/) is one
-   more clone, with a bd of its own:
-   `sudo -iu factory mise use -g 'ubi:gastownhall/beads[exe=bd]@1.3.2'`.
+   more clone, with a bd of its own: upgrade it with `sudo -iu factory` and the same line.
+
+bd 1.3 leaves a clone that took the migration by `bd dolt pull` or `bd bootstrap` without
+the tasks' change history (bd's `events`): the clones of step 4, and any cloned later. A
+coming bd release restores it from the clone's own Dolt history; until then, run no
+`bd compact` or `bd flatten` there, which rewrite that history
+([beads#7039](https://github.com/gastownhall/beads/issues/7039)).
 
 A repo whose tasks never reached its remote, as with `FACTORY_BD_PUSH=0`, still counts as
 synced to it, since `bd init` set the remote up, so bd 1.3 will not migrate it on its own
@@ -728,7 +735,7 @@ If a clone gets stuck anyway:
 
 - bd 1.3 says "refusing to auto-apply … pending schema migrations" and `bd list` fails: the
   clone was upgraded before its pull. Pull once with the old bd:
-  `mise exec 'ubi:gastownhall/beads[exe=bd]@1.2.2' -- bd dolt pull`.
+  `mise exec github:gastownhall/beads@1.2.2 -- bd dolt pull`.
 - That pull fails with "merge conflicts in events": the clone wrote during the move. Save
   its tasks with the old bd (`mise exec … -- bd export --all -o ~/stuck.jsonl`), then, in a
   fresh clone of the repo on bd 1.3, `bd bootstrap --yes`, `bd import ~/stuck.jsonl` and

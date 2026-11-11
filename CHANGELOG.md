@@ -5,11 +5,26 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Upgrading from 0.3.x: on each machine, `mise use -g github:gastownhall/beads@1.3.4`, then
+`mise unuse -g ubi:gastownhall/beads`, and `git pull && mise install` in Factory's checkout.
+The user of `extras/factory-user` has a bd of its own: run the same there, as `factory`.
+
 ### Added
 - `factory doctor` gives the version of the bd a fresh login shell finds, and says when it
   differs from the one Factory pins. An older bd refuses a database a newer one has migrated,
   so yours should move when the pin does; a difference is not MISSING, since Factory runs on
   bd 1.2 as well.
+
+### Changed
+- Factory pins Beads 1.3.4, up from 1.3.2. bd 1.3.3 stopped a cloned repo from making bd run
+  a command, through a committed `.beads/.env` or a remote URL shaped like a git option, and
+  fixed data loss in `bd delete`, `bd compact` and upgrades. From 1.3.2 it is a new binary
+  only, with no migration, so machines can move one at a time.
+- Factory installs bd through mise's `github` backend: mise has deprecated `ubi`, the one
+  the install used, and drops it in 2027.1.0.
+- The README's move to bd 1.3 warns against `bd compact` and `bd flatten` in a clone that
+  took the migration by a pull or a bootstrap, which bd 1.3 leaves without the tasks' change
+  history for now.
 
 ## [0.3.4] - 2026-11-10
 
