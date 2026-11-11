@@ -5,6 +5,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `factory doctor` gives the version of the bd a fresh login shell finds, and says when it
+  differs from the one Factory pins. An older bd refuses a database a newer one has migrated,
+  so yours should move when the pin does; a difference is not MISSING, since Factory runs on
+  bd 1.2 as well.
+
 ## [0.3.4] - 2026-11-10
 
 ### Changed

@@ -4550,6 +4550,40 @@ EOF
   [[ $output == *"absent   perl (factory stats then counts the time the machine slept)"* ]]
 }
 
+@test "cmd_doctor: bd from a fresh login shell is named with its version, and one other than Factory's pin is told" {
+  herdr() { return 1; } # this machine's server stays out of it, and so does its login profile
+  bash() { printf 'bd version %s (7ef2fd05e: HEAD@7ef2fd05eb0c)\n' "$BD_V"; }
+  bd_pin() { echo 1.3.4; }
+  BD_V=1.3.4 run cmd_doctor
+  [[ $output == *"ok       bd 1.3.4 from a fresh login shell"* ]]
+  [[ $output != *differs* ]]
+  # a difference is no failure: Factory runs on bd 1.2 as well
+  BD_V=1.2.2 run cmd_doctor
+  [[ $output == *"differs  bd 1.2.2 from a fresh login shell, not the 1.3.4 Factory pins (see the README's Install)"* ]]
+  [[ $output != *"MISSING  bd"* ]]
+  # a bd that does not say its version, or a Factory with no pin, is only named
+  BD_V=dev run cmd_doctor
+  [[ $output == *"ok       bd from a fresh login shell"* ]]
+  bd_pin() { :; }
+  BD_V=1.2.2 run cmd_doctor
+  [[ $output == *"ok       bd 1.2.2 from a fresh login shell"* ]]
+  bash() { return 1; }
+  run cmd_doctor
+  [ "$status" -eq 1 ]
+  [[ $output == *"MISSING  bd from a fresh login shell (agents will not be able to use beads)"* ]]
+}
+
+@test "bd_pin: the bd version Factory's mise.toml pins, in either form mise takes, and nothing without one" {
+  [[ $(bd_pin) =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] # Factory's own mise.toml, so cmd_doctor's check stays alive
+  FACTORY_HOME=$TMP
+  printf '[tools]\nuv = "0.13.7"\n"github:gastownhall/beads" = "1.3.4"\n' >"$TMP/mise.toml"
+  [ "$(bd_pin)" = 1.3.4 ]
+  printf '[tools]\n"ubi:gastownhall/beads" = { version = "1.3.2", exe = "bd" }\n' >"$TMP/mise.toml"
+  [ "$(bd_pin)" = 1.3.2 ]
+  rm "$TMP/mise.toml"
+  [ -z "$(bd_pin)" ]
+}
+
 @test "rebase_onto_base: up to date, clean rebase, and conflicts handed to the builder" {
   make_repo
   add_origin

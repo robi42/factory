@@ -119,7 +119,8 @@ nearly all of them cached.
    Anything your gate needs (`just`, language toolchains) has the same requirement.
 4. Check: `fy doctor` reports the tools a run, `fy next` and pull requests need, the git
    version, whether the Herdr server answers, the guardrails file, and whether `bd` and
-   `fy` resolve from a login shell; fix what it marks MISSING and run it again.
+   `fy` resolve from a login shell, with that `bd`'s version and whether it is the one
+   Factory pins; fix what it marks MISSING and run it again.
 
 ## First task
 
