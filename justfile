@@ -50,7 +50,7 @@ guard:
 
 spell:
     @echo ""
-    codespell factory guardrails.txt justfile README.md AGENTS.md CHANGELOG.md test extras
+    codespell factory guardrails.txt justfile README.md AGENTS.md CHANGELOG.md docs test extras
     @printf "\033[32m✓ spell\033[0m\n"
 
 test:

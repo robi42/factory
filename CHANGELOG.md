@@ -22,9 +22,10 @@ The user of `extras/factory-user` has a bd of its own: run the same there, as `f
   only, with no migration, so machines can move one at a time.
 - Factory installs bd through mise's `github` backend: mise has deprecated `ubi`, the one
   the install used, and drops it in 2027.1.0.
-- The README's move to bd 1.3 warns against `bd compact` and `bd flatten` in a clone that
-  took the migration by a pull or a bootstrap, which bd 1.3 leaves without the tasks' change
-  history for now.
+- The move to bd 1.3 left the README for a shorter page of its own, `docs/bd-1.3.md`. It
+  warns against `bd compact` and `bd flatten` in a clone that took the migration by a pull or
+  a bootstrap, which bd 1.3 leaves without the tasks' change history for now, and says to
+  move a machine's repos together, since bd is upgraded for all of them at once.
 
 ## [0.3.4] - 2026-11-10
 
