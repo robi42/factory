@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-18
+
 Upgrading from 0.3.x: on each machine, `mise use -g github:gastownhall/beads@1.3.4`, then
 `mise unuse -g ubi:gastownhall/beads`, and `git pull && mise install` in Factory's checkout.
 The user of `extras/factory-user` has a bd of its own: run the same there, as `factory`.
@@ -706,7 +708,8 @@ First tagged state.
 - Repo: MIT license, CI on GitHub Actions with pinned action SHAs and Dependabot, `just ci`
   applying shfmt, shellcheck, the guardrails, codespell and bats to Factory itself.
 
-[Unreleased]: https://github.com/robi42/factory/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/robi42/factory/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/robi42/factory/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/robi42/factory/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/robi42/factory/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/robi42/factory/compare/v0.3.1...v0.3.2
