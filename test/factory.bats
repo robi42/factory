@@ -2647,6 +2647,8 @@ IN
   run finish_task "$TMP"
   [ "$status" -eq 2 ]
   [[ $output == *"note on toy-1: needs a human. branch work, worktree $TMP, herdr workspace w1, rounds used: 1, verdict: none; the guardrails failed (clean commits) and the builder's turn after that changed nothing they check"* ]]
+  # the way on, as factory next or queue, run again, would take up the next task instead
+  [[ $output == *"changed nothing they check; factory run [flags] $TMP toy-1 takes the task up again"* ]]
 }
 
 @test "plan approval: a note gets a plan round of its own, its reviewers told of the note" {
@@ -5554,6 +5556,7 @@ SH
   run finish_task "$REPO"
   [ "$status" -eq 2 ]
   [[ $output == *"needs a human"*"guardrails: the gate has not passed on $(git -C "$TMP/wt-9" rev-parse HEAD)"* ]]
+  [[ $output == *"guardrails: the gate has not passed on "*$'\n'"Fix that; then factory run [flags] $REPO toy-9 takes the task up again"* ]]
   gate_then_guards builder 1
   FACTORY_PR=1 FACTORY_COPILOT=1
   copilot_loop() { # an agent's push behind Factory's back

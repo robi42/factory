@@ -3263,12 +3263,13 @@ finish_task() {
   local summary="branch $BRANCH, worktree $WT, herdr workspace $WS, rounds used: $ROUND, verdict: ${VERDICT:-none}${STALLED:+; $STALLED}"
   PR_URL=""
   ask "$BUILD_AGENT" "$(memory_prompt)"
+  # a run of factory next or queue, repeated, would take up the next task instead
   if [[ $VERDICT != APPROVE ]]; then
-    hand_over "$repo" "$summary"
+    hand_over "$repo" "$summary; factory run [flags] $repo $TASK_ID takes the task up again"
     return 2
   fi
   if ! violations=$(guard_branch); then
-    hand_over "$repo" "$summary; guardrails: $violations"
+    hand_over "$repo" "$summary; guardrails: $violations"$'\n'"Fix that; then factory run [flags] $repo $TASK_ID takes the task up again"
     return 2
   fi
   if ((FACTORY_PR)); then

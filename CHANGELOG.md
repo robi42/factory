@@ -37,6 +37,9 @@ The user of `extras/factory-user` has a bd of its own: run the same there, as `f
   of the build are held to the planner's rule now, which the review prompts state: what a
   turn of theirs changes, an ignored file at a protected path included, goes back to them
   once, and stops the run if it stays. The planner's own check counts such a file too.
+- A task handed over for its reviews' verdict or its guardrails says that
+  `factory run [flags] <repo> <id>` takes it up again: `factory next`, run again, would take
+  up the next task instead.
 
 ## [0.3.4] - 2026-11-10
 
