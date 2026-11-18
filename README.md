@@ -14,7 +14,7 @@ alias used below.
 - **Claude Code** plans (Fable 5.2) and builds (Opus 5.5), each in its own Herdr pane, the
   planner's prompt line purple and the builder's cyan. The plan states the design in a few
   lines: what changes, responsibilities, interfaces.
-- **Codex** reviews (GPT 6 Astra, with web search) in a third pane. Models and their
+- **Codex** reviews (GPT-6.2 Astra, with web search) in a third pane. Models and their
   effort (`max` for the planner, `xhigh` for the others) are defaults; knobs change them.
 - **Reviews are dual.** The plan is checked by Codex and by the builder who has to
   execute it; the build by Codex and by the planner who wrote the plan. Reviewers look
@@ -523,7 +523,7 @@ holds only the credentials a run needs, as `extras/factory-user/` sets up.
 |---|---|
 | `FACTORY_PLAN_MODEL` | `claude-fable-5-2` |
 | `FACTORY_BUILD_MODEL` | `claude-opus-5-5` |
-| `FACTORY_REVIEW_MODEL` | `gpt-6-astra` |
+| `FACTORY_REVIEW_MODEL` | `gpt-6.2-astra` |
 | `FACTORY_PLAN_EFFORT` | `max` (`low`, `medium`, `high`, `xhigh`, `max`) |
 | `FACTORY_BUILD_EFFORT` | `xhigh` (the same levels) |
 | `FACTORY_REVIEW_EFFORT` | `xhigh` (the same levels, and `ultra`) |

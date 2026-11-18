@@ -16,6 +16,9 @@ The user of `extras/factory-user` has a bd of its own: run the same there, as `f
   bd 1.2 as well.
 
 ### Changed
+- The reviewer defaults to GPT-6.2 Astra (`gpt-6.2-astra`), released on 17 November, instead
+  of GPT-6 Astra; OpenAI asks Codex users to update for it. `FACTORY_REVIEW_MODEL` still
+  overrides it.
 - Factory pins Beads 1.3.4, up from 1.3.2. bd 1.3.3 stopped a cloned repo from making bd run
   a command, through a committed `.beads/.env` or a remote URL shaped like a git option, and
   fixed data loss in `bd delete`, `bd compact` and upgrades. From 1.3.2 it is a new binary
