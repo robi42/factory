@@ -30,6 +30,14 @@ The user of `extras/factory-user` has a bd of its own: run the same there, as `f
   a bootstrap, which bd 1.3 leaves without the tasks' change history for now, and says to
   move a machine's repos together, since bd is upgraded for all of them at once.
 
+### Fixed
+- A reviewer's turn could leave files in the worktree, as Blik's planner left a scratch copy
+  of the repo in an ignored directory while reviewing bk-9i7's build: the guardrails found it
+  only after you approved the build, and handed the task over. The reviewers of the plan and
+  of the build are held to the planner's rule now, which the review prompts state: what a
+  turn of theirs changes, an ignored file at a protected path included, goes back to them
+  once, and stops the run if it stays. The planner's own check counts such a file too.
+
 ## [0.3.4] - 2026-11-10
 
 ### Changed

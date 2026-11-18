@@ -486,8 +486,9 @@ check's name, as `fy stats` and a hand-over give it, follows it in parentheses.
   worktree's top included, only with the waiver, as a path the plan names (`symlinks`).
 - Nothing committed in `.factory/run/` (`run_dir`), and a diff git can read (`readable`).
 - A worktree git reads as the top of its checkout (`top`), one the task repo lists.
-- The planner leaves the code untouched: what one of its turns changes is sent back once,
-  and a turn that commits or checks out stops the run.
+- The planner and the reviewers leave the code untouched: what one of their turns changes,
+  an ignored file at a protected path included, is sent back once, and a turn that commits
+  or checks out stops the run.
 
 The guardrails catch the honest mistakes and shortcuts of an agent doing its job. They are
 not containment: an agent's shell runs as you, so one set on beating them can write

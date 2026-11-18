@@ -120,8 +120,8 @@ plan_ready() {
   WT=$TMP
   mkdir -p "$TASK_STATE" # where the gate takes its answers
   printf 'the plan\n' >"$TMP/plan.md"
-  planner_kept_hands_off() { :; }
-  tree_state() { :; } # its snapshot of the tree, which is no git repo here
+  hands_off() { "${@:4}"; } # the turn alone: its checks read a git repo, which this is not
+  tree_state() { :; }       # its snapshot of the tree, which is no git repo here
   plan_round() { printf 'plan round %s on the note: %s\n' "$1" "$2"; }
 }
 
@@ -2243,8 +2243,8 @@ IN
     if [[ -e $TMP/asked ]]; then printf 'the plan\n' >"$WT/.factory/run/plan.md"; fi
     : >"$TMP/asked"
   }
-  planner_kept_hands_off() { :; }
-  tree_state() { :; } # its snapshot of the tree, which is no git repo here
+  hands_off() { "${@:4}"; } # the turn alone: its checks read a git repo, which this is not
+  tree_state() { :; }       # its snapshot of the tree, which is no git repo here
   run write_plan planner
   [ "$status" -eq 0 ]
   [[ $output == *"asked planner: Task toy-1"*"wrote no .factory/run/plan.md; asking again"*"asked planner: You replied, but .factory/run/plan.md does not exist. Do not ask the human"* ]]
@@ -2290,8 +2290,8 @@ IN
     printf 'planned\n'
     printf 'the plan\n' >"$run/plan.md"
   }
-  planner_kept_hands_off() { :; }
-  tree_state() { :; } # its snapshot of the tree, which is no git repo here
+  hands_off() { "${@:4}"; } # the turn alone: its checks read a git repo, which this is not
+  tree_state() { :; }       # its snapshot of the tree, which is no git repo here
   approve_plan() { printf 'to the human, at %s\n' "$(resume_point)"; }
   turn_ends() { printf 'the turn of %s ended\n' "$1"; }
   ask() { printf 'revised at %s\n' "$(resume_point)"; }
@@ -2416,8 +2416,8 @@ IN
   PLAN_AGENT=planner BUILD_AGENT=builder REVIEW_AGENT=codex
   mkdir -p "$TMP/.factory/run"
   write_plan() { :; }
-  planner_kept_hands_off() { :; }
-  tree_state() { :; } # its snapshot of the tree, which is no git repo here
+  hands_off() { "${@:4}"; } # the turn alone: its checks read a git repo, which this is not
+  tree_state() { :; }       # its snapshot of the tree, which is no git repo here
   mark() { :; }
   approve_plan() { printf 'to the human\n'; }
   ask() { printf 'revise: %s\n' "$2"; }
@@ -3042,43 +3042,124 @@ JSON
   [ "$status" -eq 1 ]
 }
 
-@test "planner_kept_hands_off: clean tree passes, dirty tree gets one revert, then dies" {
+@test "kept_hands_off: clean tree passes, dirty tree gets one revert, then dies" {
   make_repo
   WT=$REPO
-  planner_kept_hands_off planner
+  kept_hands_off planner "the planner" planning
   printf 'sneaky\n' >"$REPO/run.sh"
   ask() { git -C "$REPO" checkout -q -- .; } # the planner reverts when told
-  run planner_kept_hands_off planner
+  run kept_hands_off planner "the planner" planning
   [ "$status" -eq 0 ]
-  [[ $output == *"asking it to revert"* ]]
+  [[ $output == *"the planner changed files; asking it to revert"* ]]
   printf 'sneaky\n' >"$REPO/run.sh"
   ask() { :; } # ...or does not
-  run planner_kept_hands_off planner
+  run kept_hands_off planner "the planner" planning
   [ "$status" -eq 1 ]
-  [[ $output == *"must not touch code; revert these, then rerun:"$'\n'" M run.sh"* ]]
+  [[ $output == *"the planner left changes in $REPO, though planning must not touch code; revert these, then rerun:"$'\n'" M run.sh"* ]]
   mkdir -p "$REPO/.factory/run"
   printf 'plan\n' >"$REPO/.factory/run/plan.md"
   git -C "$REPO" checkout -q -- .
-  planner_kept_hands_off planner # files under .factory/run/ are fine
+  kept_hands_off planner "the planner" planning # files under .factory/run/ are fine
   # the rest of .factory/ is not
   printf 'exit 0\n' >>"$REPO/.factory/gate"
   ask() { printf 'asked %s: %s\n' "$1" "$2"; }
-  run planner_kept_hands_off planner
+  run kept_hands_off planner "the planner" planning
   [ "$status" -eq 1 ]
   [[ $output == *"Revert these changes"*" M .factory/gate"* ]]
   git -C "$REPO" checkout -q -- .
   # given the tree before its turn, only what the turn changed is the planner's
   printf 'the human'"'"'s\n' >"$REPO/fixture.csv"
   local before
-  before=$(tree_state "$REPO")
-  planner_kept_hands_off planner "$before"
+  before=$(hands_state)
+  kept_hands_off planner "the planner" planning "$before"
   printf 'sneaky\n' >"$REPO/run.sh"
   ask() { printf 'asked %s: %s\n' "$1" "$2"; }
-  run planner_kept_hands_off planner "$before"
+  run kept_hands_off planner "the planner" planning "$before"
   [ "$status" -eq 1 ]
   [[ $output == *"Revert these changes"*" M run.sh"* ]]
   [[ $output != *"fixture.csv"* ]]
   [ -e "$REPO/fixture.csv" ]
+  # a long list is cut short, as a scratch copy of the repo would make it
+  git -C "$REPO" checkout -q -- .
+  rm "$REPO/fixture.csv"
+  mkdir -p "$REPO/copy"
+  for i in $(seq 1 25); do printf 'x\n' >"$REPO/copy/f$i"; done
+  run kept_hands_off planner "the planner" planning
+  [ "$status" -eq 1 ]
+  [[ $output == *"... and 5 more"* ]]
+}
+
+@test "review_turn: a reviewer's scratch copy that leaves an ignored file at a protected path is sent back once, then stops the run; one that commits is refused" {
+  make_repo
+  WT=$REPO
+  mkdir -p "$REPO/.factory/run"
+  printf '*justfile\n' >"$REPO/.factory/protected"
+  printf '/target/\n' >"$REPO/.gitignore"
+  git -C "$REPO" add -A
+  git -C "$REPO" commit -qm protect
+  local review=$REPO/.factory/run/review-1.md
+  ask_for_file() { # the review, and a copy of the repo to try a fix in, as bk-9i7's planner made
+    printf 'VERDICT: APPROVE\n' >"$3"
+    mkdir -p "$WT/target/probe"
+    printf 'ci:\n' >"$WT/target/probe/justfile"
+  }
+  ask() { # removed when told
+    printf 'asked %s: %s\n' "$1" "$2"
+    rm -rf "$WT/target/probe"
+  }
+  run review_turn codex "review it" "$review"
+  [ "$status" -eq 0 ]
+  [[ $output == *"codex changed files; asking it to revert"* ]]
+  [[ $output == *"asked codex: You changed files in the worktree, but a review must leave the code untouched"*"!! target/probe/justfile"* ]]
+  [ ! -e "$REPO/target/probe" ]
+  ask() { :; } # ...or left there
+  run review_turn codex "review it" "$review"
+  [ "$status" -eq 1 ]
+  [[ $output == *"codex left changes in $REPO, though a review must not touch code; revert these, then rerun:"$'\n'"!! target/probe/justfile"* ]]
+  # one there before the turn, the human's say, is not the reviewer's
+  ask_for_file() { printf 'VERDICT: APPROVE\n' >"$3"; }
+  review_turn codex "review it" "$review"
+  rm -rf "$REPO/target"
+  # an ignored file the gate does not read, a build's output, is no concern
+  ask_for_file() {
+    printf 'VERDICT: APPROVE\n' >"$3"
+    mkdir -p "$WT/target/debug"
+    printf 'x\n' >"$WT/target/debug/out"
+  }
+  review_turn codex "review it" "$review"
+  # a review that commits is refused
+  ask_for_file() {
+    printf 'echo x\n' >>"$WT/run.sh"
+    git -C "$WT" commit -qam "the reviewer's"
+  }
+  run review_turn codex "review it" "$review"
+  [ "$status" -eq 1 ]
+  [[ $output == *"codex's turn committed or checked out in $REPO, from "*": a review must not."* ]]
+}
+
+@test "plan_round and build_phase: a reviewer's turn that leaves a change stops the run before its verdict counts" {
+  make_repo
+  fake_task
+  WT=$REPO GATE=true BASE=main BRANCH=work MEMORY="" TASK_DESC=""
+  REVIEW_AGENT=codex PLAN_AGENT=planner BUILD_AGENT=builder
+  FACTORY_ROUNDS=1
+  mkdir -p "$REPO/$RUN_DIR"
+  gate_branch() { :; }
+  guard_branch() { :; }
+  mark() { :; }
+  ask() { printf 'asked %s: %.40s\n' "$1" "$2"; }
+  ask_for_file() { # Codex approves, and leaves the file it tried a fix in
+    printf 'VERDICT: APPROVE\n' >"$3"
+    [[ $1 != codex ]] || printf 'probe\n' >"$WT/probe.txt"
+  }
+  human_gate() { return 0; }
+  run plan_round 1
+  [ "$status" -eq 1 ]
+  [[ $output == *"codex left changes in $REPO, though a review must not touch code"*"?? probe.txt"* ]]
+  rm "$REPO/probe.txt"
+  run build_phase "$TMP" resume
+  [ "$status" -eq 1 ]
+  [[ $output == *"codex left changes in $REPO, though a review must not touch code"*"?? probe.txt"* ]]
 }
 
 @test "planner_turn: a planner that commits or checks out is refused; the refs others move may move meanwhile" {

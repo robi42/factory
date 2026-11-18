@@ -1206,18 +1206,32 @@ guard_run_dir() {
 # steers the gate, and git leaves an ignored file there out of the branch and its diff, so the
 # waiver, which is for those, has no say.
 guard_ignored() {
-  local f globs own kept bad=0
-  mapfile -t globs < <(protected_globs "$1")
-  mapfile -t own < <(factory_globs)
-  mapfile -t kept < <(kept_out "$1")
+  local f bad=0
   while IFS= read -r -d '' f; do
     printf 'ignored file at a protected path: %s (read in this worktree, left out of the branch; remove it, or narrow the line of .factory/protected that names it)\n' "$f"
     bad=1
-  done < <({
+  done < <(ignored_protected "$1")
+  return $bad
+}
+
+# ignored_protected worktree -> each ignored file at a protected path, NUL-terminated. What is
+# tracked comes from an index read from HEAD, as in guard_check, which this may run inside:
+# the worktree's own, which an agent can write, would take a file staged there (git add -f)
+# for a tracked one.
+ignored_protected() {
+  local globs own kept dir
+  local -x GIT_INDEX_FILE
+  mapfile -t globs < <(protected_globs "$1")
+  mapfile -t own < <(factory_globs)
+  mapfile -t kept < <(kept_out "$1")
+  dir=$(mktemp -d)
+  GIT_INDEX_FILE=$dir/index
+  git -C "$1" read-tree HEAD 2>/dev/null || rm -f "$GIT_INDEX_FILE"
+  {
     git -C "$1" ls-files --others --ignored --exclude-standard -z -- "${globs[@]}" "${kept[@]}"
     git -C "$1" ls-files --others --ignored --exclude-standard -z -- "${own[@]}" "${kept[@]}"
-  } | LC_ALL=C sort -zu)
-  return $bad
+  } | LC_ALL=C sort -zu
+  rm -rf "$dir"
 }
 
 # guard_symlinks worktree base: a symlink the branch adds, renames (--no-renames) or points
@@ -2049,6 +2063,7 @@ Review task $TASK_ID: $TASK_TITLE
 The plan is in $RUN_DIR/plan.md. The changes: git diff $(measured_base)...HEAD
 Factory ran the gate on this commit and it passed; its log is $RUN_DIR/gate-$1.log. Do not run it again.
 Look for bugs, missed requirements, shortcuts (skipped tests, suppressions, swallowed errors), security problems (unsafe input handling, injection, secrets, unsafe defaults), and design problems worth fixing now: tangled responsibilities, needless coupling or abstraction, duplicated logic. Be concrete and brief.$(build_recheck "$1" "" "${2:-}")
+Change no file in the worktree outside $RUN_DIR/, an ignored one included; Factory checks.
 Write the review to $RUN_DIR/review-$1.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content as Markdown, not in a code block.
 P
@@ -2062,6 +2077,7 @@ Task $TASK_ID: $TASK_TITLE
 $TASK_DESC
 
 A planner wrote $RUN_DIR/plan.md. Check it against the task and the repo: does it cover the whole task, nothing more, is the design sound (clear responsibilities, no needless coupling or abstraction, fits how the codebase is built), and can it be verified with the gate ($GATE)? Note real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1)).md" "${2:-}")
+Change no file in the worktree outside $RUN_DIR/, an ignored one included; Factory checks.
 Write your notes to $RUN_DIR/plan-review-$1.md and end that file with two lines: PLAN REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content as Markdown, not in a code block.
 P
@@ -2075,6 +2091,7 @@ Task $TASK_ID: $TASK_TITLE
 $TASK_DESC
 
 You will implement $RUN_DIR/plan.md next. Read it against this repo first: is it concrete enough to build, is its design the simplest that fits this codebase, does it miss anything the task needs, or add anything it does not? Note real gaps only.$(plan_recheck "$1" "$RUN_DIR/plan-review-$(($1 - 1))-build.md" "${2:-}")
+Change no file in the worktree outside $RUN_DIR/, an ignored one included; Factory checks.
 Write your notes to $RUN_DIR/plan-review-$1-build.md and end that file with two lines: PLAN REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content as Markdown, not in a code block.
 P
@@ -2138,6 +2155,7 @@ planner_build_review_prompt() {
 The build for task $TASK_ID is done. Check the changes against your plan in $RUN_DIR/plan.md: git diff $(measured_base)...HEAD
 Factory ran the gate on this commit and it passed; its log is $RUN_DIR/gate-$1.log. Do not run it again.
 Did it deliver the task, nothing more, and is it verified? Is the design as simple and well-separated as the task allows? Note real gaps only.$(build_recheck "$1" -plan "${2:-}")
+Change no file in the worktree outside $RUN_DIR/, an ignored one included; Factory checks.
 Write your notes to $RUN_DIR/review-$1-plan.md and end that file with two lines: CODE REVIEW round $1, then VERDICT: APPROVE or VERDICT: REVISE
 Once the file is written, reply with its content as Markdown, not in a code block.
 P
@@ -3011,43 +3029,78 @@ stop_task() {
   die "stopped at $2 for $TASK_ID; the workspace stays open, and factory run [flags] $1 $TASK_ID takes the task up again"
 }
 
-# planner_kept_hands_off planner-agent [tree_state before its turn]: the planner must not
-# change code; what its turn changed gets one chance to be reverted. Changes there before it,
-# the human's while a gate waited or a reviewer's, are not the planner's.
-planner_kept_hands_off() {
+# kept_hands_off agent who doing [hands_state before its turn]: the planner and the reviewers
+# must not change code, nor leave an ignored file at a protected path, which the gate would
+# read; what a turn of theirs changed gets one chance to be reverted. Changes there before it,
+# the human's while a gate waited or another agent's, are not the turn's. Who names the agent
+# in the messages, doing what it was at: the planner, planning.
+kept_hands_off() {
   local new
-  new=$(changed_since "${2:-}")
+  new=$(changed_since "${4:-}")
   [[ -n $new ]] || return 0
-  warn "the planner changed files; asking it to revert"
-  ask "$1" "You changed files in the worktree, but planning must leave the code untouched (only $RUN_DIR/ is yours). Revert these changes (git checkout -- <file>, or remove a new one), leave $RUN_DIR/ as it is:
-$new
+  warn "$2 changed files; asking it to revert"
+  ask "$1" "You changed files in the worktree, but $3 must leave the code untouched (only $RUN_DIR/ is yours; an ignored file elsewhere counts too). Revert these changes (git checkout -- <file>, or remove a new one), leave $RUN_DIR/ as it is:
+$(first_lines "$new")
 Reply with just DONE."
-  new=$(changed_since "${2:-}")
+  new=$(changed_since "${4:-}")
   [[ -n $new ]] || return 0
-  die "the planner left changes in $WT, though planning must not touch code; revert these, then rerun:"$'\n'"$new"
+  die "$2 left changes in $WT, though $3 must not touch code; revert these, then rerun:"$'\n'"$(first_lines "$new")"
 }
 
-# changed_since tree-state -> the lines of tree_state "$WT" that the earlier state lacks
-changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(tree_state "$WT" | LC_ALL=C sort); }
+# first_lines text -> its first 20 lines, and how many more there are: a scratch copy of the
+# repo is thousands of new files
+first_lines() {
+  local n
+  n=$(wc -l <<<"$1")
+  head -n 20 <<<"$1"
+  ((n <= 20)) || printf '... and %d more\n' "$((n - 20))"
+}
+
+# hands_state -> what a turn that must leave the code untouched could change in the task's
+# worktree: git's status line for each file changed or added (tree_state), and each ignored
+# file at a protected path, which git status shows not, marked !! as git status --ignored does
+hands_state() {
+  local out f
+  out=$(tree_state "$WT")
+  [[ -z $out ]] || printf '%s\n' "$out"
+  while IFS= read -r -d '' f; do printf '!! %s\n' "$f"; done < <(ignored_protected "$WT")
+}
+
+# changed_since hands-state -> the lines of hands_state that the earlier state lacks
+changed_since() { LC_ALL=C comm -13 <(LC_ALL=C sort <<<"$1") <(hands_state | LC_ALL=C sort); }
 
 # head_of worktree -> the commit checked out there and the branch it is on, which a planner's
-# turn must leave as they were: a commit carries its change out of the tree that
-# planner_kept_hands_off reads, and onto the branch
+# or a reviewer's turn must leave as they were: a commit carries its change out of the tree
+# that kept_hands_off reads, and onto the branch
 head_of() { printf '%s %s' "$(git -C "$1" rev-parse -q --verify HEAD || printf none)" "$(git -C "$1" symbolic-ref -q HEAD || printf detached)"; }
 
-# planner_turn planner-agent prompt: one turn of the planner, then the checks that it left the
-# code and HEAD alone. What changed before the turn is not the planner's; what changed during
-# it is, also while one of its question dialogs waited for the human.
-planner_turn() {
-  local before head
-  show_decisions "$WT/$RUN_DIR"
-  before=$(tree_state "$WT")
+# hands_off agent who doing command...: a turn of an agent that must leave the code and HEAD
+# alone, the planner's or a reviewer's, by the command, then the checks that it did. What
+# changed before the turn is not the agent's; what changed during it is, also while one of
+# its dialogs waited for the human.
+hands_off() {
+  local agent=$1 who=$2 doing=$3 before head
+  shift 3
+  before=$(hands_state)
   head=$(head_of "$WT")
-  ask "$1" "$2"
-  planner_kept_hands_off "$1" "$before"
+  "$@"
+  kept_hands_off "$agent" "$who" "$doing" "$before"
   [[ $(head_of "$WT") == "$head" ]] \
-    || die "the planner's turn committed or checked out in $WT, from $head to $(head_of "$WT"): planning must not. Look at what it did, put HEAD back, and rerun"
+    || die "$who's turn committed or checked out in $WT, from $head to $(head_of "$WT"): $doing must not. Look at what it did, put HEAD back, and rerun"
 }
+
+# planner_turn planner-agent prompt: one turn of the planner, which leaves the code and HEAD
+# alone (hands_off)
+planner_turn() {
+  show_decisions "$WT/$RUN_DIR"
+  hands_off "$1" "the planner" planning ask "$1" "$2"
+}
+
+# review_turn agent prompt file: one turn of a reviewer, of the plan or the build, which
+# writes its notes to the file (ask_for_file) and leaves the code and HEAD alone (hands_off):
+# a scratch copy it tries a change in, left in an ignored directory, is found as its turn
+# ends, not after the human approved
+review_turn() { hands_off "$1" "$1" "a review" ask_for_file "$1" "$2" "$3"; }
 
 # write_plan planner-agent: ask for a plan; the planner asks the human its questions in its own
 # dialog meanwhile. A turn that ends without a plan, as a dismissed question ends it, gets one
@@ -3067,8 +3120,8 @@ plan_round() {
   local round=$1
   rm -f "$WT/$RUN_DIR/plan-review-$round.md" "$WT/$RUN_DIR/plan-review-$round-build.md" # a cut-off round's would pass for this one's
   log "plan review round $round: $REVIEW_AGENT and $BUILD_AGENT"
-  ask_for_file "$REVIEW_AGENT" "$(plan_review_prompt "$round" "${2:-}")" "$WT/$RUN_DIR/plan-review-$round.md"
-  ask_for_file "$BUILD_AGENT" "$(builder_plan_review_prompt "$round" "${2:-}")" "$WT/$RUN_DIR/plan-review-$round-build.md"
+  review_turn "$REVIEW_AGENT" "$(plan_review_prompt "$round" "${2:-}")" "$WT/$RUN_DIR/plan-review-$round.md"
+  review_turn "$BUILD_AGENT" "$(builder_plan_review_prompt "$round" "${2:-}")" "$WT/$RUN_DIR/plan-review-$round-build.md"
   PLAN_VERDICT=$(verdicts "$WT/$RUN_DIR/plan-review-$round.md" "$WT/$RUN_DIR/plan-review-$round-build.md")
   log "plan verdicts: $PLAN_VERDICT"
   metric plan_review round "$round" verdicts "$PLAN_VERDICT"
@@ -3171,8 +3224,8 @@ build_phase() {
       continue
     fi
     log "review round $ROUND: $REVIEW_AGENT and $PLAN_AGENT"
-    ask_for_file "$REVIEW_AGENT" "$(review_prompt "$ROUND" "$note")" "$WT/$RUN_DIR/review-$ROUND.md"
-    ask_for_file "$PLAN_AGENT" "$(planner_build_review_prompt "$ROUND" "$note")" "$WT/$RUN_DIR/review-$ROUND-plan.md"
+    review_turn "$REVIEW_AGENT" "$(review_prompt "$ROUND" "$note")" "$WT/$RUN_DIR/review-$ROUND.md"
+    review_turn "$PLAN_AGENT" "$(planner_build_review_prompt "$ROUND" "$note")" "$WT/$RUN_DIR/review-$ROUND-plan.md"
     VERDICT=$(verdicts "$WT/$RUN_DIR/review-$ROUND.md" "$WT/$RUN_DIR/review-$ROUND-plan.md")
     log "verdicts: $VERDICT"
     metric review round "$ROUND" verdicts "$VERDICT"
