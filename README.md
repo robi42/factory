@@ -33,12 +33,11 @@ alias used below.
 - **You stay in the loop** where it counts: the planner may ask you questions, you
   approve every plan and every build, in dialogs in the agents' panes, and you merge.
 
-![A Herdr workspace at the build approval of a Rust task that reports the broken relative links in Markdown files: the builder (Opus 5.5, left) has checked its work against the plan, committed it and asks for your approval in its dialog; the planner (Fable 5.1, top right) and the Codex reviewer (GPT-6-Astra, bottom right) have reviewed the build, and both approve](assets/screenshot.png)
+![A Herdr workspace at the build approval of a Rust task that reports the broken relative links in Markdown files: the builder (Opus 5.5, left) has checked its work against the plan, committed it and asks for your approval in its dialog; the planner (Fable 5.2, top right) and the Codex reviewer (GPT-6.2-Astra, bottom right) have reviewed the build, and both approve](assets/screenshot.png)
 
 *A Rust task at its build approval: the builder (left) asks for yours in its dialog, after
-the planner (top right) and the Codex reviewer (bottom right) both approved. The planner's
-prompt suggests `!fy approve`, another way to answer. The tabs beside the task's own come
-from an optional [workspace script](#optional-extras).*
+the planner (top right) and the Codex reviewer (bottom right) both approved. The tabs beside
+the task's own come from an optional [workspace script](#optional-extras).*
 
 Every task gets its own Git worktree and Herdr workspace, so you can watch or step in; the
 tab with its agents bears the task's bead id, unless you named it.
