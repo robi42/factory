@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The README sent new users to herdr.dev, which now leads with Herdr's desktop app. That
+  app does not provide the `herdr` command Factory drives, so Factory would stop with
+  "missing prerequisite: herdr". The README now names Herdr TUI, the terminal app, and
+  links to its page.
+
 ## [0.3.5] - 2026-11-18
 
 Upgrading from 0.3.x: on each machine, `mise use -g github:gastownhall/beads@1.3.4`, then

@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/robi42/factory/actions/workflows/ci.yml/badge.svg)](https://github.com/robi42/factory/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Runs on Herdr](https://img.shields.io/badge/runs%20on-Herdr-8b5cf6.svg)](https://herdr.dev)
+[![Runs on Herdr](https://img.shields.io/badge/runs%20on-Herdr-8b5cf6.svg)](https://herdr.dev/tui/)
 
-A simple, lean software factory on [Herdr](https://herdr.dev): one task in, one reviewed branch out.
+A simple, lean software factory on [Herdr](https://herdr.dev/tui/): one task in, one reviewed branch out.
 
 Factory takes a coding task through a plan, a build and a review of each, by Claude Code
 and Codex side by side in Herdr, a terminal workspace manager for AI coding agents, and
@@ -82,8 +82,9 @@ nearly all of them cached.
 ## Requirements
 
 - Linux with Bash 4.4 or newer (macOS with a newer Bash and GNU coreutils is untested).
-- [Herdr](https://herdr.dev), [Claude Code](https://code.claude.com/docs)
-  and [Codex](https://github.com/openai/codex).
+- [Herdr TUI](https://herdr.dev/tui/), Herdr's terminal app: Factory drives its `herdr`
+  command, which Herdr's desktop app and herdr-core (`hc`) do not provide.
+- [Claude Code](https://code.claude.com/docs) and [Codex](https://github.com/openai/codex).
 - [mise](https://mise.jdx.dev), which installs the dev tools and
   [Beads](https://beads.gascity.com/) (`bd`) from `mise.toml`; `jq`, `git` 2.31
   or newer, `flock` (util-linux) for `fy next` and `fy queue`, `perl` for times in
@@ -92,7 +93,7 @@ nearly all of them cached.
 
 ## Install
 
-1. Install the requirements above with their own installers, start Herdr once so its
+1. Install the requirements above with their own installers, run `herdr` once so its
    server is up, and log in to `claude`, `codex` and, for pull requests, `gh`. If your
    commits are signed through an agent that can stop to ask you, as 1Password's does, the
    builder's commits wait for you there; left unanswered, the commit fails, and once the
