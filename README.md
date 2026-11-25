@@ -337,10 +337,12 @@ version, its plan and build rounds, how often the gate and the guardrails failed
 reviewers' objections, your notes, the time the agents, the gate and you took while the
 machine was awake, and the tokens the agents read and wrote. Under the same columns come
 the means per finished task for each Factory version, each naming how many tasks it counts
-and how many of them were done, which tell whether a change to Factory, its prompts or its
-models helped; then the guardrails that failed, by check; and your latest notes, each on
-one line, cut to fit the terminal. What goes wrong again and again shows there, to be
-turned into a guardrail, a check in the gate, or a memory.
+and how many of them were done; then the guardrails that failed, by check; and your latest
+notes, each on one line, cut to fit the terminal. What goes wrong again and again shows
+there, to be turned into a guardrail, a check in the gate, or a memory. The means hint at
+whether a change to Factory, its prompts or its models helped, but each version's are of
+other tasks. To see what a change did, run one task again from the same base, in a copy of
+the repo without the memories its first run left, and compare the two rows.
 
 ## How it drives the agents
 

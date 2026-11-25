@@ -10,6 +10,11 @@ Code and Codex sessions in Herdr panes, with Beads for tasks and mechanical guar
 - A change to the pipeline deserves a live smoke run against a small fixture repo of your
   own (a git repo with `bd init` and a gate; `.smoke/` is gitignored for that purpose):
   `mise exec -- ./factory run --auto .smoke/<repo> "<task>"`, with Herdr running.
+- A change to a default model, an effort or a prompt deserves a comparison on one task: run
+  the same task text before and after, each in a fresh copy of a fixture repo, so that the
+  base is the same and no run reads the memories an earlier one left, and compare their
+  rows in `factory stats`. Its means by version are of different tasks each, and one run a
+  setting shows a large shift only.
 
 ## Layout
 
