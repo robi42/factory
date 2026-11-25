@@ -20,6 +20,9 @@ setup() {
   # the human's answers go to a file the tests read, not to a bead; the real one is kept
   eval "real_$(declare -f record_answer)"
   record_answer() { printf '%s\n' "$2" >>"$TMP/recorded"; }
+  # a run records no version of this machine's Herdr, Claude Code and Codex; the real one is kept
+  eval "real_$(declare -f tool_version)"
+  tool_version() { :; }
 }
 
 teardown() {
@@ -5637,8 +5640,31 @@ SH
   [ "$(grep -c '' "$TMP/events.jsonl")" -eq 1 ]
 }
 
-@test "run_begins: a run records its start, with Factory's version and the agents' models, and a die its end, once" {
+@test "tool_version: the version a tool gives, the number and what clings to it; nothing where the tool fails, gives none or is missing" {
+  herdr() { [[ $* == --version ]] && echo "herdr 0.9.5"; }
+  claude() { echo "2.1.332 (Claude Code)"; }
+  codex() { echo "codex-cli 0.173.0-alpha.2"; }
+  [ "$(real_tool_version herdr)" = 0.9.5 ]
+  [ "$(real_tool_version claude)" = 2.1.332 ]
+  [ "$(real_tool_version codex)" = 0.173.0-alpha.2 ]
+  herdr() {
+    echo "herdr 0.9.5"
+    return 1
+  }
+  claude() { echo "Claude Code"; }
+  for tool in herdr claude no-such-tool-of-factory; do
+    run real_tool_version "$tool"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+  done
+}
+
+@test "run_begins: a run records its start, with Factory's version, the agents' models and the versions of Herdr, Claude Code and Codex, and a die its end, once" {
   fake_task
+  tool_version() { real_tool_version "$@"; }
+  herdr() { echo "herdr 0.9.5"; }
+  claude() { echo "2.1.332 (Claude Code)"; }
+  codex() { return 127; } # as one that is missing: its version stays empty, and the run begins
   dies() {
     run_begins written
     STEP=building
@@ -5648,7 +5674,7 @@ SH
   [ "$status" -eq 1 ]
   # each agent's model and effort, a word each
   run jq -c 'select(.event == "run") | del(.t, .task, .commit) | (.plan, .build, .review) |= (split(" ") | length)' "$TMP/events.jsonl"
-  [ "$output" = "{\"event\":\"run\",\"from\":\"written\",\"version\":\"$FACTORY_VERSION\",\"plan\":2,\"build\":2,\"review\":2,\"approval\":\"ask\"}" ]
+  [ "$output" = "{\"event\":\"run\",\"from\":\"written\",\"version\":\"$FACTORY_VERSION\",\"plan\":2,\"build\":2,\"review\":2,\"approval\":\"ask\",\"herdr\":\"0.9.5\",\"claude\":\"2.1.332\",\"codex\":\"\"}" ]
   run jq -c 'select(.event != "run") | del(.t, .task)' "$TMP/events.jsonl"
   [ "$output" = '{"event":"end","outcome":"failed","step":"building"}' ]
 }

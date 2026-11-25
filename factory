@@ -2716,9 +2716,22 @@ awake_secs() {
   perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%d\n", clock_gettime(CLOCK_MONOTONIC)' 2>/dev/null
 }
 
+# tool_version tool -> the version the tool gives for --version, the number and what clings to
+# it: 0.9.5 of "herdr 0.9.5", 2.1.332 of "2.1.332 (Claude Code)", 0.172.0 of "codex-cli
+# 0.172.0". Nothing where the tool is missing or gives none: the run goes on without it.
+tool_version() {
+  local out
+  out=$("$1" --version 2>/dev/null) || return 0
+  [[ $out =~ [0-9]+(\.[0-9]+)+[^[:space:]]* ]] || return 0
+  printf '%s' "${BASH_REMATCH[0]}"
+}
+
 # run_begins from: a run of the task starts, from its resume point, recorded (run) with
 # Factory's version, its commit when it runs from a checkout of its own, the agents' models
-# and efforts, and the approval mode. Its end is recorded once (run_end), a die's too.
+# and efforts, the approval mode, and the versions of Herdr, Claude Code and Codex it starts
+# on, as the panes' PATH is Factory's (write_env): those three move on several times within
+# one version of Factory, and what changed between two runs may be theirs. Its end is recorded
+# once (run_end), a die's too.
 run_begins() {
   local commit=""
   if [[ $(git -C "$FACTORY_HOME" rev-parse --show-toplevel 2>/dev/null) == "$FACTORY_HOME" ]]; then
@@ -2727,7 +2740,8 @@ run_begins() {
   RUN_ENDED=0
   metric run from "$1" version "$FACTORY_VERSION" commit "$commit" \
     plan "$FACTORY_PLAN_MODEL $FACTORY_PLAN_EFFORT" build "$FACTORY_BUILD_MODEL $FACTORY_BUILD_EFFORT" \
-    review "$FACTORY_REVIEW_MODEL $FACTORY_REVIEW_EFFORT" approval "$FACTORY_APPROVAL"
+    review "$FACTORY_REVIEW_MODEL $FACTORY_REVIEW_EFFORT" approval "$FACTORY_APPROVAL" \
+    herdr "$(tool_version herdr)" claude "$(tool_version claude)" codex "$(tool_version codex)"
   trap 'run_end failed' EXIT
 }
 

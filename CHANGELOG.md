@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A run records the versions of Herdr, Claude Code and Codex it starts on, in its `run`
+  event in `events.jsonl`. The three move on several times within one version of Factory,
+  and what had changed between two runs could not be read from the events: only the
+  agents' own transcripts named those versions, for as long as they last.
+
 ### Changed
 
 - The README sent new users to herdr.dev, which now leads with Herdr's desktop app. That

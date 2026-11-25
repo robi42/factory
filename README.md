@@ -324,9 +324,11 @@ commit the branch is measured from, which a rerun keeps, and `gate-pass`, the co
 gate last passed on with nothing else in the worktree, its log and its command: a rerun
 skips the gate on that commit; remove the file to have the gate run again. `fy clean`
 removes the directory with the task. Beside the tasks' state, `events.jsonl` keeps what
-the runs of the repo's tasks did, a JSON line an event: the runs, the agents' turns, the
-gate, the guardrails, the reviewers' verdicts and your answers, with the time each took
-and the tokens the agents used. `fy clean` leaves it, and `fy stats` sums it up.
+the runs of the repo's tasks did, a JSON line an event: the runs, each with the agents'
+models and the versions of Factory, Herdr, Claude Code and Codex it started on, the
+agents' turns, the gate, the guardrails, the reviewers' verdicts and your answers, with
+the time each took and the tokens the agents used. `fy clean` leaves it, and `fy stats`
+sums it up.
 
 ### Stats
 
