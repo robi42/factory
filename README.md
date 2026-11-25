@@ -753,6 +753,14 @@ Factory borrows deliberately, and leaves out even more deliberately.
   of everything and the lines of what is critical. Omarchy Quattro shipped that way with
   no line written by hand.
 
+## Contributing
+
+Issues are welcome, most of all about a run that went wrong: say what you ran and what
+happened, and add what you can share of the task's `.factory/run/` and of its lines in
+`events.jsonl`. A change needs such a failure behind it, or a mistake an agent is likely to
+make, and a new step, check or knob has to earn its place on a real task first. So for
+more than a fix, open an issue before a pull request. A pull request has to pass `just ci`.
+
 ## Develop
 
 ```sh
